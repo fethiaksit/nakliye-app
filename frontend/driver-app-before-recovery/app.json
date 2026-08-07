@@ -1,0 +1,24 @@
+{
+  "expo": {
+    "name": "NakliyeGo Şoför",
+    "slug": "nakliyego-driver",
+    "version": "2.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "bundleIdentifier": "com.nakliyego.driver",
+      "infoPlist": {
+        "NSLocalNetworkUsageDescription": "Nakliye uygulaması geliştirme sunucusuna bağlanmak için yerel ağ erişimi kullanır.",
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true
+        }
+      }
+    },
+    "android": {
+      "package": "com.nakliyego.driver"
+    },
+    "plugins": [
+      "expo-secure-store"
+    ]
+  }
+}

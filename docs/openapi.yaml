@@ -1,0 +1,52 @@
+openapi: 3.1.0
+info:
+  title: NakliyeGo API
+  version: 2.0.0
+servers:
+  - url: http://localhost:8080
+paths:
+  /api/health:
+    get:
+      responses:
+        '200': { description: API is available }
+  /api/auth/register:
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '200': { description: Auth session }
+        '400': { description: Validation error }
+        '409': { description: Email already in use }
+  /api/auth/login:
+    post:
+      responses:
+        '200': { description: Auth session }
+        '401': { description: Invalid credentials }
+  /api/listings:
+    get:
+      security: [{ bearerAuth: [] }]
+      responses: { '200': { description: Paginated listings } }
+    post:
+      security: [{ bearerAuth: [] }]
+      responses: { '201': { description: Draft listing created } }
+  /api/drivers/jobs/nearby:
+    get:
+      security: [{ bearerAuth: [] }]
+      responses: { '200': { description: Open jobs } }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  schemas:
+    RegisterRequest:
+      type: object
+      required: [name, email, password, role]
+      properties:
+        name: { type: string }
+        email: { type: string, format: email }
+        phone: { type: string }
+        password: { type: string, minLength: 8 }
+        role: { type: string, enum: [customer, driver] }
