@@ -26,7 +26,7 @@ func TestWriteRouteErrorNormalizesProviderPermissionFailure(t *testing.T) {
 	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
 		t.Fatal(err)
 	}
-	if response.Error.Code != "GOOGLE_MAPS_PERMISSION_DENIED" || response.Error.Message != "Adres önerileri alınamadı." {
+	if response.Error.Code != "MAPS_PERMISSION_DENIED" || response.Error.Message != "Adres önerileri alınamadı." {
 		t.Fatalf("unexpected response: %#v", response.Error)
 	}
 }
@@ -52,7 +52,17 @@ func TestMapCalculateRouteReportsMissingServerKeyBeforeProviderCall(t *testing.T
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
-	if !strings.Contains(recorder.Body.String(), "GOOGLE_MAPS_NOT_CONFIGURED") {
+	if !strings.Contains(recorder.Body.String(), "MAPS_NOT_CONFIGURED") {
 		t.Fatalf("unexpected body: %s", recorder.Body.String())
+	}
+}
+
+func TestMapStatusDoesNotCallGoogle(t *testing.T) {
+	api := &API{}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/maps/status", nil)
+	api.mapStatus(recorder, request)
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"upstreamChecked":false`) {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 }

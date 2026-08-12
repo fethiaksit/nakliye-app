@@ -29,20 +29,20 @@ func TestGoogleMapsClientNormalizesGoogleResponses(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatal(err)
 			}
-			if body["input"] != "Bornova İzmir" || body["sessionToken"] != "session-1" {
+			if body["input"] != "Bornova İzmir" || body["sessionToken"] != "session-1" || body["locationBias"] == nil {
 				t.Fatalf("unexpected autocomplete body: %#v", body)
 			}
 			_, _ = w.Write([]byte(`{"suggestions":[{"placePrediction":{"placeId":"place-1","text":{"text":"Bornova, İzmir"},"structuredFormat":{"mainText":{"text":"Bornova"},"secondaryText":{"text":"İzmir"}}}}]}`))
 		case "/v1/places/place-1":
-			if r.Header.Get("X-Goog-FieldMask") != "id,formattedAddress,location" {
+			if r.Header.Get("X-Goog-FieldMask") != "id,formattedAddress,location,addressComponents" {
 				t.Fatal("place details field mask missing")
 			}
-			_, _ = w.Write([]byte(`{"id":"place-1","formattedAddress":"Bornova, İzmir","location":{"latitude":38.4622,"longitude":27.2174}}`))
+			_, _ = w.Write([]byte(`{"id":"place-1","formattedAddress":"Kazımdirik Mahallesi, Bornova/İzmir, Türkiye","location":{"latitude":38.4622,"longitude":27.2174},"addressComponents":[{"longText":"Kazımdirik","shortText":"Kazımdirik","types":["neighborhood"]},{"longText":"Bornova","shortText":"Bornova","types":["administrative_area_level_2"]},{"longText":"İzmir","shortText":"İzmir","types":["administrative_area_level_1"]},{"longText":"Türkiye","shortText":"TR","types":["country"]}]}`))
 		case "/maps/api/geocode/json":
 			if r.URL.Query().Get("key") != "test-server-key" {
 				t.Fatal("geocoding key query was not sent")
 			}
-			_, _ = w.Write([]byte(`{"status":"OK","results":[{"formatted_address":"Bornova, İzmir","place_id":"place-1"}]}`))
+			_, _ = w.Write([]byte(`{"status":"OK","results":[{"formatted_address":"Bornova, İzmir","place_id":"place-1","address_components":[{"long_name":"Bornova","short_name":"Bornova","types":["administrative_area_level_2"]},{"long_name":"İzmir","short_name":"İzmir","types":["administrative_area_level_1"]},{"long_name":"Türkiye","short_name":"TR","types":["country"]}]}]}`))
 		case "/directions/v2:computeRoutes":
 			if r.Header.Get("X-Goog-FieldMask") != "routes.distanceMeters,routes.duration,routes.polyline.encodedPolyline" {
 				t.Fatal("routes field mask missing")
@@ -55,16 +55,17 @@ func TestGoogleMapsClientNormalizesGoogleResponses(t *testing.T) {
 	defer server.Close()
 
 	client := NewGoogleMapsClientWithURLs("test-server-key", 200, server.URL, server.URL, server.URL, server.Client())
-	items, err := client.Autocomplete(context.Background(), "Bornova İzmir", "session-1")
+	bias := models.Coordinate{Latitude: 38.4622, Longitude: 27.2174}
+	items, err := client.Autocomplete(context.Background(), "Bornova İzmir", "session-1", &bias)
 	if err != nil || len(items) != 1 || items[0].PlaceID != "place-1" {
 		t.Fatalf("autocomplete = %#v, %v", items, err)
 	}
 	details, err := client.PlaceDetails(context.Background(), "place-1", "session-1")
-	if err != nil || details.Coordinate.Latitude != 38.4622 {
+	if err != nil || details.Coordinate.Latitude != 38.4622 || details.District != "Bornova" || details.City != "İzmir" || details.CountryCode != "TR" {
 		t.Fatalf("details = %#v, %v", details, err)
 	}
 	reverse, err := client.Reverse(context.Background(), models.Coordinate{Latitude: 38.4622, Longitude: 27.2174})
-	if err != nil || reverse.FormattedAddress != "Bornova, İzmir" {
+	if err != nil || reverse.FormattedAddress != "Bornova, İzmir" || reverse.District != "Bornova" || reverse.Province != "İzmir" {
 		t.Fatalf("reverse = %#v, %v", reverse, err)
 	}
 	route, err := client.Calculate(context.Background(), models.Coordinate{Latitude: 38.4622, Longitude: 27.2174}, models.Coordinate{Latitude: 38.49, Longitude: 27.06})
@@ -78,21 +79,23 @@ func TestGoogleMapsClientNormalizesGoogleResponses(t *testing.T) {
 
 func TestGoogleMapsClientDoesNotOperateWithoutServerKey(t *testing.T) {
 	client := NewGoogleMapsClient("", DefaultPricePerKM)
-	_, err := client.Autocomplete(context.Background(), "Bornova", "session")
+	_, err := client.Autocomplete(context.Background(), "Bornova", "session", nil)
 	if !strings.Contains(err.Error(), ErrGoogleMapsNotConfigured.Error()) {
 		t.Fatalf("expected a configuration error, got %v", err)
 	}
 }
 
 func TestGoogleMapsClientReturnsSafeProviderDiagnostics(t *testing.T) {
+	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
 		w.WriteHeader(http.StatusForbidden)
 		_, _ = w.Write([]byte(`{"error":{"status":"PERMISSION_DENIED","message":"API key is not allowed"}}`))
 	}))
 	defer server.Close()
 
 	client := NewGoogleMapsClientWithURLs("test-server-key", DefaultPricePerKM, server.URL, server.URL, server.URL, server.Client())
-	_, err := client.Autocomplete(WithRequestID(context.Background(), "request-123"), "Bornova", "session")
+	_, err := client.Autocomplete(WithRequestID(context.Background(), "request-123"), "Bornova", "session", nil)
 	var googleErr *GoogleMapsError
 	if !errors.As(err, &googleErr) {
 		t.Fatalf("expected GoogleMapsError, got %T: %v", err, err)
@@ -102,6 +105,29 @@ func TestGoogleMapsClientReturnsSafeProviderDiagnostics(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "test-server-key") {
 		t.Fatalf("provider error leaked an API key: %v", err)
+	}
+	if requests != 1 {
+		t.Fatalf("permission failures must not be retried, requests=%d", requests)
+	}
+}
+
+func TestGoogleMapsClientRetriesOneTransientFailure(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if requests == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"error":{"status":"UNAVAILABLE"}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"suggestions":[]}`))
+	}))
+	defer server.Close()
+
+	client := NewGoogleMapsClientWithURLs("test-server-key", DefaultPricePerKM, server.URL, server.URL, server.URL, server.Client())
+	items, err := client.Autocomplete(context.Background(), "Bornova", "session", nil)
+	if err != nil || len(items) != 0 || requests != 2 {
+		t.Fatalf("items=%#v err=%v requests=%d", items, err, requests)
 	}
 }
 

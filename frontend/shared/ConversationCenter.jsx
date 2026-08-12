@@ -106,7 +106,7 @@ function MessageContent({ item, mine, formatMoney, resolveMediaUrl, onPreviewIma
   return <Text style={[styles.textMessage, mine && { color: '#fff' }]}>{item.body}</Text>;
 }
 
-export default function ConversationCenter({ currentUser, api, apiError, resolveMediaUrl, formatMoney, loadStatusLabel, onOpenLoad, reverseGeocode, nativeMapsConfigured = true, nativeMapsMessage = 'Google haritası yüklenemedi. Harita anahtarı ve uygulama yapılandırmasını kontrol edin.' }) {
+export default function ConversationCenter({ currentUser, api, apiError, resolveMediaUrl, formatMoney, loadStatusLabel, onOpenLoad, reverseGeocode, nativeMapsConfigured = true, nativeMapsMessage = 'Google haritası yüklenemedi. Harita anahtarı ve uygulama yapılandırmasını kontrol edin.', bottomInset = 0 }) {
   const [items, setItems] = useState([]);
 	const [totalUnread, setTotalUnread] = useState(0);
   const [listLoading, setListLoading] = useState(true);
@@ -124,6 +124,7 @@ export default function ConversationCenter({ currentUser, api, apiError, resolve
   const [attachment, setAttachment] = useState(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploading, setUploading] = useState(false);
+  const [sending, setSending] = useState(false);
   const [previewURI, setPreviewURI] = useState(null);
 	const [mapPickerVisible, setMapPickerVisible] = useState(false);
 	const [mapCoordinate, setMapCoordinate] = useState(null);
@@ -131,6 +132,7 @@ export default function ConversationCenter({ currentUser, api, apiError, resolve
   const [isActiveApp, setIsActiveApp] = useState(AppState.currentState === 'active');
   const listBusy = useRef(false);
   const chatBusy = useRef(false);
+	const sendBusy = useRef(false);
 	const paginationInitialized = useRef(false);
   const listRef = useRef(null);
   const chatRef = useRef(null);
@@ -224,7 +226,9 @@ export default function ConversationCenter({ currentUser, api, apiError, resolve
   }, []);
 
   const sendPayload = useCallback(async payload => {
-    if (!selectedID) return;
+    if (!selectedID || sendBusy.current) return;
+    sendBusy.current = true;
+    setSending(true);
     const clientMessageId = payload.clientMessageId || newClientMessageID();
     const optimistic = { id: `local:${clientMessageId}`, loadId: selectedID, senderId: currentUser.id, senderRole: currentUser.role, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), status: 'sending', clientMessageId, ...payload };
     setChat(current => mergeByID(current, [optimistic]));
@@ -235,6 +239,9 @@ export default function ConversationCenter({ currentUser, api, apiError, resolve
       void loadConversations(false);
     } catch (error) {
       setChat(current => current.map(item => item.id === optimistic.id ? { ...item, status: 'failed', sendError: apiError(error) } : item));
+    } finally {
+      sendBusy.current = false;
+      setSending(false);
     }
   }, [api, apiError, currentUser.id, currentUser.role, loadConversations, scrollToBottom, selectedID]);
 
@@ -315,13 +322,19 @@ export default function ConversationCenter({ currentUser, api, apiError, resolve
 			Alert.alert('Google haritası yüklenemedi', nativeMapsMessage);
 			return;
 		}
-		let coordinate = { latitude: 38.4237, longitude: 27.1428 };
+		let coordinate = null;
 		const permission = await Location.requestForegroundPermissionsAsync();
 		if (permission.status === 'granted') {
 			try {
 				const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
 				coordinate = { latitude: position.coords.latitude, longitude: position.coords.longitude };
-			} catch { /* A manually chosen pin does not require a GPS fix. */ }
+				} catch (error) {
+					if (__DEV__) console.warn('[LOCATION PICKER] GPS fix unavailable.', { code: error?.code, message: error?.message });
+				}
+		}
+		if (!coordinate) {
+			Alert.alert('Konum alınamadı', 'Haritadan seçim yapabilmek için konum izni verin ve konum servislerini açın.');
+			return;
 		}
 		setMapCoordinate(coordinate);
 		setMapPickerVisible(true);
@@ -357,7 +370,7 @@ export default function ConversationCenter({ currentUser, api, apiError, resolve
 
   const routeSummary = `${active.pickupAddress || ''} → ${active.deliveryAddress || ''}`;
   const initials = active.otherParty?.name?.split(' ').map(part => part[0]).join('').slice(0, 2).toUpperCase() || '?';
-  return <KeyboardAvoidingView style={styles.root} behavior={Platform.select({ ios: 'padding', android: undefined })} keyboardVerticalOffset={0}>
+  return <KeyboardAvoidingView style={[styles.root, { paddingBottom: bottomInset }]} behavior={Platform.select({ ios: 'padding', android: undefined })} keyboardVerticalOffset={0}>
     <View style={styles.chatHeader}><Pressable onPress={() => { setActive(null); setChat([]); setAttachment(null); }} hitSlop={10}><Text style={styles.back}>‹</Text></Pressable><View style={styles.personAvatar}><Text style={styles.personAvatarText}>{initials}</Text></View><View style={styles.chatPerson}><Text style={styles.chatName}>{active.otherParty?.name || 'Karşı taraf'}</Text><Text style={styles.lastSeen}>{active.otherParty?.role === 'driver' ? 'Şoför · ' : 'Müşteri · '}{lastSeenLabel(active.otherParty?.lastSeenAt)}</Text></View><Pressable onPress={() => onOpenLoad?.(selectedID)}><Text style={styles.loadOpen}>İlanı aç</Text></Pressable></View>
     <Pressable style={styles.loadSummary} onPress={() => onOpenLoad?.(selectedID)}><Text style={styles.loadSummaryRoute} numberOfLines={1}>{routeSummary}</Text><Text style={styles.loadSummaryMeta}>{Number(active.estimatedKm || 0).toFixed(1)} km · Tahmini fiyat: {formatMoney(active.estimatedPriceTl)}</Text></Pressable>
     {chatError ? <View style={styles.chatError}><Text style={styles.errorText}>{chatError}</Text><Pressable onPress={() => void loadMessages(false)}><Text style={styles.errorAction}>Tekrar Dene</Text></Pressable></View> : null}
@@ -365,8 +378,8 @@ export default function ConversationCenter({ currentUser, api, apiError, resolve
     {unseenCount ? <Pressable style={styles.newMessages} onPress={scrollToBottom}><Text style={styles.newMessagesText}>{unseenCount} yeni mesaj · En alta git</Text></Pressable> : null}
     {replyTo ? <View style={styles.replyComposer}><Text style={styles.replyComposerTitle}>Yanıtlanıyor</Text><Text style={styles.replyComposerText} numberOfLines={1}>{replyTo.deletedAt ? 'Bu mesaj silindi.' : messagePreview(replyTo)}</Text><Pressable onPress={() => setReplyTo(null)}><Text style={styles.replyClose}>×</Text></Pressable></View> : null}
     {attachment ? <View style={styles.attachmentPreview}><Image source={{ uri: attachment.uri }} style={styles.attachmentThumb} /><Text style={styles.attachmentText}>{uploading ? `Yükleniyor${uploadProgress ? ` %${uploadProgress}` : '…'}` : 'Göndermeye hazır'}</Text><Pressable onPress={() => setAttachment(null)} disabled={uploading}><Text style={styles.attachmentRemove}>×</Text></Pressable></View> : null}
-    <View style={styles.composer}><Pressable style={styles.composerIcon} onPress={choosePhoto} disabled={uploading}><Text style={styles.composerIconText}>＋</Text></Pressable><Pressable style={styles.composerIcon} onPress={chooseLocation} disabled={uploading}><Text style={styles.composerIconText}>⌖</Text></Pressable><Pressable style={styles.composerIcon} onPress={shareLoad} disabled={uploading}><Text style={styles.composerIconText}>▤</Text></Pressable><TextInput value={draft} onChangeText={setDraft} placeholder="Mesaj yazın" placeholderTextColor="#8e99ad" style={styles.input} multiline maxLength={2000} textAlignVertical="top" /><Pressable style={[styles.send, (!draft.trim() && !attachment || uploading) && styles.sendDisabled]} disabled={(!draft.trim() && !attachment) || uploading} onPress={attachment ? () => void sendAttachment() : sendText}><Text style={styles.sendText}>{uploading ? '…' : '↑'}</Text></Pressable></View>
-    <Modal visible={mapPickerVisible} animationType="slide" onRequestClose={() => setMapPickerVisible(false)}><View style={styles.mapModal}><View style={styles.mapHeader}><Pressable onPress={() => setMapPickerVisible(false)}><Text style={styles.mapCancel}>Vazgeç</Text></Pressable><Text style={styles.mapTitle}>Konum seç</Text><Pressable onPress={() => void sharePickedLocation()}><Text style={styles.mapShare}>Paylaş</Text></Pressable></View>{nativeMapsConfigured && mapCoordinate ? <MapAdapter style={styles.map} initialRegion={{ ...mapCoordinate, latitudeDelta: 0.035, longitudeDelta: 0.035 }} onPress={event => setMapCoordinate(event.nativeEvent.coordinate)} markers={[{ id: 'selected-location', coordinate: mapCoordinate, draggable: true, onDragEnd: event => setMapCoordinate(event.nativeEvent.coordinate) }]} fallback={<MapUnavailable />} /> : <MapUnavailable />}<Text style={styles.mapHint}>İğneyi sürükleyin veya haritada bir noktaya dokunun.</Text></View></Modal>
+    <View style={styles.composer}><Pressable style={styles.composerIcon} onPress={choosePhoto} disabled={uploading || sending}><Text style={styles.composerIconText}>＋</Text></Pressable><Pressable style={styles.composerIcon} onPress={chooseLocation} disabled={uploading || sending}><Text style={styles.composerIconText}>⌖</Text></Pressable><Pressable style={styles.composerIcon} onPress={shareLoad} disabled={uploading || sending}><Text style={styles.composerIconText}>▤</Text></Pressable><TextInput value={draft} onChangeText={setDraft} placeholder="Mesaj yazın" placeholderTextColor="#8e99ad" style={styles.input} multiline maxLength={2000} textAlignVertical="top" editable={!uploading} /><Pressable style={[styles.send, ((!draft.trim() && !attachment) || uploading || sending) && styles.sendDisabled]} disabled={(!draft.trim() && !attachment) || uploading || sending} onPress={attachment ? () => void sendAttachment() : sendText}><Text style={styles.sendText}>{uploading || sending ? '…' : '↑'}</Text></Pressable></View>
+    <Modal visible={mapPickerVisible} animationType="slide" onRequestClose={() => setMapPickerVisible(false)}><View style={styles.mapModal}><View style={styles.mapHeader}><Pressable onPress={() => setMapPickerVisible(false)}><Text style={styles.mapCancel}>Vazgeç</Text></Pressable><Text style={styles.mapTitle}>Konum seç</Text><Pressable onPress={() => void sharePickedLocation()}><Text style={styles.mapShare}>Paylaş</Text></Pressable></View>{mapCoordinate ? <MapAdapter style={styles.map} initialRegion={{ ...mapCoordinate, latitudeDelta: 0.035, longitudeDelta: 0.035 }} onPress={event => setMapCoordinate(event.nativeEvent.coordinate)} markers={[{ id: 'selected-location', coordinate: mapCoordinate, draggable: true, onDragEnd: event => setMapCoordinate(event.nativeEvent.coordinate) }]} fallback={<MapUnavailable message={nativeMapsMessage} />} /> : <MapUnavailable message={nativeMapsMessage} />}<Text style={styles.mapHint}>İğneyi sürükleyin veya haritada bir noktaya dokunun.</Text></View></Modal>
     <Modal visible={Boolean(previewURI)} transparent animationType="fade" onRequestClose={() => setPreviewURI(null)}><View style={styles.modal}><Pressable style={styles.modalClose} onPress={() => setPreviewURI(null)}><Text style={styles.modalCloseText}>×</Text></Pressable>{previewURI ? <Image source={{ uri: previewURI }} resizeMode="contain" style={styles.fullImage} /> : null}</View></Modal>
   </KeyboardAvoidingView>;
 }

@@ -7,11 +7,12 @@ import { normalizeLoadPhotos } from '../utils/presentation';
 const client = axios.create({
   baseURL: apiOrigin || 'http://invalid.local',
   timeout: 15000,
-  headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+  headers: { Accept: 'application/json' },
 });
 
 let refreshing;
 let memorySession;
+let shouldPersistSession = false;
 const sessionExpiredListeners = new Set();
 
 const tokens = async () => memorySession || ({
@@ -29,20 +30,23 @@ export const restoreSession = async () => {
     SecureStore.getItemAsync('refreshToken'),
     SecureStore.getItemAsync('user'),
   ]);
-  if (!rawUser || (!accessToken && !refreshToken)) return null;
+  if (!rawUser || (!accessToken && !refreshToken)) { await clearSession(); return null; }
   try {
     const user = JSON.parse(rawUser);
-    if (!user?.id || user.role !== 'driver') return null;
+    if (!user?.id || user.role !== 'driver') { await clearSession(); return null; }
+    shouldPersistSession = true;
     memorySession = { accessToken, refreshToken, user };
     return memorySession;
-  } catch {
+  } catch (error) {
+    if (__DEV__) console.warn('[DRIVER AUTH HYDRATION] Stored user is invalid.', { message: error?.message });
     await clearSession();
     return null;
   }
 };
 
-export const saveSession = async (session, persist = true) => {
+export const saveSession = async (session, persist = shouldPersistSession) => {
   memorySession = session;
+  shouldPersistSession = persist;
   if (!persist) {
     await Promise.all(['accessToken', 'refreshToken', 'user'].map(key => SecureStore.deleteItemAsync(key)));
     return;
@@ -56,11 +60,12 @@ export const saveSession = async (session, persist = true) => {
 
 export const updateStoredUser = async user => {
   if (memorySession) memorySession = { ...memorySession, user };
-  await SecureStore.setItemAsync('user', JSON.stringify(user));
+  if (shouldPersistSession) await SecureStore.setItemAsync('user', JSON.stringify(user));
 };
 
 export const clearSession = async () => {
   memorySession = undefined;
+  shouldPersistSession = false;
   await Promise.all(['accessToken', 'refreshToken', 'user'].map(key => SecureStore.deleteItemAsync(key)));
 };
 
@@ -78,9 +83,11 @@ export const logApiError = (scope, error) => {
     status: error.response?.status,
     code: error.code,
     message: error.message,
-    data: error.response?.data,
+    requestId: error.response?.headers?.['x-request-id'] || error.response?.data?.requestId,
   });
 };
+
+if (__DEV__ && apiOrigin) console.info(`[API] Base URL: ${apiOrigin}`);
 
 client.interceptors.request.use(async config => {
   if (apiConfigurationError) {
@@ -101,7 +108,7 @@ client.interceptors.response.use(response => response, async error => {
   try {
     refreshing ??= tokens()
       .then(({ refreshToken }) => {
-        if (!refreshToken) throw new Error('Oturum yenileme anahtarı bulunamadı.');
+        if (!refreshToken) throw Object.assign(new Error('Oturum yenileme anahtarı bulunamadı.'), { code: 'SESSION_EXPIRED' });
         return client.post('/api/auth/refresh', { refreshToken });
       })
       .finally(() => { refreshing = undefined; });
@@ -110,8 +117,11 @@ client.interceptors.response.use(response => response, async error => {
     request.headers.Authorization = `Bearer ${data.accessToken}`;
     return client(request);
   } catch (refreshError) {
-    await clearSession();
-    notifySessionExpired();
+    const terminal = refreshError.code === 'SESSION_EXPIRED' || [400, 401].includes(refreshError.response?.status);
+    if (terminal) {
+      await clearSession();
+      notifySessionExpired();
+    }
     return Promise.reject(refreshError);
   }
 });
@@ -131,10 +141,27 @@ export const auth = {
 };
 
 const normalizeLoad = load => load ? { ...load, photoUrls: normalizeLoadPhotos(load.photoUrls || load.photos || load.images) } : load;
-const normalizeLoadResponse = response => ({ ...response, data: { ...response.data, items: Array.isArray(response.data?.items) ? response.data.items.map(normalizeLoad) : response.data?.items } });
+const getAllLoadPages = async (params = {}, request = {}) => {
+  const pageSize = 100;
+  const initialOffset = Math.max(0, Number(params.offset) || 0);
+  let offset = initialOffset;
+  let firstResponse;
+  const items = [];
+  let total = 0;
+  do {
+    const response = await client.get('/api/drivers/jobs/nearby', { params: { ...params, offset, limit: pageSize }, signal: request.signal });
+    firstResponse ||= response;
+    const pageItems = Array.isArray(response.data?.items) ? response.data.items.map(normalizeLoad) : [];
+    items.push(...pageItems);
+    total = Number(response.data?.total) || items.length;
+    offset += pageItems.length;
+    if (!pageItems.length) break;
+  } while (offset < total);
+  return { ...firstResponse, data: { ...firstResponse.data, items, total, offset: initialOffset, limit: items.length } };
+};
 
 export const loads = {
-  list: async (params = {}, request = {}) => normalizeLoadResponse(await client.get('/api/drivers/jobs/nearby', { params, signal: request.signal })),
+  list: getAllLoadPages,
   get: async id => { const response = await client.get(`/api/loads/${id}`); return { ...response, data: normalizeLoad(response.data) }; },
   status: (id, status) => client.patch(`/api/loads/${id}/status`, { status }),
 };
@@ -170,18 +197,27 @@ export const profile = {
 };
 
 export const apiError = error => {
-  if (error.code === 'ERR_CANCELED') return '';
-  if (error.code === 'API_CONFIGURATION') return error.message;
-  if (error.code === 'ECONNABORTED') return 'İstek zaman aşımına uğradı. Sunucunun açık olduğundan emin ol.';
-  if (error.message && !error.request && !error.response) return error.message;
-  if (!error.response) return 'Sunucuya bağlanılamadı. İnternet bağlantınızı ve API adresini kontrol edin.';
+  return normalizeApiError(error).messageWithRequestId;
+};
+
+export const normalizeApiError = error => {
+  const requestId = error.response?.headers?.['x-request-id'] || error.response?.data?.requestId || '';
+  const withRequestId = message => requestId ? `${message} (Destek kodu: ${requestId})` : message;
+  if (error.code === 'ERR_CANCELED') return { type: 'UNKNOWN_ERROR', message: '', messageWithRequestId: '', requestId };
+  if (error.code === 'API_CONFIGURATION') return { type: 'UNKNOWN_ERROR', message: error.message, messageWithRequestId: error.message, requestId };
+  if (error.code === 'ECONNABORTED') { const message = 'İstek zaman aşımına uğradı. Sunucunun açık olduğundan emin ol.'; return { type: 'TIMEOUT', message, messageWithRequestId: withRequestId(message), requestId }; }
+  if (error.message && !error.request && !error.response) return { type: 'UNKNOWN_ERROR', message: error.message, messageWithRequestId: withRequestId(error.message), requestId };
+  if (!error.response) { const message = 'Sunucuya bağlanılamadı. İnternet bağlantınızı ve API adresini kontrol edin.'; return { type: 'NO_NETWORK', message, messageWithRequestId: message, requestId }; }
   const { status, data } = error.response;
   const message = typeof data?.error === 'string' ? data.error : data?.error?.message || '';
-  if (status === 401) return 'Oturumun sona erdi (401). Lütfen tekrar giriş yap.';
-  if (status === 403) return 'Şoför yetkiniz doğrulanamadı (403).';
-  if (status === 404) return message || 'İşler servisi bulunamadı (404). API adresini kontrol edin.';
-  if (status === 409) return message || 'Bu bilgi zaten kayıtlı (409).';
-  if (status === 422) return message || 'Form bilgilerini kontrol et (422).';
-  if (status >= 500) return message || `Sunucuda bir hata oluştu (${status}). Lütfen tekrar dene.`;
-  return message || `İşlem tamamlanamadı (${status}).`;
+  const byStatus = {
+    400: ['VALIDATION_ERROR', message || 'Form bilgilerini kontrol et.'],
+    401: ['UNAUTHORIZED', 'Oturumun sona erdi. Lütfen tekrar giriş yap.'],
+    403: ['FORBIDDEN', message || 'Şoför yetkiniz doğrulanamadı.'],
+    404: ['NOT_FOUND', message || 'İstenen kayıt bulunamadı.'],
+    409: ['VALIDATION_ERROR', message || 'Bu bilgi zaten kayıtlı.'],
+    422: ['VALIDATION_ERROR', message || 'Form bilgilerini kontrol et.'],
+  };
+  const [type, normalizedMessage] = byStatus[status] || (status >= 500 ? ['SERVER_ERROR', message || 'Sunucuda bir hata oluştu. Lütfen tekrar dene.'] : ['UNKNOWN_ERROR', message || 'İşlem tamamlanamadı.']);
+  return { type, message: normalizedMessage, messageWithRequestId: withRequestId(normalizedMessage), requestId, status };
 };

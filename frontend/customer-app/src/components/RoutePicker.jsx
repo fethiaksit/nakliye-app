@@ -6,7 +6,8 @@ import { maps } from '../services/api';
 import { nativeGoogleMapsConfigured, nativeGoogleMapsMessage } from '../config/maps';
 import MapAdapter from '../../../shared/maps/MapAdapter';
 import MapUnavailable from '../../../shared/maps/MapUnavailable';
-import { isExpoGo } from '../../../shared/maps/mapRuntime';
+
+const { isLatestLocationRequest, updateLocationDraft } = require('../utils/locationSelection.cjs');
 
 const DEFAULT_REGION = {
   latitude: 39.05,
@@ -17,25 +18,31 @@ const DEFAULT_REGION = {
 
 const number = value => new Intl.NumberFormat('tr-TR', { maximumFractionDigits: 1 }).format(value || 0);
 const money = value => new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY', maximumFractionDigits: 0 }).format(Math.round(value || 0));
-const pointKey = coordinate => `${coordinate.latitude.toFixed(6)},${coordinate.longitude.toFixed(6)}`;
 const samePoint = (first, second) => Math.abs(first.latitude - second.latitude) < 0.000001 && Math.abs(first.longitude - second.longitude) < 0.000001;
 const fallbackLocation = location => location ? { ...location.coordinate, address: location.formattedAddress } : null;
 
 function mapErrorMessage(error, fallback) {
-  if (error?.code === 'ECONNABORTED') return 'Rota servisi zamanında yanıt vermedi. Tekrar deneyin.';
-  if (!error?.response) return fallback;
+  if (error?.code === 'ECONNABORTED') return 'Harita servisi zamanında yanıt vermedi. Tekrar deneyin.';
+  if (!error?.response) return error?.request || error?.code === 'ERR_NETWORK' ? 'Harita servisine ulaşılamadı. İnternet bağlantınızı kontrol edin.' : fallback;
   const responseError = error.response.data?.error;
+  const code = responseError?.code;
+  if (code === 'MAPS_TIMEOUT') return 'Adres servisi zamanında yanıt vermedi. Tekrar deneyin.';
+  if (code === 'MAPS_NETWORK_ERROR') return 'Adres servisine ulaşılamadı. İnternet bağlantınızı kontrol edin.';
+  if (code === 'MAPS_ZERO_RESULTS') return 'Bu konum için açık adres bulunamadı. Konumu tekrar seçin.';
+  if (code === 'MAPS_RESOURCE_EXHAUSTED') return 'Adres servisi kullanım sınırına ulaştı. Lütfen daha sonra tekrar deneyin.';
+  if (code === 'MAPS_INVALID_REQUEST') return 'Adres isteği doğrulanamadı. Konumu tekrar seçin.';
+  if (code === 'MAPS_PERMISSION_DENIED' || code === 'MAPS_NOT_CONFIGURED') return 'Adres servisi şu anda kullanılamıyor.';
   return typeof responseError === 'string' ? responseError : responseError?.message || fallback;
 }
 
 const newPlacesSessionToken = () => `nakliye-${Date.now()}-${Math.random().toString(36).slice(2, 14)}`;
 
-function useAddressSearch(query, enabled, sessionToken) {
+function useAddressSearch(query, enabled, sessionToken, locationBias) {
   const [state, setState] = useState({ loading: false, items: [], error: '' });
 
   useEffect(() => {
     const normalized = query.trim();
-    if (!enabled || normalized.length < 2) {
+    if (!enabled || normalized.length < 3) {
       setState({ loading: false, items: [], error: '' });
       return undefined;
     }
@@ -43,7 +50,7 @@ function useAddressSearch(query, enabled, sessionToken) {
     const timer = setTimeout(async () => {
       setState({ loading: true, items: [], error: '' });
       try {
-        const items = await maps.autocomplete(normalized, sessionToken, controller.signal);
+        const items = await maps.autocomplete(normalized, sessionToken, controller.signal, locationBias);
         if (!controller.signal.aborted) setState({ loading: false, items, error: '' });
       } catch (error) {
         if (!controller.signal.aborted) setState({ loading: false, items: [], error: mapErrorMessage(error, 'Adres önerileri alınamadı.') });
@@ -53,7 +60,7 @@ function useAddressSearch(query, enabled, sessionToken) {
       clearTimeout(timer);
       controller.abort();
     };
-  }, [enabled, query, sessionToken]);
+  }, [enabled, locationBias?.latitude, locationBias?.longitude, query, sessionToken]);
 
   return state;
 }
@@ -76,7 +83,7 @@ const AddressField = memo(function AddressField({ accent, active, label, onActiv
       </View>
       {search.loading && <ActivityIndicator color={accent} size="small" />}
     </Pressable>
-    {active && query.trim().length >= 2 && <View style={styles.suggestions}>
+    {active && query.trim().length >= 3 && <View style={styles.suggestions}>
       {search.items.map(item => <Pressable key={item.placeId || item.formattedAddress} style={styles.suggestion} onPress={() => void onSelect(item)}>
         <Text style={styles.suggestionTitle} numberOfLines={2}>{item.formattedAddress}</Text>
       </Pressable>)}
@@ -85,24 +92,50 @@ const AddressField = memo(function AddressField({ accent, active, label, onActiv
   </View>;
 });
 
-export default function RoutePicker({ onLocationsChange, onRouteChange }) {
+export default function RoutePicker({ value, onLocationsChange, onRouteChange }) {
   const mapRef = useRef(null);
-  const selectionRef = useRef({ pickup: '', dropoff: '' });
-  const locationsRef = useRef({ pickup: null, dropoff: null });
+  const requestSequenceRef = useRef({ pickup: 0, dropoff: 0 });
+  const reverseControllersRef = useRef({ pickup: null, dropoff: null });
+  const detailsControllersRef = useRef({ pickup: null, dropoff: null });
+  const locationsRef = useRef({ pickup: value?.pickup || null, dropoff: value?.dropoff || null });
   const placesSessionsRef = useRef({ pickup: newPlacesSessionToken(), dropoff: newPlacesSessionToken() });
-  const [pickupLocation, setPickupLocation] = useState(null);
-  const [dropoffLocation, setDropoffLocation] = useState(null);
+  const [pickupLocation, setPickupLocation] = useState(value?.pickup || null);
+  const [dropoffLocation, setDropoffLocation] = useState(value?.dropoff || null);
   const [activeLocationField, setActiveLocationField] = useState('pickup');
-  const [pickupQuery, setPickupQuery] = useState('');
-  const [dropoffQuery, setDropoffQuery] = useState('');
+  const [pickupQuery, setPickupQuery] = useState(value?.pickup?.formattedAddress || '');
+  const [dropoffQuery, setDropoffQuery] = useState(value?.dropoff?.formattedAddress || '');
   const [pickupFocused, setPickupFocused] = useState(false);
   const [dropoffFocused, setDropoffFocused] = useState(false);
-  const [route, setRoute] = useState(null);
-  const [routeState, setRouteState] = useState('Varış konumunu seçin.');
+  const [route, setRoute] = useState(value?.route || null);
+  const [routeState, setRouteState] = useState(value?.route ? 'Gerçek araç rotası hazır.' : 'Varış konumunu seçin.');
   const [locating, setLocating] = useState(false);
+  const [locationBias, setLocationBias] = useState(value?.pickup?.coordinate || value?.dropoff?.coordinate || null);
 
-  const pickupSearch = useAddressSearch(pickupQuery, pickupFocused, placesSessionsRef.current.pickup);
-  const dropoffSearch = useAddressSearch(dropoffQuery, dropoffFocused, placesSessionsRef.current.dropoff);
+  const pickupSearch = useAddressSearch(pickupQuery, pickupFocused, placesSessionsRef.current.pickup, locationBias);
+  const dropoffSearch = useAddressSearch(dropoffQuery, dropoffFocused, placesSessionsRef.current.dropoff, locationBias);
+
+  useEffect(() => () => {
+    reverseControllersRef.current.pickup?.abort();
+    reverseControllersRef.current.dropoff?.abort();
+    detailsControllersRef.current.pickup?.abort();
+    detailsControllersRef.current.dropoff?.abort();
+  }, []);
+
+  useEffect(() => {
+    if (value?.pickup === locationsRef.current.pickup && value?.dropoff === locationsRef.current.dropoff) return;
+    reverseControllersRef.current.pickup?.abort();
+    reverseControllersRef.current.dropoff?.abort();
+    detailsControllersRef.current.pickup?.abort();
+    detailsControllersRef.current.dropoff?.abort();
+    ++requestSequenceRef.current.pickup;
+    ++requestSequenceRef.current.dropoff;
+    locationsRef.current = { pickup: value?.pickup || null, dropoff: value?.dropoff || null };
+    setPickupLocation(value?.pickup || null);
+    setDropoffLocation(value?.dropoff || null);
+    setPickupQuery(value?.pickup?.formattedAddress || '');
+    setDropoffQuery(value?.dropoff?.formattedAddress || '');
+    setRoute(value?.route || null);
+  }, [value?.dropoff, value?.pickup, value?.route]);
 
   const setRouteEmpty = useCallback(() => {
     setRoute(null);
@@ -110,7 +143,7 @@ export default function RoutePicker({ onLocationsChange, onRouteChange }) {
   }, [onRouteChange]);
 
   const updateLocation = useCallback((field, location) => {
-    const nextLocations = { ...locationsRef.current, [field]: location };
+    const nextLocations = updateLocationDraft(locationsRef.current, field, location);
     locationsRef.current = nextLocations;
     if (field === 'pickup') {
       setPickupLocation(location);
@@ -126,39 +159,72 @@ export default function RoutePicker({ onLocationsChange, onRouteChange }) {
   }, [onLocationsChange, setRouteEmpty]);
 
   const selectCoordinate = useCallback(async (field, coordinate) => {
-    const selectionKey = pointKey(coordinate);
-    selectionRef.current[field] = selectionKey;
+    reverseControllersRef.current[field]?.abort();
+    detailsControllersRef.current[field]?.abort();
+    const controller = new AbortController();
+    reverseControllersRef.current[field] = controller;
+    const sequence = ++requestSequenceRef.current[field];
+    setLocationBias(coordinate);
     updateLocation(field, { coordinate, formattedAddress: '', resolvingAddress: true });
-    if (field === 'pickup') setActiveLocationField('dropoff');
     try {
-      const data = await maps.reverse(coordinate.latitude, coordinate.longitude);
-      if (selectionRef.current[field] === selectionKey) {
+      const data = await maps.reverse(coordinate.latitude, coordinate.longitude, controller.signal);
+      if (!controller.signal.aborted && isLatestLocationRequest(requestSequenceRef.current, field, sequence)) {
+        const address = { ...data };
+        delete address.coordinate;
         updateLocation(field, {
+          ...address,
           coordinate,
-          formattedAddress: data.formattedAddress,
-          placeId: data.placeId,
           resolvingAddress: false,
         });
       }
     } catch (error) {
-      if (selectionRef.current[field] === selectionKey) updateLocation(field, { coordinate, formattedAddress: '', resolvingAddress: false, geocodeError: true });
+      if (controller.signal.aborted || error?.code === 'ERR_CANCELED') return;
+      if (isLatestLocationRequest(requestSequenceRef.current, field, sequence)) updateLocation(field, { coordinate, formattedAddress: '', resolvingAddress: false, geocodeError: true });
       Alert.alert('Adres alınamadı', mapErrorMessage(error, 'Seçilen konumun açık adresi alınamadı.'));
     }
   }, [updateLocation]);
 
   const selectSuggestion = useCallback(async (field, item) => {
+    reverseControllersRef.current[field]?.abort();
+    detailsControllersRef.current[field]?.abort();
+    const controller = new AbortController();
+    detailsControllersRef.current[field] = controller;
+    const sequence = ++requestSequenceRef.current[field];
     try {
-      const location = await maps.placeDetails(item.placeId, placesSessionsRef.current[field]);
-      const normalized = { coordinate: location.coordinate, formattedAddress: location.formattedAddress, placeId: location.placeId };
-      selectionRef.current[field] = pointKey(normalized.coordinate);
+      const location = await maps.placeDetails(item.placeId, placesSessionsRef.current[field], controller.signal);
+      if (controller.signal.aborted || !isLatestLocationRequest(requestSequenceRef.current, field, sequence)) return;
+      const normalized = { ...location, coordinate: location.coordinate, formattedAddress: location.formattedAddress, placeId: location.placeId };
       updateLocation(field, normalized);
-      if (field === 'pickup') setActiveLocationField('dropoff');
+      setLocationBias(normalized.coordinate);
       placesSessionsRef.current[field] = newPlacesSessionToken();
       mapRef.current?.animateToRegion({ ...normalized.coordinate, latitudeDelta: 0.04, longitudeDelta: 0.04 }, 350);
     } catch (error) {
+      if (controller.signal.aborted || error?.code === 'ERR_CANCELED') return;
       Alert.alert('Adres seçilemedi', mapErrorMessage(error, 'Adres önerileri alınamadı.'));
     }
   }, [updateLocation]);
+
+  const editQuery = useCallback((field, query) => {
+    reverseControllersRef.current[field]?.abort();
+    detailsControllersRef.current[field]?.abort();
+    ++requestSequenceRef.current[field];
+    const nextLocations = updateLocationDraft(locationsRef.current, field, null);
+    locationsRef.current = nextLocations;
+    if (field === 'pickup') {
+      setPickupLocation(null);
+      setPickupQuery(query);
+      setPickupFocused(true);
+      setDropoffFocused(false);
+    } else {
+      setDropoffLocation(null);
+      setDropoffQuery(query);
+      setDropoffFocused(true);
+      setPickupFocused(false);
+    }
+    setActiveLocationField(field);
+    onLocationsChange(nextLocations);
+    setRouteEmpty();
+  }, [onLocationsChange, setRouteEmpty]);
 
   const pickupLatitude = pickupLocation?.coordinate.latitude;
   const pickupLongitude = pickupLocation?.coordinate.longitude;
@@ -183,7 +249,7 @@ export default function RoutePicker({ onLocationsChange, onRouteChange }) {
       return undefined;
     }
     if (pickupLocation.geocodeError || dropoffLocation.geocodeError) {
-      setRouteState('Seçilen konumun adresi Google’dan alınamadı. Tekrar deneyin.');
+      setRouteState('Seçilen konumun açık adresi alınamadı. Tekrar deneyin.');
       setRouteEmpty();
       return undefined;
     }
@@ -253,6 +319,7 @@ export default function RoutePicker({ onLocationsChange, onRouteChange }) {
       }
       const coordinate = { latitude: position.coords.latitude, longitude: position.coords.longitude };
       setActiveLocationField('pickup');
+      setLocationBias(coordinate);
       await selectCoordinate('pickup', coordinate);
       mapRef.current?.animateToRegion({ ...coordinate, latitudeDelta: 0.025, longitudeDelta: 0.025 }, 350);
     } catch (error) {
@@ -264,6 +331,12 @@ export default function RoutePicker({ onLocationsChange, onRouteChange }) {
   }, [selectCoordinate]);
 
   const swapLocations = useCallback(() => {
+    reverseControllersRef.current.pickup?.abort();
+    reverseControllersRef.current.dropoff?.abort();
+    detailsControllersRef.current.pickup?.abort();
+    detailsControllersRef.current.dropoff?.abort();
+    ++requestSequenceRef.current.pickup;
+    ++requestSequenceRef.current.dropoff;
     setPickupLocation(dropoffLocation);
     setDropoffLocation(pickupLocation);
     setPickupQuery(dropoffLocation?.formattedAddress || '');
@@ -277,7 +350,9 @@ export default function RoutePicker({ onLocationsChange, onRouteChange }) {
   }, [dropoffLocation, onLocationsChange, pickupLocation, setRouteEmpty]);
 
   const clearActiveLocation = useCallback(() => {
-    selectionRef.current[activeLocationField] = '';
+    reverseControllersRef.current[activeLocationField]?.abort();
+    detailsControllersRef.current[activeLocationField]?.abort();
+    ++requestSequenceRef.current[activeLocationField];
     updateLocation(activeLocationField, null);
   }, [activeLocationField, updateLocation]);
 
@@ -297,7 +372,7 @@ export default function RoutePicker({ onLocationsChange, onRouteChange }) {
       active={pickupFocused}
       label="Yük nereden alınacak?"
       onActivate={() => { setActiveLocationField('pickup'); setPickupFocused(true); setDropoffFocused(false); }}
-      onChange={value => { setActiveLocationField('pickup'); setPickupFocused(true); setPickupQuery(value); }}
+      onChange={value => editQuery('pickup', value)}
       onSelect={item => selectSuggestion('pickup', item)}
       query={pickupQuery}
       search={pickupSearch}
@@ -307,7 +382,7 @@ export default function RoutePicker({ onLocationsChange, onRouteChange }) {
       active={dropoffFocused}
       label="Yük nereye teslim edilecek?"
       onActivate={() => { setActiveLocationField('dropoff'); setDropoffFocused(true); setPickupFocused(false); }}
-      onChange={value => { setActiveLocationField('dropoff'); setDropoffFocused(true); setDropoffQuery(value); }}
+      onChange={value => editQuery('dropoff', value)}
       onSelect={item => selectSuggestion('dropoff', item)}
       query={dropoffQuery}
       search={dropoffSearch}
@@ -323,10 +398,11 @@ export default function RoutePicker({ onLocationsChange, onRouteChange }) {
     </View>
 
     <View style={styles.mapFrame}>
-      {(isExpoGo || nativeGoogleMapsConfigured) ? <MapAdapter
+      {nativeGoogleMapsConfigured ? <MapAdapter
         mapRef={mapRef}
         style={styles.map}
         initialRegion={DEFAULT_REGION}
+        onRegionChangeComplete={region => { if (region.latitudeDelta < 2 && region.longitudeDelta < 2) setLocationBias({ latitude: region.latitude, longitude: region.longitude }); }}
         onPress={event => void selectCoordinate(activeLocationField, event.nativeEvent.coordinate)}
         onMapReady={() => route?.routeCoordinates?.length > 1 && mapRef.current?.fitToCoordinates(route.routeCoordinates, { edgePadding: { top: 90, right: 36, bottom: 260, left: 36 }, animated: false })}
         markers={[
@@ -336,7 +412,7 @@ export default function RoutePicker({ onLocationsChange, onRouteChange }) {
         polylineCoordinates={route?.routeCoordinates}
         fallback={<MapUnavailable pickup={fallbackLocation(pickupLocation)} dropoff={fallbackLocation(dropoffLocation)} distanceLabel={route ? `${number(route.distanceKm)} km` : ''} durationLabel={route ? `${Math.round(route.durationMinutes)} dk` : ''} priceLabel={route ? money(route.estimatedPrice) : ''} />}
       /> : <MapUnavailable message={nativeGoogleMapsMessage} pickup={fallbackLocation(pickupLocation)} dropoff={fallbackLocation(dropoffLocation)} distanceLabel={route ? `${number(route.distanceKm)} km` : ''} durationLabel={route ? `${Math.round(route.durationMinutes)} dk` : ''} priceLabel={route ? money(route.estimatedPrice) : ''} />}
-      {!isExpoGo && nativeGoogleMapsConfigured ? <View style={styles.mapHint}><Text style={styles.mapHintText}>Haritaya dokun: {activeLocationField === 'pickup' ? 'başlangıç' : 'varış'} seçiliyor</Text></View> : null}
+      {nativeGoogleMapsConfigured ? <View style={styles.mapHint}><Text style={styles.mapHintText}>Haritaya dokun: {activeLocationField === 'pickup' ? 'başlangıç' : 'varış'} seçiliyor</Text></View> : null}
     </View>
 
     <View style={styles.routeStatus}><Text style={styles.routeStatusText}>{routeState}</Text>{routeState === 'Rota hesaplanıyor…' && <ActivityIndicator size="small" color="#3658cb" />}</View>

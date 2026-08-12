@@ -3,8 +3,8 @@
 // package/bundle identifier. The server Places/Routes key is never bundled.
 const validMobileKey = value => typeof value === 'string' && value !== '' && value === value.trim() && !/^['"]|['"]$/.test(value);
 const publicMapsKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
-const googleMapsIOSKey = validMobileKey(process.env.EXPO_PUBLIC_GOOGLE_MAPS_IOS_KEY) ? process.env.EXPO_PUBLIC_GOOGLE_MAPS_IOS_KEY : (validMobileKey(publicMapsKey) ? publicMapsKey : '');
-const googleMapsAndroidKey = validMobileKey(process.env.EXPO_PUBLIC_GOOGLE_MAPS_ANDROID_KEY) ? process.env.EXPO_PUBLIC_GOOGLE_MAPS_ANDROID_KEY : (validMobileKey(publicMapsKey) ? publicMapsKey : '');
+const googleMapsIOSKey = [process.env.GOOGLE_MAPS_IOS_API_KEY, process.env.EXPO_PUBLIC_GOOGLE_MAPS_IOS_KEY, publicMapsKey].find(validMobileKey) || '';
+const googleMapsAndroidKey = [process.env.GOOGLE_MAPS_ANDROID_API_KEY, process.env.EXPO_PUBLIC_GOOGLE_MAPS_ANDROID_KEY, publicMapsKey].find(validMobileKey) || '';
 const expo = {
   name: 'NakliyeGo Şoför',
   slug: 'nakliyego-driver',
@@ -13,27 +13,26 @@ const expo = {
   userInterfaceStyle: 'automatic',
   ios: {
     bundleIdentifier: 'com.nakliyego.driver',
+    ...(googleMapsIOSKey ? { config: { googleMapsApiKey: googleMapsIOSKey } } : {}),
     infoPlist: {
       NSLocationWhenInUseUsageDescription: 'Yakındaki nakliye işlerini ve seçtiğiniz konumları gösterebilmek için konum izni gereklidir.',
       NSLocalNetworkUsageDescription: 'Nakliye uygulaması geliştirme sunucusuna bağlanmak için yerel ağ erişimi kullanır.',
       NSAppTransportSecurity: { NSAllowsLocalNetworking: true },
     },
   },
-  android: { package: 'com.nakliyego.driver', permissions: ['ACCESS_COARSE_LOCATION', 'ACCESS_FINE_LOCATION'] },
+  android: {
+    package: 'com.nakliyego.driver',
+    permissions: ['ACCESS_COARSE_LOCATION', 'ACCESS_FINE_LOCATION'],
+    ...(googleMapsAndroidKey ? { config: { googleMaps: { apiKey: googleMapsAndroidKey } } } : {}),
+  },
+  extra: { googleMapsConfigured: { ios: Boolean(googleMapsIOSKey), android: Boolean(googleMapsAndroidKey) } },
 };
-const mapsPluginOptions = {};
-if (googleMapsIOSKey) mapsPluginOptions.iosGoogleMapsApiKey = googleMapsIOSKey;
-if (googleMapsAndroidKey) mapsPluginOptions.androidGoogleMapsApiKey = googleMapsAndroidKey;
-const mapsPlugin = Object.keys(mapsPluginOptions).length
-  ? [['react-native-maps', mapsPluginOptions]]
-  : [];
 
 module.exports = {
   ...expo,
   scheme: expo.scheme || 'nakliyego-driver',
   plugins: [
     ...(expo.plugins || []),
-    ...mapsPlugin,
     'expo-secure-store',
     ['expo-image-picker', {
       photosPermission: 'Sohbette fotoğraf göndermek için galeri erişimi gerekir.',

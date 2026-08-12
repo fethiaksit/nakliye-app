@@ -12,6 +12,8 @@ import (
 	"nakliye-api/internal/models"
 )
 
+var ErrUserExists = errors.New("user already exists")
+
 type RedisStore struct {
 	client *redis.Client
 	ctx    context.Context
@@ -85,6 +87,44 @@ func (s *RedisStore) ListLoads(customerID, driverID, status, query string, offse
 		all = append(all, l)
 	}
 	total := len(all)
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > total {
+		offset = total
+	}
+	end := offset + limit
+	if limit <= 0 || end > total {
+		end = total
+	}
+	return all[offset:end], total, nil
+}
+
+func (s *RedisStore) ListDriverLoads(driverID, query string, offset, limit int) ([]models.Load, int, error) {
+	ids, err := s.client.ZRevRange(s.ctx, "loads", 0, -1).Result()
+	if err != nil {
+		return nil, 0, err
+	}
+	q := strings.ToLower(strings.TrimSpace(query))
+	all := make([]models.Load, 0, len(ids))
+	for _, id := range ids {
+		load, getErr := s.GetLoad(id)
+		if getErr != nil || load.DeletedAt != nil {
+			continue
+		}
+		offerable := load.Status == models.LoadStatusPublished || load.Status == models.LoadStatusOffersReceived || load.Status == models.LoadStatusOpenLegacy
+		if !offerable && load.AssignedDriver != driverID {
+			continue
+		}
+		if q != "" && !strings.Contains(strings.ToLower(load.Title+" "+load.Pickup.Address+" "+load.Delivery.Address), q) {
+			continue
+		}
+		all = append(all, load)
+	}
+	total := len(all)
+	if offset < 0 {
+		offset = 0
+	}
 	if offset > total {
 		offset = total
 	}
@@ -105,6 +145,33 @@ func (s *RedisStore) SaveUser(u models.User) error {
 	pipe.Set(s.ctx, "user-phone:"+u.Phone, u.ID, 0)
 	_, err = pipe.Exec(s.ctx)
 	return err
+}
+
+func (s *RedisStore) CreateUser(u models.User) error {
+	body, err := json.Marshal(u)
+	if err != nil {
+		return err
+	}
+	script := redis.NewScript(`
+if redis.call('EXISTS', KEYS[1]) == 1 or redis.call('EXISTS', KEYS[2]) == 1 then
+  return 0
+end
+redis.call('SET', KEYS[1], ARGV[2])
+redis.call('SET', KEYS[2], ARGV[2])
+redis.call('SET', KEYS[3], ARGV[1])
+return 1`)
+	created, err := script.Run(s.ctx, s.client, []string{
+		"user-email:" + strings.ToLower(u.Email),
+		"user-phone:" + u.Phone,
+		"user:" + u.ID,
+	}, body, u.ID).Int64()
+	if err != nil {
+		return err
+	}
+	if created != 1 {
+		return ErrUserExists
+	}
+	return nil
 }
 func (s *RedisStore) UpdateUser(previous, updated models.User) error {
 	b, err := json.Marshal(updated)

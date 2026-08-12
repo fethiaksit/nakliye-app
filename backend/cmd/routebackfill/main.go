@@ -12,9 +12,9 @@ import (
 	"nakliye-api/internal/store"
 )
 
-// routebackfill upgrades pre-Google Redis load records after a real Google
-// server key has been configured. It is opt-in so a deployment never mutates
-// customer data merely because the API binary starts.
+// routebackfill upgrades older Redis load records after a real maps provider
+// key has been configured. It is opt-in so a deployment never mutates customer
+// data merely because the API binary starts.
 func main() {
 	apply := flag.Bool("apply", false, "Google rota verisini Redis kayıtlarına yaz")
 	flag.Parse()
@@ -24,7 +24,7 @@ func main() {
 	}
 	cfg := config.Load()
 	if cfg.GoogleMapsServerAPIKey == "" {
-		log.Fatal("GOOGLE_MAPS_API_KEY zorunludur")
+		log.Fatal("GOOGLE_MAPS_SERVER_API_KEY zorunludur")
 	}
 	redisStore, err := store.New(cfg.RedisURL)
 	if err != nil {

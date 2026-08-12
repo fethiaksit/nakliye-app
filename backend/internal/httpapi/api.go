@@ -29,10 +29,17 @@ import (
 type API struct {
 	store          *store.RedisStore
 	secret         []byte
-	maps           *service.GoogleMapsClient
+	maps           mapsService
 	mapsKeyIssue   string
 	locationRate   *service.FixedWindowLimiter
 	maxUploadBytes int64
+}
+
+type mapsService interface {
+	Autocomplete(context.Context, string, string, *models.Coordinate) ([]service.PlaceSuggestion, error)
+	PlaceDetails(context.Context, string, string) (service.SearchResult, error)
+	Reverse(context.Context, models.Coordinate) (service.SearchResult, error)
+	Calculate(context.Context, models.Coordinate, models.Coordinate) (service.RouteResult, error)
 }
 type principal struct{ ID, Role string }
 type contextKey string
@@ -40,29 +47,22 @@ type contextKey string
 const userKey contextKey = "user"
 
 type Options struct {
-	Secret                   string
-	GoogleMapsServerAPIKey   string
-	GoogleMapsServerKeyError string
-	PricePerKM               float64
-	MaxUploadMB              int
+	Secret                 string
+	GoogleMapsServerAPIKey string
+	MapsKeyError           string
+	PricePerKM             float64
+	MaxUploadMB            int
 }
 
-func New(s *store.RedisStore, secret ...string) *API {
-	value := "change-this-development-secret"
-	if len(secret) > 0 {
-		value = secret[0]
-	}
+func New(s *store.RedisStore, secret string) *API {
 	return NewWithOptions(s, Options{
-		Secret:      value,
+		Secret:      secret,
 		PricePerKM:  service.DefaultPricePerKM,
 		MaxUploadMB: 10,
 	})
 }
 
 func NewWithOptions(s *store.RedisStore, options Options) *API {
-	if options.Secret == "" {
-		options.Secret = "change-this-development-secret"
-	}
 	if options.PricePerKM <= 0 {
 		options.PricePerKM = service.DefaultPricePerKM
 	}
@@ -73,7 +73,7 @@ func NewWithOptions(s *store.RedisStore, options Options) *API {
 		store:          s,
 		secret:         []byte(options.Secret),
 		maps:           service.NewGoogleMapsClient(options.GoogleMapsServerAPIKey, options.PricePerKM),
-		mapsKeyIssue:   options.GoogleMapsServerKeyError,
+		mapsKeyIssue:   options.MapsKeyError,
 		locationRate:   service.NewFixedWindowLimiter(60, time.Minute),
 		maxUploadBytes: int64(options.MaxUploadMB) << 20,
 	}
@@ -91,12 +91,13 @@ func (a *API) Routes() http.Handler {
 	mux.Handle("PATCH /api/me", a.auth(http.HandlerFunc(a.updateMe)))
 	mux.Handle("PATCH /api/me/password", a.auth(http.HandlerFunc(a.updatePassword)))
 	mux.HandleFunc("GET /api/photos/{id}", a.photo)
+	mux.HandleFunc("GET /api/maps/status", a.mapStatus)
 	mux.Handle("GET /api/maps/places/autocomplete", a.auth(http.HandlerFunc(a.mapAutocomplete)))
 	mux.Handle("GET /api/maps/places/{placeId}", a.auth(http.HandlerFunc(a.mapPlaceDetails)))
 	mux.Handle("POST /api/maps/reverse-geocode", a.auth(http.HandlerFunc(a.mapReverseGeocode)))
 	mux.Handle("POST /api/maps/routes/calculate", a.auth(http.HandlerFunc(a.mapCalculateRoute)))
-	// Backward-compatible application aliases. They now call only the Google
-	// Maps service; no Nominatim or OSRM traffic remains in the project.
+	// Backward-compatible application aliases. They still route through the
+	// same Google-only service used by the primary endpoints.
 	mux.Handle("GET /api/locations/search", a.auth(http.HandlerFunc(a.searchLocations)))
 	mux.Handle("GET /api/locations/reverse", a.auth(http.HandlerFunc(a.reverseLocation)))
 	mux.Handle("POST /api/routes/calculate", a.auth(http.HandlerFunc(a.calculateRoute)))
@@ -140,7 +141,7 @@ func (a *API) Routes() http.Handler {
 }
 func (a *API) health(w http.ResponseWriter, r *http.Request) {
 	if err := a.store.Ping(); err != nil {
-		jsonResponse(w, http.StatusServiceUnavailable, map[string]string{"status": "unavailable", "service": "nakliye-api", "storage": "redis", "error": "veri deposuna ulaşılamıyor"})
+		errorResponse(w, http.StatusServiceUnavailable, "STORAGE_UNAVAILABLE", "veri deposuna ulaşılamıyor", map[string]any{"service": "nakliye-api", "storage": "redis"})
 		return
 	}
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "ok", "service": "nakliye-api", "storage": "redis"})
@@ -152,7 +153,10 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
 	req.Phone = normalizePhone(req.Phone)
-	if req.Name == "" || !strings.Contains(req.Email, "@") || !validTurkishPhone(req.Phone) || len(req.Password) < 8 || (req.Role != "customer" && req.Role != "driver") {
+	// Public registration intentionally permits only the two mobile roles.
+	// Corporate and admin are valid system roles but must be provisioned by a
+	// trusted administrative workflow, never by this public endpoint.
+	if strings.TrimSpace(req.Name) == "" || !strings.Contains(req.Email, "@") || !validTurkishPhone(req.Phone) || len(req.Password) < 8 || (req.Role != models.RoleCustomer && req.Role != models.RoleDriver) {
 		badRequest(w, "ad, geçerli e-posta ve telefon, en az 8 karakter şifre ve rol zorunludur")
 		return
 	}
@@ -169,8 +173,11 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 		serverError(w, err)
 		return
 	}
-	u := models.User{ID: uuid.NewString(), Name: req.Name, Email: req.Email, Phone: req.Phone, Role: req.Role, PasswordHash: hash, CreatedAt: time.Now().UTC()}
-	if e := a.store.SaveUser(u); e != nil {
+	u := models.User{ID: uuid.NewString(), Name: strings.TrimSpace(req.Name), Email: req.Email, Phone: req.Phone, Role: req.Role, PasswordHash: hash, CreatedAt: time.Now().UTC()}
+	if e := a.store.CreateUser(u); errors.Is(e, store.ErrUserExists) {
+		conflict(w, "e-posta veya telefon numarası zaten kayıtlı")
+		return
+	} else if e != nil {
 		serverError(w, e)
 		return
 	}
@@ -188,7 +195,7 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 	} else {
 		u, e = a.store.GetUserByPhone(normalizePhone(req.Phone))
 	}
-	if e != nil || !verifyPassword(u.PasswordHash, req.Password) {
+	if e != nil || !models.ValidRole(u.Role) || !verifyPassword(u.PasswordHash, req.Password) {
 		unauthorized(w, "e-posta veya şifre hatalı")
 		return
 	}
@@ -311,7 +318,7 @@ func (a *API) updateMe(w http.ResponseWriter, r *http.Request) {
 		conflict(w, "bu telefon numarası zaten kayıtlı")
 		return
 	}
-	if principal.Role == "driver" {
+	if principal.Role == models.RoleDriver {
 		if req.DriverProfile.CapacityKG < 0 || req.DriverProfile.Rating < 0 || req.DriverProfile.Rating > 5 {
 			badRequest(w, "şoför profil bilgileri geçersiz")
 			return
@@ -360,8 +367,12 @@ func (a *API) updatePassword(w http.ResponseWriter, r *http.Request) {
 }
 func (a *API) loads(w http.ResponseWriter, r *http.Request) {
 	p := current(r)
-	if p.Role == "driver" {
+	if p.Role == models.RoleDriver {
 		a.driverLoads(w, r)
+		return
+	}
+	if p.Role != models.RoleCustomer {
+		forbidden(w)
 		return
 	}
 	q := r.URL.Query()
@@ -378,18 +389,18 @@ func (a *API) loads(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, 200, map[string]any{"items": a.withOfferSummary(ls), "total": total, "offset": offset, "limit": limit})
 }
 func (a *API) myLoads(w http.ResponseWriter, r *http.Request) {
-	if current(r).Role != "customer" {
+	if current(r).Role != models.RoleCustomer {
 		forbidden(w)
 		return
 	}
 	a.loads(w, r)
 }
 func isOfferableStatus(status string) bool {
-	return status == "published" || status == "offers_received" || status == "open"
+	return status == models.LoadStatusPublished || status == models.LoadStatusOffersReceived || status == models.LoadStatusOpenLegacy
 }
 func (a *API) driverLoads(w http.ResponseWriter, r *http.Request) {
 	p := current(r)
-	if p.Role != "driver" {
+	if p.Role != models.RoleDriver {
 		forbidden(w)
 		return
 	}
@@ -399,26 +410,12 @@ func (a *API) driverLoads(w http.ResponseWriter, r *http.Request) {
 	if limit <= 0 || limit > 100 {
 		limit = 20
 	}
-	all, _, err := a.store.ListLoads("", "", "", q.Get("q"), 0, 500)
+	items, total, err := a.store.ListDriverLoads(p.ID, q.Get("q"), offset, limit)
 	if err != nil {
 		serverError(w, err)
 		return
 	}
-	items := make([]models.Load, 0, len(all))
-	for _, load := range all {
-		if isOfferableStatus(load.Status) || load.AssignedDriver == p.ID {
-			items = append(items, load)
-		}
-	}
-	total := len(items)
-	if offset > total {
-		offset = total
-	}
-	end := offset + limit
-	if end > total {
-		end = total
-	}
-	jsonResponse(w, http.StatusOK, map[string]any{"items": a.withOfferSummary(items[offset:end]), "total": total, "offset": offset, "limit": limit})
+	jsonResponse(w, http.StatusOK, map[string]any{"items": a.withOfferSummary(items), "total": total, "offset": offset, "limit": limit})
 }
 func (a *API) withOfferSummary(loads []models.Load) []models.Load {
 	for index := range loads {
@@ -449,7 +446,7 @@ func (a *API) searchLocations(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, "arama metni en az 2 karakter olmalıdır")
 		return
 	}
-	results, err := a.maps.Autocomplete(r.Context(), query, r.URL.Query().Get("session_token"))
+	results, err := a.maps.Autocomplete(r.Context(), query, r.URL.Query().Get("session_token"), autocompleteBias(r))
 	if err != nil {
 		writeRouteError(w, err, "places")
 		return
@@ -470,8 +467,10 @@ func (a *API) reverseLocation(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, "geçerli enlem ve boylam zorunludur")
 		return
 	}
-	result, err := a.maps.Reverse(r.Context(), models.Coordinate{Latitude: latitude, Longitude: longitude})
+	coordinate := models.Coordinate{Latitude: latitude, Longitude: longitude}
+	result, err := a.maps.Reverse(r.Context(), coordinate)
 	if err != nil {
+		log.Printf("[GOOGLE GEOCODING] request_id=%s lat=%.6f lng=%.6f error=%v", service.RequestID(r.Context()), latitude, longitude, err)
 		writeRouteError(w, err, "geocoding")
 		return
 	}
@@ -513,7 +512,7 @@ func (a *API) allowLocationRequest(w http.ResponseWriter, r *http.Request) bool 
 		return true
 	}
 	w.Header().Set("Retry-After", "60")
-	jsonResponse(w, http.StatusTooManyRequests, map[string]string{"error": "çok fazla konum isteği gönderildi; lütfen kısa süre sonra tekrar deneyin"})
+	errorResponse(w, http.StatusTooManyRequests, "RATE_LIMITED", "çok fazla konum isteği gönderildi; lütfen kısa süre sonra tekrar deneyin", map[string]any{"retryAfterSeconds": 60})
 	return false
 }
 
@@ -529,7 +528,15 @@ func mapsMessage(operation string) string {
 }
 
 func mapsErrorResponse(w http.ResponseWriter, status int, code, message string) {
-	jsonResponse(w, status, map[string]any{"error": map[string]string{"code": code, "message": message}})
+	errorResponse(w, status, code, message, map[string]any{})
+}
+
+func (a *API) mapStatus(w http.ResponseWriter, r *http.Request) {
+	if a.mapsKeyIssue != "" {
+		mapsErrorResponse(w, http.StatusServiceUnavailable, "MAPS_NOT_CONFIGURED", "Harita servisi yapılandırılmamış.")
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]any{"status": "ok", "provider": "google", "configured": true, "upstreamChecked": false})
 }
 
 func (a *API) mapsAvailable(w http.ResponseWriter, r *http.Request, operation string) bool {
@@ -537,7 +544,7 @@ func (a *API) mapsAvailable(w http.ResponseWriter, r *http.Request, operation st
 		return true
 	}
 	log.Printf("[GOOGLE %s] request_id=%s status=0 reason=CONFIGURATION message=%q elapsed_ms=0", strings.ToUpper(operation), service.RequestID(r.Context()), a.mapsKeyIssue)
-	mapsErrorResponse(w, http.StatusServiceUnavailable, "GOOGLE_MAPS_NOT_CONFIGURED", mapsMessage(operation))
+	mapsErrorResponse(w, http.StatusServiceUnavailable, "MAPS_NOT_CONFIGURED", mapsMessage(operation))
 	return false
 }
 
@@ -550,42 +557,48 @@ func writeRouteError(w http.ResponseWriter, err error, operations ...string) {
 	case errors.Is(err, service.ErrInvalidCoordinates), errors.Is(err, service.ErrSameCoordinates):
 		badRequest(w, err.Error())
 	case errors.Is(err, service.ErrRouteNotFound):
-		mapsErrorResponse(w, http.StatusUnprocessableEntity, "GOOGLE_ROUTES_NOT_FOUND", mapsMessage("routes"))
+		mapsErrorResponse(w, http.StatusUnprocessableEntity, "ROUTE_NOT_FOUND", mapsMessage("routes"))
 	case errors.Is(err, service.ErrPlaceNotFound):
 		message := mapsMessage(operation)
 		if operation == "geocoding" {
 			message = "Bu konum için açık adres bulunamadı."
 		}
-		mapsErrorResponse(w, http.StatusUnprocessableEntity, "GOOGLE_MAPS_ZERO_RESULTS", message)
+		mapsErrorResponse(w, http.StatusUnprocessableEntity, "MAPS_ZERO_RESULTS", message)
 	case errors.Is(err, service.ErrGoogleMapsNotConfigured):
-		log.Printf("google maps configuration error: %v", err)
-		mapsErrorResponse(w, http.StatusServiceUnavailable, "GOOGLE_MAPS_NOT_CONFIGURED", mapsMessage(operation))
+		log.Printf("maps configuration error: %v", err)
+		mapsErrorResponse(w, http.StatusServiceUnavailable, "MAPS_NOT_CONFIGURED", mapsMessage(operation))
 	case errors.Is(err, service.ErrGoogleMapsQuotaExceeded):
-		mapsErrorResponse(w, http.StatusTooManyRequests, "GOOGLE_MAPS_RESOURCE_EXHAUSTED", mapsMessage(operation))
+		mapsErrorResponse(w, http.StatusTooManyRequests, "MAPS_RESOURCE_EXHAUSTED", mapsMessage(operation))
 	case errors.Is(err, context.DeadlineExceeded):
-		mapsErrorResponse(w, http.StatusGatewayTimeout, "GOOGLE_MAPS_TIMEOUT", mapsMessage(operation))
+		mapsErrorResponse(w, http.StatusGatewayTimeout, "MAPS_TIMEOUT", mapsMessage(operation))
 	default:
 		var googleErr *service.GoogleMapsError
 		if errors.As(err, &googleErr) {
-			code := "GOOGLE_MAPS_UPSTREAM_ERROR"
-			status := http.StatusBadGateway
-			reason := strings.ToUpper(googleErr.Reason)
-			if googleErr.HTTPStatus == http.StatusUnauthorized || googleErr.HTTPStatus == http.StatusForbidden || strings.Contains(reason, "PERMISSION") || strings.Contains(reason, "API_KEY") || strings.Contains(reason, "BILLING") {
-				code, status = "GOOGLE_MAPS_PERMISSION_DENIED", http.StatusServiceUnavailable
-			} else if googleErr.HTTPStatus == http.StatusTooManyRequests || strings.Contains(reason, "RESOURCE_EXHAUSTED") || strings.Contains(reason, "QUOTA") {
-				code, status = "GOOGLE_MAPS_RESOURCE_EXHAUSTED", http.StatusTooManyRequests
-			} else if googleErr.HTTPStatus == 0 {
-				code, status = "GOOGLE_MAPS_NETWORK_ERROR", http.StatusServiceUnavailable
-			}
-			mapsErrorResponse(w, status, code, mapsMessage(operation))
+			writeProviderError(w, googleErr.HTTPStatus, googleErr.Reason, operation)
 			return
 		}
-		log.Printf("google maps request failed: %v", err)
-		mapsErrorResponse(w, http.StatusServiceUnavailable, "GOOGLE_MAPS_UPSTREAM_ERROR", mapsMessage(operation))
+		log.Printf("maps request failed: %v", err)
+		mapsErrorResponse(w, http.StatusServiceUnavailable, "MAPS_UPSTREAM_ERROR", mapsMessage(operation))
 	}
 }
 
-// New Google Maps API endpoints return a stable data envelope. The legacy
+func writeProviderError(w http.ResponseWriter, upstreamStatus int, upstreamReason, operation string) {
+	code := "MAPS_UPSTREAM_ERROR"
+	status := http.StatusBadGateway
+	reason := strings.ToUpper(upstreamReason)
+	if upstreamStatus == http.StatusUnauthorized || upstreamStatus == http.StatusForbidden || strings.Contains(reason, "PERMISSION") || strings.Contains(reason, "API_KEY") || strings.Contains(reason, "AUTH") || strings.Contains(reason, "BILLING") {
+		code, status = "MAPS_PERMISSION_DENIED", http.StatusServiceUnavailable
+	} else if upstreamStatus == http.StatusTooManyRequests || strings.Contains(reason, "RESOURCE_EXHAUSTED") || strings.Contains(reason, "QUOTA") || strings.Contains(reason, "RATE_LIMIT") {
+		code, status = "MAPS_RESOURCE_EXHAUSTED", http.StatusTooManyRequests
+	} else if strings.Contains(reason, "INVALID_ARGUMENT") || strings.Contains(reason, "INVALID_REQUEST") {
+		code, status = "MAPS_INVALID_REQUEST", http.StatusBadGateway
+	} else if upstreamStatus == 0 {
+		code, status = "MAPS_NETWORK_ERROR", http.StatusServiceUnavailable
+	}
+	mapsErrorResponse(w, status, code, mapsMessage(operation))
+}
+
+// Maps endpoints return a stable data envelope. The legacy
 // aliases above retain their old shape so already-released mobile clients do
 // not break during rollout.
 func (a *API) mapAutocomplete(w http.ResponseWriter, r *http.Request) {
@@ -600,7 +613,7 @@ func (a *API) mapAutocomplete(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, "arama metni en az 2 karakter olmalıdır")
 		return
 	}
-	items, err := a.maps.Autocomplete(r.Context(), input, r.URL.Query().Get("session_token"))
+	items, err := a.maps.Autocomplete(r.Context(), input, r.URL.Query().Get("session_token"), autocompleteBias(r))
 	if err != nil {
 		writeRouteError(w, err, "places")
 		return
@@ -617,6 +630,7 @@ func (a *API) mapPlaceDetails(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := a.maps.PlaceDetails(r.Context(), r.PathValue("placeId"), r.URL.Query().Get("session_token"))
 	if err != nil {
+		log.Printf("[GOOGLE PLACES] request_id=%s place_id=%q error=%v", service.RequestID(r.Context()), r.PathValue("placeId"), err)
 		writeRouteError(w, err, "places")
 		return
 	}
@@ -636,10 +650,24 @@ func (a *API) mapReverseGeocode(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := a.maps.Reverse(r.Context(), request)
 	if err != nil {
+		log.Printf("[GOOGLE GEOCODING] request_id=%s lat=%.6f lng=%.6f error=%v", service.RequestID(r.Context()), request.Latitude, request.Longitude, err)
 		writeRouteError(w, err, "geocoding")
 		return
 	}
 	jsonResponse(w, http.StatusOK, map[string]any{"data": result})
+}
+
+func autocompleteBias(r *http.Request) *models.Coordinate {
+	latitude, latitudeErr := strconv.ParseFloat(r.URL.Query().Get("lat"), 64)
+	longitude, longitudeErr := strconv.ParseFloat(r.URL.Query().Get("lng"), 64)
+	if latitudeErr != nil || longitudeErr != nil {
+		return nil
+	}
+	coordinate := models.Coordinate{Latitude: latitude, Longitude: longitude}
+	if !service.ValidCoordinate(coordinate) {
+		return nil
+	}
+	return &coordinate
 }
 
 type mapRouteResponse struct {
@@ -704,9 +732,25 @@ func validLoad(req loadRequest) error {
 	}
 	return nil
 }
+
+func normalizeLocation(location models.Location) models.Location {
+	location.Address = strings.TrimSpace(location.Address)
+	location.PlaceID = strings.TrimSpace(location.PlaceID)
+	location.Street = strings.TrimSpace(location.Street)
+	location.StreetNumber = strings.TrimSpace(location.StreetNumber)
+	location.Neighborhood = strings.TrimSpace(location.Neighborhood)
+	location.District = strings.TrimSpace(location.District)
+	location.City = strings.TrimSpace(location.City)
+	location.Province = strings.TrimSpace(location.Province)
+	location.PostalCode = strings.TrimSpace(location.PostalCode)
+	location.Country = strings.TrimSpace(location.Country)
+	location.CountryCode = strings.ToUpper(strings.TrimSpace(location.CountryCode))
+	return location
+}
+
 func (a *API) createLoad(w http.ResponseWriter, r *http.Request) {
 	p := current(r)
-	if p.Role != "customer" {
+	if p.Role != models.RoleCustomer {
 		forbidden(w)
 		return
 	}
@@ -718,7 +762,7 @@ func (a *API) createLoad(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, e.Error())
 		return
 	}
-	l, e := a.newLoad(r.Context(), p.ID, req, "draft")
+	l, e := a.newLoad(r.Context(), p.ID, req, models.LoadStatusDraft)
 	if e != nil {
 		writeRouteError(w, e)
 		return
@@ -741,12 +785,12 @@ func (a *API) newLoad(ctx context.Context, customerID string, req loadRequest, s
 	return models.Load{
 		ID:                   uuid.NewString(),
 		CustomerID:           customerID,
-		Title:                req.Title,
-		Description:          req.Description,
+		Title:                strings.TrimSpace(req.Title),
+		Description:          strings.TrimSpace(req.Description),
 		PhotoURLs:            req.PhotoURLs,
 		Dimensions:           req.Dimensions,
-		Pickup:               req.Pickup,
-		Delivery:             req.Delivery,
+		Pickup:               normalizeLocation(req.Pickup),
+		Delivery:             normalizeLocation(req.Delivery),
 		RouteDistanceMeters:  route.DistanceMeters,
 		RouteDurationSeconds: route.DurationSeconds,
 		PricePerKM:           route.PricePerKM,
@@ -768,7 +812,15 @@ func (a *API) getOwnedLoad(w http.ResponseWriter, r *http.Request) (models.Load,
 		return l, false
 	}
 	p := current(r)
-	if p.Role == "customer" && l.CustomerID != p.ID {
+	switch p.Role {
+	case models.RoleCustomer:
+		if l.CustomerID != p.ID {
+			forbidden(w)
+			return l, false
+		}
+	case models.RoleDriver:
+		// Driver access is narrowed further by each operation.
+	default:
 		forbidden(w)
 		return l, false
 	}
@@ -780,9 +832,11 @@ func (a *API) load(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := current(r)
-	if p.Role == "driver" && l.AssignedDriver != "" && l.AssignedDriver != p.ID {
-		forbidden(w)
-		return
+	if p.Role == models.RoleDriver {
+		if !isOfferableStatus(l.Status) && l.AssignedDriver != p.ID {
+			forbidden(w)
+			return
+		}
 	}
 	jsonResponse(w, 200, l)
 }
@@ -791,7 +845,7 @@ func (a *API) updateLoad(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if current(r).Role != "customer" || l.Status != "draft" {
+	if current(r).Role != models.RoleCustomer || l.Status != models.LoadStatusDraft {
 		badRequest(w, "yalnızca taslak ilan güncellenebilir")
 		return
 	}
@@ -803,7 +857,7 @@ func (a *API) updateLoad(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, e.Error())
 		return
 	}
-	updated, e := a.newLoad(r.Context(), l.CustomerID, req, "draft")
+	updated, e := a.newLoad(r.Context(), l.CustomerID, req, models.LoadStatusDraft)
 	if e != nil {
 		writeRouteError(w, e)
 		return
@@ -821,11 +875,11 @@ func (a *API) publish(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if current(r).Role != "customer" || l.Status != "draft" {
+	if current(r).Role != models.RoleCustomer || l.Status != models.LoadStatusDraft {
 		badRequest(w, "yalnızca taslak ilan yayınlanabilir")
 		return
 	}
-	l.Status = "published"
+	l.Status = models.LoadStatusPublished
 	l.UpdatedAt = time.Now().UTC()
 	if e := a.store.SaveLoad(l); e != nil {
 		serverError(w, e)
@@ -842,16 +896,25 @@ func (a *API) updateStatus(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
-	allowed := map[string]bool{"cancelled": true, "in_transit": true, "completed": true}
+	allowed := map[string]bool{models.LoadStatusCancelled: true, models.LoadStatusInTransit: true, models.LoadStatusCompleted: true}
 	if !allowed[req.Status] {
 		badRequest(w, "geçersiz durum")
 		return
 	}
-	if current(r).Role == "customer" && req.Status != "cancelled" {
-		forbidden(w)
-		return
-	}
-	if current(r).Role == "driver" && (l.AssignedDriver != current(r).ID || (req.Status == "in_transit" && l.Status != "driver_selected")) {
+	p := current(r)
+	switch p.Role {
+	case models.RoleCustomer:
+		if req.Status != models.LoadStatusCancelled || l.CustomerID != p.ID || l.Status == models.LoadStatusCompleted || l.Status == models.LoadStatusCancelled {
+			forbidden(w)
+			return
+		}
+	case models.RoleDriver:
+		validTransition := (req.Status == models.LoadStatusInTransit && l.Status == models.LoadStatusDriverSelected) || (req.Status == models.LoadStatusCompleted && l.Status == models.LoadStatusInTransit)
+		if l.AssignedDriver != p.ID || !validTransition {
+			forbidden(w)
+			return
+		}
+	default:
 		forbidden(w)
 		return
 	}
@@ -866,9 +929,9 @@ func (a *API) updateStatus(w http.ResponseWriter, r *http.Request) {
 			log.Printf("conversation update after load status: %v", e)
 		}
 		statusText := map[string]string{
-			"cancelled":  "İlan iptal edildi.",
-			"in_transit": "Nakliye işlemi başladı.",
-			"completed":  "Nakliye tamamlandı.",
+			models.LoadStatusCancelled: "İlan iptal edildi.",
+			models.LoadStatusInTransit: "Nakliye işlemi başladı.",
+			models.LoadStatusCompleted: "Nakliye tamamlandı.",
 		}[l.Status]
 		if statusText != "" {
 			a.addSystemMessage(l, statusText)
@@ -881,7 +944,7 @@ func (a *API) deleteLoad(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if current(r).Role != "customer" {
+	if current(r).Role != models.RoleCustomer {
 		forbidden(w)
 		return
 	}
@@ -896,7 +959,7 @@ func (a *API) deleteLoad(w http.ResponseWriter, r *http.Request) {
 }
 func (a *API) createOffer(w http.ResponseWriter, r *http.Request) {
 	p := current(r)
-	if p.Role != "driver" {
+	if p.Role != models.RoleDriver {
 		forbidden(w)
 		return
 	}
@@ -937,8 +1000,8 @@ func (a *API) createOffer(w http.ResponseWriter, r *http.Request) {
 		serverError(w, e)
 		return
 	}
-	if l.Status == "published" || l.Status == "open" {
-		l.Status, l.UpdatedAt = "offers_received", now
+	if l.Status == models.LoadStatusPublished || l.Status == models.LoadStatusOpenLegacy {
+		l.Status, l.UpdatedAt = models.LoadStatusOffersReceived, now
 		if e = a.store.SaveLoad(l); e != nil {
 			serverError(w, e)
 			return
@@ -953,11 +1016,11 @@ func (a *API) offers(w http.ResponseWriter, r *http.Request) {
 		notFound(w)
 		return
 	}
-	if p.Role == "customer" && l.CustomerID != p.ID {
+	if p.Role == models.RoleCustomer && l.CustomerID != p.ID {
 		forbidden(w)
 		return
 	}
-	if p.Role == "driver" {
+	if p.Role == models.RoleDriver {
 		forbidden(w)
 		return
 	}
@@ -987,11 +1050,11 @@ func (a *API) acceptOffer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	l, e := a.store.GetLoad(o.LoadID)
-	if e != nil || l.CustomerID != p.ID || p.Role != "customer" {
+	if e != nil || l.CustomerID != p.ID || p.Role != models.RoleCustomer {
 		forbidden(w)
 		return
 	}
-	l.Status = "driver_selected"
+	l.Status = models.LoadStatusDriverSelected
 	l.AssignedDriver = o.DriverID
 	l.AgreedPriceTL = o.AmountTL
 	l.UpdatedAt = time.Now().UTC()
@@ -1013,7 +1076,7 @@ func (a *API) acceptOffer(w http.ResponseWriter, r *http.Request) {
 }
 func (a *API) updateOffer(w http.ResponseWriter, r *http.Request) {
 	p := current(r)
-	if p.Role != "driver" {
+	if p.Role != models.RoleDriver {
 		forbidden(w)
 		return
 	}
@@ -1043,7 +1106,7 @@ func (a *API) updateOffer(w http.ResponseWriter, r *http.Request) {
 }
 func (a *API) driverOffers(w http.ResponseWriter, r *http.Request) {
 	p := current(r)
-	if p.Role != "driver" {
+	if p.Role != models.RoleDriver {
 		forbidden(w)
 		return
 	}
@@ -1083,7 +1146,7 @@ func (a *API) withdrawOffer(w http.ResponseWriter, r *http.Request) {
 }
 func (a *API) withdrawOwnOffer(w http.ResponseWriter, r *http.Request) {
 	p := current(r)
-	if p.Role != "driver" {
+	if p.Role != models.RoleDriver {
 		forbidden(w)
 		return
 	}
@@ -1139,12 +1202,15 @@ func (a *API) conversation(w http.ResponseWriter, r *http.Request) {
 func (a *API) conversations(w http.ResponseWriter, r *http.Request) {
 	p := current(r)
 	var customerID, driverID string
-	if p.Role == "customer" {
+	if p.Role == models.RoleCustomer {
 		customerID = p.ID
-	} else {
+	} else if p.Role == models.RoleDriver {
 		driverID = p.ID
+	} else {
+		forbidden(w)
+		return
 	}
-	loads, _, err := a.store.ListLoads(customerID, driverID, "", "", 0, 100)
+	loads, _, err := a.store.ListLoads(customerID, driverID, "", "", 0, 0)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -1169,10 +1235,10 @@ func (a *API) conversations(w http.ResponseWriter, r *http.Request) {
 		if filter == "unread" && view.UnreadCount == 0 {
 			continue
 		}
-		if filter == "active" && load.Status != "driver_selected" && load.Status != "in_transit" {
+		if filter == "active" && load.Status != models.LoadStatusDriverSelected && load.Status != models.LoadStatusInTransit {
 			continue
 		}
-		if filter == "completed" && load.Status != "completed" {
+		if filter == "completed" && load.Status != models.LoadStatusCompleted {
 			continue
 		}
 		items = append(items, view)
@@ -1218,7 +1284,7 @@ func (a *API) getMessageLoad(w http.ResponseWriter, r *http.Request) (models.Loa
 }
 
 func (a *API) canAccessMessageLoad(l models.Load, p principal) bool {
-	return l.DeletedAt == nil && l.AssignedDriver != "" && ((p.Role == "customer" && l.CustomerID == p.ID) || (p.Role == "driver" && l.AssignedDriver == p.ID))
+	return l.DeletedAt == nil && l.AssignedDriver != "" && ((p.Role == models.RoleCustomer && l.CustomerID == p.ID) || (p.Role == models.RoleDriver && l.AssignedDriver == p.ID))
 }
 
 func (a *API) conversationRecord(l models.Load) models.Conversation {
@@ -1235,7 +1301,7 @@ func (a *API) conversationView(l models.Load, p principal) (models.Conversation,
 	}
 	conversation := a.conversationRecord(l)
 	otherID := l.AssignedDriver
-	if p.Role == "driver" {
+	if p.Role == models.RoleDriver {
 		otherID = l.CustomerID
 	}
 	conversation.OtherParty = models.ConversationMember{ID: otherID, Name: "Karşı taraf"}
@@ -1446,6 +1512,7 @@ func (a *API) uploadConversationAttachment(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, a.maxUploadBytes+(1<<20))
 	if err := r.ParseMultipartForm(a.maxUploadBytes); err != nil {
 		badRequest(w, "fotoğraf boyutu limiti aşıldı")
 		return
@@ -1511,6 +1578,7 @@ func (a *API) deleteMessage(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, a.messageView(l.ID, updated))
 }
 func (a *API) uploadPhoto(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, a.maxUploadBytes+(1<<20))
 	if e := r.ParseMultipartForm(a.maxUploadBytes); e != nil {
 		badRequest(w, "fotoğraf boyutu limiti aşıldı")
 		return
@@ -1533,10 +1601,11 @@ func (a *API) uploadLoadPhotos(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if current(r).Role != "customer" || l.CustomerID != current(r).ID {
+	if current(r).Role != models.RoleCustomer || l.CustomerID != current(r).ID {
 		forbidden(w)
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, (a.maxUploadBytes*5)+(2<<20))
 	if err := r.ParseMultipartForm(a.maxUploadBytes * 5); err != nil {
 		badRequest(w, "fotoğraf boyutu limiti aşıldı")
 		return
@@ -1551,6 +1620,11 @@ func (a *API) uploadLoadPhotos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	urls := make([]string, 0, len(files))
+	cleanup := func() {
+		for _, savedURL := range urls {
+			_ = a.store.DeletePhoto(strings.TrimPrefix(savedURL, "/api/photos/"))
+		}
+	}
 	for _, header := range files {
 		file, err := header.Open()
 		if err != nil {
@@ -1560,6 +1634,7 @@ func (a *API) uploadLoadPhotos(w http.ResponseWriter, r *http.Request) {
 		url, saveErr := a.savePhoto(file, header)
 		_ = file.Close()
 		if saveErr != nil {
+			cleanup()
 			badRequest(w, saveErr.Error())
 			return
 		}
@@ -1568,17 +1643,13 @@ func (a *API) uploadLoadPhotos(w http.ResponseWriter, r *http.Request) {
 	l.PhotoURLs = append(l.PhotoURLs, urls...)
 	l.UpdatedAt = time.Now().UTC()
 	if err := a.store.SaveLoad(l); err != nil {
+		cleanup()
 		serverError(w, err)
 		return
 	}
 	jsonResponse(w, http.StatusCreated, l)
 }
 func (a *API) savePhoto(file io.Reader, header *multipart.FileHeader) (string, error) {
-	contentType := strings.ToLower(strings.TrimSpace(header.Header.Get("Content-Type")))
-	allowed := map[string]bool{"image/jpeg": true, "image/png": true, "image/webp": true}
-	if !allowed[contentType] {
-		return "", errors.New("yalnızca JPEG, PNG veya WEBP fotoğraf yüklenebilir")
-	}
 	if header.Size <= 0 || header.Size > a.maxUploadBytes {
 		return "", errors.New("fotoğraf boyutu limiti aşıldı")
 	}
@@ -1592,6 +1663,11 @@ func (a *API) savePhoto(file io.Reader, header *multipart.FileHeader) (string, e
 	if len(data) == 0 || int64(len(data)) > a.maxUploadBytes {
 		return "", errors.New("fotoğraf boyutu limiti aşıldı")
 	}
+	contentType := strings.ToLower(strings.TrimSpace(http.DetectContentType(data)))
+	allowed := map[string]bool{"image/jpeg": true, "image/png": true, "image/webp": true}
+	if !allowed[contentType] {
+		return "", errors.New("yalnızca JPEG, PNG veya WEBP fotoğraf yüklenebilir")
+	}
 	id := uuid.NewString()
 	if err = a.store.SavePhoto(id, data, contentType); err != nil {
 		return "", err
@@ -1603,7 +1679,7 @@ func (a *API) deleteLoadPhoto(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if current(r).Role != "customer" || l.CustomerID != current(r).ID {
+	if current(r).Role != models.RoleCustomer || l.CustomerID != current(r).ID {
 		forbidden(w)
 		return
 	}
@@ -1650,6 +1726,11 @@ func (a *API) auth(next http.Handler) http.Handler {
 		p, e := a.verify(raw)
 		if e != nil {
 			unauthorized(w, "oturum gerekli veya süresi dolmuş")
+			return
+		}
+		u, userErr := a.store.GetUser(p.ID)
+		if userErr != nil || !models.ValidRole(u.Role) || u.Role != p.Role {
+			unauthorized(w, "oturum kullanıcısı artık geçerli değil")
 			return
 		}
 		if touchErr := a.store.TouchUserLastSeen(p.ID, time.Now().UTC()); touchErr != nil {
@@ -1724,7 +1805,7 @@ func publicUser(u models.User) map[string]any {
 	if !u.LastSeenAt.IsZero() {
 		user["lastSeenAt"] = u.LastSeenAt
 	}
-	if u.Role == "driver" {
+	if u.Role == models.RoleDriver {
 		user["driverProfile"] = u.DriverProfile
 	}
 	return user
@@ -1743,29 +1824,40 @@ func jsonResponse(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 func badRequest(w http.ResponseWriter, message string) {
-	jsonResponse(w, 400, map[string]string{"error": message})
+	errorResponse(w, http.StatusBadRequest, "VALIDATION_ERROR", message, map[string]any{})
 }
 func unauthorized(w http.ResponseWriter, message string) {
-	jsonResponse(w, 401, map[string]string{"error": message})
+	errorResponse(w, http.StatusUnauthorized, "UNAUTHORIZED", message, map[string]any{})
 }
 func forbidden(w http.ResponseWriter) {
-	jsonResponse(w, 403, map[string]string{"error": "bu işlem için yetkiniz yok"})
+	errorResponse(w, http.StatusForbidden, "FORBIDDEN", "bu işlem için yetkiniz yok", map[string]any{})
 }
 func notFound(w http.ResponseWriter) {
-	jsonResponse(w, 404, map[string]string{"error": "kayıt bulunamadı"})
+	errorResponse(w, http.StatusNotFound, "NOT_FOUND", "kayıt bulunamadı", map[string]any{})
 }
 func conflict(w http.ResponseWriter, message string) {
-	jsonResponse(w, 409, map[string]string{"error": message})
+	errorResponse(w, http.StatusConflict, "CONFLICT", message, map[string]any{})
 }
 func serverError(w http.ResponseWriter, e error) {
-	log.Printf("api error: %v", e)
-	jsonResponse(w, 500, map[string]string{"error": "sunucu hatası"})
+	log.Printf("request_id=%s unexpected_api_error=%q", w.Header().Get("X-Request-ID"), e)
+	errorResponse(w, http.StatusInternalServerError, "INTERNAL_ERROR", "sunucu hatası", map[string]any{})
+}
+func errorResponse(w http.ResponseWriter, status int, code, message string, details map[string]any) {
+	if details == nil {
+		details = map[string]any{}
+	}
+	jsonResponse(w, status, map[string]any{
+		"success":   false,
+		"error":     map[string]any{"code": code, "message": message, "details": details},
+		"requestId": w.Header().Get("X-Request-ID"),
+	})
 }
 func cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
+		w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID")
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(204)
 			return
@@ -1783,7 +1875,30 @@ func requestID(next http.Handler) http.Handler {
 func logging(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()
-		next.ServeHTTP(w, r)
-		log.Printf("request_id=%s %s %s %s", service.RequestID(r.Context()), r.Method, r.URL.Path, time.Since(started).Round(time.Millisecond))
+		recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(recorder, r)
+		log.Printf("request_id=%s method=%s path=%s status=%d duration=%s", service.RequestID(r.Context()), r.Method, r.URL.Path, recorder.status, time.Since(started).Round(time.Millisecond))
 	})
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status      int
+	wroteHeader bool
+}
+
+func (w *statusRecorder) WriteHeader(status int) {
+	if w.wroteHeader {
+		return
+	}
+	w.status = status
+	w.wroteHeader = true
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *statusRecorder) Write(body []byte) (int, error) {
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(body)
 }

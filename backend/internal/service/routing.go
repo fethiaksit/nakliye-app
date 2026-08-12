@@ -84,6 +84,23 @@ type SearchResult struct {
 	PlaceID          string            `json:"placeId,omitempty"`
 	FormattedAddress string            `json:"formattedAddress"`
 	Coordinate       models.Coordinate `json:"coordinate"`
+	Street           string            `json:"street,omitempty"`
+	StreetNumber     string            `json:"streetNumber,omitempty"`
+	Neighborhood     string            `json:"neighborhood,omitempty"`
+	District         string            `json:"district,omitempty"`
+	City             string            `json:"city,omitempty"`
+	Province         string            `json:"province,omitempty"`
+	PostalCode       string            `json:"postalCode,omitempty"`
+	Country          string            `json:"country,omitempty"`
+	CountryCode      string            `json:"countryCode,omitempty"`
+}
+
+type googleAddressComponent struct {
+	LongText  string   `json:"longText"`
+	ShortText string   `json:"shortText"`
+	LongName  string   `json:"long_name"`
+	ShortName string   `json:"short_name"`
+	Types     []string `json:"types"`
 }
 
 type PlaceSuggestion struct {
@@ -180,7 +197,7 @@ func normalizedKey(parts ...string) string {
 	return strings.ToLower(strings.Join(parts, "|"))
 }
 
-func (c *GoogleMapsClient) Autocomplete(ctx context.Context, input, sessionToken string) ([]PlaceSuggestion, error) {
+func (c *GoogleMapsClient) Autocomplete(ctx context.Context, input, sessionToken string, locationBias *models.Coordinate) ([]PlaceSuggestion, error) {
 	if err := c.configured(); err != nil {
 		return nil, err
 	}
@@ -188,7 +205,11 @@ func (c *GoogleMapsClient) Autocomplete(ctx context.Context, input, sessionToken
 	if len([]rune(input)) < 2 {
 		return nil, errors.New("arama metni en az 2 karakter olmalıdır")
 	}
-	cacheKey := normalizedKey("autocomplete", input)
+	cacheParts := []string{"autocomplete", input, strings.TrimSpace(sessionToken)}
+	if locationBias != nil && ValidCoordinate(*locationBias) {
+		cacheParts = append(cacheParts, coordinateKey(*locationBias))
+	}
+	cacheKey := normalizedKey(cacheParts...)
 	if cached, ok := c.cached(cacheKey); ok {
 		return cached.([]PlaceSuggestion), nil
 	}
@@ -201,6 +222,12 @@ func (c *GoogleMapsClient) Autocomplete(ctx context.Context, input, sessionToken
 	}
 	if strings.TrimSpace(sessionToken) != "" {
 		payload["sessionToken"] = strings.TrimSpace(sessionToken)
+	}
+	if locationBias != nil && ValidCoordinate(*locationBias) {
+		payload["locationBias"] = map[string]any{"circle": map[string]any{
+			"center": map[string]float64{"latitude": locationBias.Latitude, "longitude": locationBias.Longitude},
+			"radius": 50_000,
+		}}
 	}
 	var response struct {
 		Suggestions []struct {
@@ -269,18 +296,23 @@ func (c *GoogleMapsClient) PlaceDetails(ctx context.Context, placeID, sessionTok
 		ID               string `json:"id"`
 		FormattedAddress string `json:"formattedAddress"`
 		Location         struct {
-			Latitude  float64 `json:"latitude"`
-			Longitude float64 `json:"longitude"`
+			Latitude  *float64 `json:"latitude"`
+			Longitude *float64 `json:"longitude"`
 		} `json:"location"`
+		AddressComponents []googleAddressComponent `json:"addressComponents"`
 	}
-	if err := c.doJSON(ctx, http.MethodGet, endpoint, nil, "id,formattedAddress,location", &response); err != nil {
+	if err := c.doJSON(ctx, http.MethodGet, endpoint, nil, "id,formattedAddress,location,addressComponents", &response); err != nil {
 		return SearchResult{}, err
+	}
+	if response.Location.Latitude == nil || response.Location.Longitude == nil {
+		return SearchResult{}, ErrPlaceNotFound
 	}
 	result := SearchResult{
 		PlaceID:          firstNonEmpty(response.ID, placeID),
 		FormattedAddress: strings.TrimSpace(response.FormattedAddress),
-		Coordinate:       models.Coordinate{Latitude: response.Location.Latitude, Longitude: response.Location.Longitude},
+		Coordinate:       models.Coordinate{Latitude: *response.Location.Latitude, Longitude: *response.Location.Longitude},
 	}
+	applyGoogleAddressComponents(&result, response.AddressComponents)
 	if result.FormattedAddress == "" || !ValidCoordinate(result.Coordinate) {
 		return SearchResult{}, ErrPlaceNotFound
 	}
@@ -303,8 +335,9 @@ func (c *GoogleMapsClient) Reverse(ctx context.Context, coordinate models.Coordi
 	var response struct {
 		Status  string `json:"status"`
 		Results []struct {
-			FormattedAddress string `json:"formatted_address"`
-			PlaceID          string `json:"place_id"`
+			FormattedAddress  string                   `json:"formatted_address"`
+			PlaceID           string                   `json:"place_id"`
+			AddressComponents []googleAddressComponent `json:"address_components"`
 		} `json:"results"`
 		ErrorMessage string `json:"error_message"`
 	}
@@ -322,11 +355,62 @@ func (c *GoogleMapsClient) Reverse(ctx context.Context, coordinate models.Coordi
 		FormattedAddress: strings.TrimSpace(response.Results[0].FormattedAddress),
 		Coordinate:       coordinate,
 	}
+	applyGoogleAddressComponents(&result, response.Results[0].AddressComponents)
 	if result.FormattedAddress == "" {
 		return SearchResult{}, ErrPlaceNotFound
 	}
 	c.cacheValue(cacheKey, result, 24*time.Hour)
 	return result, nil
+}
+
+func applyGoogleAddressComponents(result *SearchResult, components []googleAddressComponent) {
+	if result == nil {
+		return
+	}
+	long := func(types ...string) string { return googleComponentValue(components, false, types...) }
+	short := func(types ...string) string { return googleComponentValue(components, true, types...) }
+	result.StreetNumber = long("street_number")
+	result.Street = long("route")
+	result.Neighborhood = long("neighborhood")
+	result.District = long("administrative_area_level_2")
+	if result.District == "" {
+		result.District = long("sublocality_level_1", "sublocality")
+	}
+	if result.Neighborhood == "" {
+		result.Neighborhood = long("sublocality_level_1", "sublocality")
+	}
+	result.Province = long("administrative_area_level_1")
+	result.City = long("locality", "postal_town")
+	if result.City == "" {
+		result.City = result.Province
+	}
+	result.PostalCode = long("postal_code")
+	result.Country = long("country")
+	result.CountryCode = strings.ToUpper(short("country"))
+}
+
+func googleComponentValue(components []googleAddressComponent, short bool, wantedTypes ...string) string {
+	for _, wanted := range wantedTypes {
+		for _, component := range components {
+			if !containsString(component.Types, wanted) {
+				continue
+			}
+			if short {
+				return strings.TrimSpace(firstNonEmpty(component.ShortText, component.ShortName))
+			}
+			return strings.TrimSpace(firstNonEmpty(component.LongText, component.LongName))
+		}
+	}
+	return ""
+}
+
+func containsString(values []string, wanted string) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *GoogleMapsClient) Calculate(ctx context.Context, pickup, dropoff models.Coordinate) (RouteResult, error) {
@@ -399,43 +483,83 @@ func routeWaypoint(coordinate models.Coordinate) map[string]any {
 func (c *GoogleMapsClient) doJSON(ctx context.Context, method, endpoint string, body any, fieldMask string, target any) error {
 	started := time.Now()
 	operation := googleOperation(endpoint)
-	var reader io.Reader
+	var encoded []byte
 	if body != nil {
-		encoded, err := json.Marshal(body)
+		var err error
+		encoded, err = json.Marshal(body)
 		if err != nil {
 			return ErrProviderUnavailable
 		}
-		reader = bytes.NewReader(encoded)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, endpoint, reader)
-	if err != nil {
-		return ErrProviderUnavailable
-	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("X-Goog-Api-Key", c.apiKey)
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	if fieldMask != "" {
-		req.Header.Set("X-Goog-FieldMask", fieldMask)
-	}
-	response, err := c.client.Do(req)
-	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return err
+
+	for attempt := 0; attempt < 2; attempt++ {
+		var reader io.Reader
+		if encoded != nil {
+			reader = bytes.NewReader(encoded)
 		}
-		return c.providerError(ctx, operation, 0, "NETWORK_ERROR", "Google Maps ağına ulaşılamadı", time.Since(started))
-	}
-	defer response.Body.Close()
-	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		body, _ := io.ReadAll(io.LimitReader(response.Body, 64<<10))
-		reason, message := googleErrorDetails(body, response.StatusCode)
+		req, err := http.NewRequestWithContext(ctx, method, endpoint, reader)
+		if err != nil {
+			return ErrProviderUnavailable
+		}
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("X-Goog-Api-Key", c.apiKey)
+		if body != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		if fieldMask != "" {
+			req.Header.Set("X-Goog-FieldMask", fieldMask)
+		}
+
+		response, err := c.client.Do(req)
+		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return err
+			}
+			if attempt == 0 {
+				if waitForRetry(ctx, 150*time.Millisecond) {
+					continue
+				}
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+			}
+			return c.providerError(ctx, operation, 0, "NETWORK_ERROR", "Google Maps ağına ulaşılamadı", time.Since(started))
+		}
+
+		if response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices {
+			decodeErr := json.NewDecoder(io.LimitReader(response.Body, 2<<20)).Decode(target)
+			_ = response.Body.Close()
+			if decodeErr != nil {
+				return c.providerError(ctx, operation, response.StatusCode, "INVALID_RESPONSE", "Google Maps geçersiz bir yanıt döndürdü", time.Since(started))
+			}
+			return nil
+		}
+
+		responseBody, _ := io.ReadAll(io.LimitReader(response.Body, 64<<10))
+		_ = response.Body.Close()
+		if attempt == 0 && (response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= http.StatusInternalServerError) {
+			if waitForRetry(ctx, 150*time.Millisecond) {
+				continue
+			}
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+		}
+		reason, message := googleErrorDetails(responseBody, response.StatusCode)
 		return c.providerError(ctx, operation, response.StatusCode, reason, message, time.Since(started))
 	}
-	if err := json.NewDecoder(io.LimitReader(response.Body, 2<<20)).Decode(target); err != nil {
-		return c.providerError(ctx, operation, response.StatusCode, "INVALID_RESPONSE", "Google Maps geçersiz bir yanıt döndürdü", time.Since(started))
+	return c.providerError(ctx, operation, 0, "NETWORK_ERROR", "Google Maps ağına ulaşılamadı", time.Since(started))
+}
+
+func waitForRetry(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
 	}
-	return nil
 }
 
 func (c *GoogleMapsClient) providerError(ctx context.Context, operation string, status int, reason, message string, elapsed time.Duration) error {

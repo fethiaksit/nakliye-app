@@ -2,11 +2,49 @@ package models
 
 import "time"
 
+const (
+	RoleCustomer  = "customer"
+	RoleDriver    = "driver"
+	RoleCorporate = "corporate"
+	RoleAdmin     = "admin"
+)
+
+const (
+	LoadStatusDraft          = "draft"
+	LoadStatusPublished      = "published"
+	LoadStatusOffersReceived = "offers_received"
+	LoadStatusDriverSelected = "driver_selected"
+	LoadStatusInTransit      = "in_transit"
+	LoadStatusCompleted      = "completed"
+	LoadStatusCancelled      = "cancelled"
+	// LoadStatusOpenLegacy is read-only compatibility for records created by
+	// the first mobile client. New listings use LoadStatusPublished.
+	LoadStatusOpenLegacy = "open"
+)
+
+func ValidRole(role string) bool {
+	switch role {
+	case RoleCustomer, RoleDriver, RoleCorporate, RoleAdmin:
+		return true
+	default:
+		return false
+	}
+}
+
 type Location struct {
-	Address   string  `json:"address"`
-	Latitude  float64 `json:"latitude"`
-	Longitude float64 `json:"longitude"`
-	PlaceID   string  `json:"placeId,omitempty"`
+	Address      string  `json:"address"`
+	Latitude     float64 `json:"latitude"`
+	Longitude    float64 `json:"longitude"`
+	PlaceID      string  `json:"placeId,omitempty"`
+	Street       string  `json:"street,omitempty"`
+	StreetNumber string  `json:"streetNumber,omitempty"`
+	Neighborhood string  `json:"neighborhood,omitempty"`
+	District     string  `json:"district,omitempty"`
+	City         string  `json:"city,omitempty"`
+	Province     string  `json:"province,omitempty"`
+	PostalCode   string  `json:"postalCode,omitempty"`
+	Country      string  `json:"country,omitempty"`
+	CountryCode  string  `json:"countryCode,omitempty"`
 }
 
 type Coordinate struct {

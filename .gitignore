@@ -1,7 +1,15 @@
 .env
 .env.local
 .env.*.local
+.DS_Store
+._*
 node_modules/
 .expo/
 dist/
 frontend/.node/
+**/Pods/
+**/build/
+**/.xcode.env.local
+backend/uploads/
+backend/routebackfill
+coverage/

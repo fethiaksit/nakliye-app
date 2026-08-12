@@ -23,7 +23,8 @@ export function decodeGooglePolyline(encoded) {
       longitude += decodeValue();
       points.push({ latitude: latitude / 1e5, longitude: longitude / 1e5 });
     }
-  } catch {
+  } catch (error) {
+    if (__DEV__) console.warn('[ROUTE] Encoded polyline could not be decoded.', { message: error?.message });
     return [];
   }
   return points;

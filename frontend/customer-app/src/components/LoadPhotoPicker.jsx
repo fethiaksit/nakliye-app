@@ -32,7 +32,8 @@ export default function LoadPhotoPicker({ photos, onChange }) {
       const accepted = (result.assets || []).filter(asset => asset.uri && (!asset.mimeType || ['image/jpeg', 'image/png', 'image/webp'].includes(asset.mimeType)));
       if (accepted.length !== (result.assets || []).length) Alert.alert('Bazı fotoğraflar eklenemedi', 'Yalnızca JPEG, PNG veya WEBP fotoğraflar desteklenir.');
       onChange([...photos, ...accepted].slice(0, MAX_PHOTOS));
-    } catch {
+    } catch (error) {
+      if (__DEV__) console.warn('[PHOTO PICKER] Selection failed.', { code: error?.code, message: error?.message });
       Alert.alert('Fotoğraf seçilemedi', 'Fotoğraf seçilirken beklenmeyen bir hata oluştu.');
     }
   }, [onChange, photos]);

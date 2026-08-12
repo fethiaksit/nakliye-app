@@ -3,11 +3,12 @@
   "version": "1.0.0",
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
-    "start": "npx --yes --package=node@20.20.2 node ./node_modules/expo/bin/cli start --go",
+    "start": "npx --yes --package=node@20.20.2 node ./node_modules/expo/bin/cli start --dev-client",
     "start:go": "npx --yes --package=node@20.20.2 node ./node_modules/expo/bin/cli start --go",
     "start:dev-client": "npx --yes --package=node@20.20.2 node ./node_modules/expo/bin/cli start --dev-client",
-    "ios": "npx --yes --package=node@20.20.2 node ./node_modules/expo/bin/cli start --go --ios",
-    "android": "npx --yes --package=node@20.20.2 node ./node_modules/expo/bin/cli start --go --android",
+    "ios": "npx --yes --package=node@20.20.2 node ./node_modules/expo/bin/cli run:ios",
+    "android": "npx --yes --package=node@20.20.2 node ./node_modules/expo/bin/cli run:android",
+    "test": "node --test src/utils/locationSelection.test.cjs",
     "clean:appledouble": "bash ../../scripts/clean-appledouble.sh"
   },
   "dependencies": {

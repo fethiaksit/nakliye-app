@@ -29,7 +29,7 @@ func loadDotEnv(path string) {
 		if _, exists := os.LookupEnv(key); exists {
 			continue
 		}
-		// Do not remove quote characters: mapsServerKey reports them as a
+		// Do not remove quote characters: googleMapsServerAPIKey reports them as a
 		// configuration mistake instead of silently changing a credential.
 		_ = os.Setenv(key, value)
 	}

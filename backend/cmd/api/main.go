@@ -11,10 +11,14 @@ import (
 
 func main() {
 	cfg := config.Load()
-	if cfg.GoogleMapsServerKeyError != "" {
-		log.Printf("[MAPS CONFIG] server key configured: false; reason=%s", cfg.GoogleMapsServerKeyError)
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("Configuration error: %v", err)
+	}
+	log.Printf("Environment: %s", cfg.Environment)
+	if cfg.MapsKeyError != "" {
+		log.Printf("[MAPS CONFIG] provider=google server key configured: false; reason=%s", cfg.MapsKeyError)
 	} else {
-		log.Printf("[MAPS CONFIG] server key configured: true; suffix=%s", config.MaskSecret(cfg.GoogleMapsServerAPIKey))
+		log.Printf("[MAPS CONFIG] provider=google server key configured: true")
 	}
 	s, err := store.New(cfg.RedisURL)
 	if err != nil {
@@ -23,7 +27,7 @@ func main() {
 	if err = s.Ping(); err != nil {
 		log.Fatalf("Redis'e bağlanılamadı: %v", err)
 	}
-	log.Printf("Server listening on http://0.0.0.0:%s", cfg.Port)
+	log.Printf("Server listening on http://0.0.0.0:%s (environment=%s)", cfg.Port, cfg.Environment)
 	if cfg.LANHost != "" {
 		log.Printf("LAN access: http://%s:%s", cfg.LANHost, cfg.Port)
 	}
@@ -35,10 +39,10 @@ func main() {
 		log.Fatal(err)
 	}
 	log.Fatal(http.Serve(listener, httpapi.NewWithOptions(s, httpapi.Options{
-		Secret:                   cfg.JWTSecret,
-		GoogleMapsServerAPIKey:   cfg.GoogleMapsServerAPIKey,
-		GoogleMapsServerKeyError: cfg.GoogleMapsServerKeyError,
-		PricePerKM:               cfg.PricePerKM,
-		MaxUploadMB:              cfg.MaxUploadMB,
+		Secret:                 cfg.JWTSecret,
+		GoogleMapsServerAPIKey: cfg.GoogleMapsServerAPIKey,
+		MapsKeyError:           cfg.MapsKeyError,
+		PricePerKM:             cfg.PricePerKM,
+		MaxUploadMB:            cfg.MaxUploadMB,
 	}).Routes()))
 }

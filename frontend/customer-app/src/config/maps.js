@@ -1,13 +1,16 @@
 import { Platform } from 'react-native';
+import Constants from 'expo-constants';
 
-const currentKey = Platform.select({
-  ios: process.env.EXPO_PUBLIC_GOOGLE_MAPS_IOS_KEY || process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY,
-  android: process.env.EXPO_PUBLIC_GOOGLE_MAPS_ANDROID_KEY || process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY,
-  default: '',
-}) || '';
-
-const invalidKey = value => !value || value !== value.trim() || /^['"]|['"]$/.test(value);
-export const nativeGoogleMapsConfigured = !invalidKey(currentKey);
+const configuredPlatforms = Constants.expoConfig?.extra?.googleMapsConfigured || {};
+const isExpoGo = Constants.executionEnvironment === 'storeClient';
+const platformConfigured = Boolean(configuredPlatforms[Platform.OS]);
+export const nativeGoogleMapsConfigured = platformConfigured && !isExpoGo;
 export const nativeGoogleMapsMessage = nativeGoogleMapsConfigured
   ? 'Harita yüklenemedi. Development build yapılandırmasını kontrol edin.'
-  : 'Google Maps API anahtarı tanımlı değil. .env içine EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ekleyin.';
+  : isExpoGo
+    ? 'Google Maps iOS/Android için Expo Go desteklenmez. Development build oluşturun.'
+    : __DEV__
+      ? `Google Maps ${Platform.OS === 'ios' ? 'iOS' : 'Android'} API key missing.`
+      : 'Harita şu anda kullanılamıyor.';
+
+if (__DEV__ && !nativeGoogleMapsConfigured) console.error(`[MAPS CONFIG] ${nativeGoogleMapsMessage}`);

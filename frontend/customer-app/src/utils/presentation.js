@@ -20,6 +20,8 @@ export function formatMoney(value, fallback = 'Fiyat hesaplanamadı') {
 
 export function resolveMediaUrl(path) {
   if (!path || typeof path !== 'string') return null;
+  const loopback = path.match(/^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?(\/.*)?$/i);
+  if (loopback) return `${apiOrigin}${loopback[1] || ''}`;
   if (/^https?:\/\//i.test(path)) return path;
   return `${apiOrigin}/${path.replace(/^\/+/, '')}`;
 }
