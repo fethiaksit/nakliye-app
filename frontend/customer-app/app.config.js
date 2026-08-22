@@ -34,6 +34,8 @@ module.exports = {
   plugins: [
     ...(expo.plugins || []),
     'expo-secure-store',
+    'expo-font',
+    '@react-native-community/datetimepicker',
     ['expo-image-picker', {
       photosPermission: 'Nakliye ilanınıza fotoğraf eklemek için galeri erişimi gerekir.',
       cameraPermission: 'Nakliye ilanınız için fotoğraf çekmek üzere kamera erişimi gerekir.',

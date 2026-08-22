@@ -44,5 +44,9 @@ func main() {
 		MapsKeyError:           cfg.MapsKeyError,
 		PricePerKM:             cfg.PricePerKM,
 		MaxUploadMB:            cfg.MaxUploadMB,
+		AdminEmail:             cfg.AdminEmail,
+		AdminPassword:          cfg.AdminPassword,
+		AdminPasswordHash:      cfg.AdminPasswordHash,
+		AdminSecret:            cfg.AdminJWTSecret,
 	}).Routes()))
 }

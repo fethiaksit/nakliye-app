@@ -45,3 +45,36 @@ func TestValidateRequiresStrongRuntimeConfiguration(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateKeepsAdminCredentialsInSeparateSecurityDomain(t *testing.T) {
+	base := Config{RedisURL: "redis://localhost:6379/0", Port: "8080", JWTSecret: "mobile-secret-that-is-at-least-32-characters", Environment: "production"}
+	configured := base
+	configured.AdminEmail = "operations@example.com"
+	configured.AdminPassword = "a-strong-admin-password"
+	configured.AdminJWTSecret = "separate-admin-secret-that-is-at-least-32"
+	if err := configured.Validate(); err != nil {
+		t.Fatalf("valid admin config failed: %v", err)
+	}
+
+	for name, mutate := range map[string]func(*Config){
+		"partial credentials": func(config *Config) { config.AdminEmail = "operations@example.com" },
+		"shared JWT secret": func(config *Config) {
+			config.AdminEmail = "operations@example.com"
+			config.AdminPassword = "a-strong-admin-password"
+			config.AdminJWTSecret = config.JWTSecret
+		},
+		"short password": func(config *Config) {
+			config.AdminEmail = "operations@example.com"
+			config.AdminPassword = "short"
+			config.AdminJWTSecret = "separate-admin-secret-that-is-at-least-32"
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			config := base
+			mutate(&config)
+			if err := config.Validate(); err == nil {
+				t.Fatal("expected an admin configuration error")
+			}
+		})
+	}
+}

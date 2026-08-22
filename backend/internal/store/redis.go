@@ -19,6 +19,21 @@ type RedisStore struct {
 	ctx    context.Context
 }
 
+// LoadFilter mirrors persisted structured attributes. Keeping filtering out of
+// presentation text makes the same fields usable by driver search and reports.
+type LoadFilter struct {
+	Status                    string
+	Query                     string
+	UrgencyType               models.UrgencyType
+	CargoType                 models.CargoType
+	VehicleType               models.VehicleType
+	ScheduledFrom             *time.Time
+	ScheduledTo               *time.Time
+	PickupElevatorAvailable   *bool
+	DeliveryElevatorAvailable *bool
+	HelperNeeded              *bool
+}
+
 func New(url string) (*RedisStore, error) {
 	opts, err := redis.ParseURL(url)
 	if err != nil {
@@ -60,13 +75,12 @@ func (s *RedisStore) ListOpenLoads() ([]models.Load, error) {
 	}
 	return loads, nil
 }
-func (s *RedisStore) ListLoads(customerID, driverID, status, query string, offset, limit int) ([]models.Load, int, error) {
+func (s *RedisStore) ListLoads(customerID, driverID string, filter LoadFilter, offset, limit int) ([]models.Load, int, error) {
 	ids, err := s.client.ZRevRange(s.ctx, "loads", 0, -1).Result()
 	if err != nil {
 		return nil, 0, err
 	}
 	all := make([]models.Load, 0)
-	q := strings.ToLower(strings.TrimSpace(query))
 	for _, id := range ids {
 		l, e := s.GetLoad(id)
 		if e != nil || l.DeletedAt != nil {
@@ -78,10 +92,7 @@ func (s *RedisStore) ListLoads(customerID, driverID, status, query string, offse
 		if driverID != "" && l.AssignedDriver != driverID {
 			continue
 		}
-		if status != "" && l.Status != status {
-			continue
-		}
-		if q != "" && !strings.Contains(strings.ToLower(l.Title+" "+l.Pickup.Address+" "+l.Delivery.Address), q) {
+		if !matchesLoadFilter(l, filter) {
 			continue
 		}
 		all = append(all, l)
@@ -100,12 +111,11 @@ func (s *RedisStore) ListLoads(customerID, driverID, status, query string, offse
 	return all[offset:end], total, nil
 }
 
-func (s *RedisStore) ListDriverLoads(driverID, query string, offset, limit int) ([]models.Load, int, error) {
+func (s *RedisStore) ListDriverLoads(driverID string, filter LoadFilter, offset, limit int) ([]models.Load, int, error) {
 	ids, err := s.client.ZRevRange(s.ctx, "loads", 0, -1).Result()
 	if err != nil {
 		return nil, 0, err
 	}
-	q := strings.ToLower(strings.TrimSpace(query))
 	all := make([]models.Load, 0, len(ids))
 	for _, id := range ids {
 		load, getErr := s.GetLoad(id)
@@ -116,7 +126,7 @@ func (s *RedisStore) ListDriverLoads(driverID, query string, offset, limit int) 
 		if !offerable && load.AssignedDriver != driverID {
 			continue
 		}
-		if q != "" && !strings.Contains(strings.ToLower(load.Title+" "+load.Pickup.Address+" "+load.Delivery.Address), q) {
+		if !matchesLoadFilter(load, filter) {
 			continue
 		}
 		all = append(all, load)
@@ -133,6 +143,48 @@ func (s *RedisStore) ListDriverLoads(driverID, query string, offset, limit int) 
 		end = total
 	}
 	return all[offset:end], total, nil
+}
+
+func matchesLoadFilter(load models.Load, filter LoadFilter) bool {
+	if filter.Status != "" && load.Status != filter.Status {
+		return false
+	}
+	if filter.UrgencyType != "" && load.UrgencyType != filter.UrgencyType {
+		return false
+	}
+	if filter.CargoType != "" && load.CargoType != filter.CargoType {
+		return false
+	}
+	if filter.VehicleType != "" && load.VehicleType != filter.VehicleType {
+		return false
+	}
+	if filter.ScheduledFrom != nil && (load.ScheduledAt == nil || load.ScheduledAt.Before(*filter.ScheduledFrom)) {
+		return false
+	}
+	if filter.ScheduledTo != nil && (load.ScheduledAt == nil || load.ScheduledAt.After(*filter.ScheduledTo)) {
+		return false
+	}
+	if filter.PickupElevatorAvailable != nil && load.PickupElevatorAvailable != *filter.PickupElevatorAvailable {
+		return false
+	}
+	if filter.DeliveryElevatorAvailable != nil && load.DeliveryElevatorAvailable != *filter.DeliveryElevatorAvailable {
+		return false
+	}
+	if filter.HelperNeeded != nil && load.HelperNeeded != *filter.HelperNeeded {
+		return false
+	}
+	query := strings.ToLower(strings.TrimSpace(filter.Query))
+	if query == "" {
+		return true
+	}
+	searchable := strings.Join([]string{
+		load.Title,
+		load.Description,
+		load.CargoTypeNote,
+		load.Pickup.Address,
+		load.Delivery.Address,
+	}, " ")
+	return strings.Contains(strings.ToLower(searchable), query)
 }
 func (s *RedisStore) SaveUser(u models.User) error {
 	b, err := json.Marshal(u)
@@ -666,4 +718,91 @@ func (s *RedisStore) RecordDomainEvent(eventType, aggregateID string, payload an
 	return s.client.XAdd(s.ctx, &redis.XAddArgs{Stream: "domain-events", Values: map[string]any{
 		"type": eventType, "aggregateId": aggregateID, "payload": string(body), "createdAt": time.Now().UTC().Format(time.RFC3339Nano),
 	}}).Err()
+}
+
+func (s *RedisStore) SaveVehicle(v models.Vehicle) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	pipe := s.client.TxPipeline()
+	pipe.Set(s.ctx, "vehicle:"+v.ID, b, 0)
+	pipe.SAdd(s.ctx, "vehicles:driver:"+v.DriverID, v.ID)
+	_, err = pipe.Exec(s.ctx)
+	return err
+}
+
+func (s *RedisStore) GetVehicle(id string) (models.Vehicle, error) {
+	var v models.Vehicle
+	b, err := s.client.Get(s.ctx, "vehicle:"+id).Bytes()
+	if err != nil {
+		return v, err
+	}
+	return v, json.Unmarshal(b, &v)
+}
+
+func (s *RedisStore) ListVehicles(driverID string) ([]models.Vehicle, error) {
+	ids, err := s.client.SMembers(s.ctx, "vehicles:driver:"+driverID).Result()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]models.Vehicle, 0, len(ids))
+	for _, id := range ids {
+		v, e := s.GetVehicle(id)
+		if e == nil {
+			out = append(out, v)
+		}
+	}
+	return out, nil
+}
+
+func (s *RedisStore) GetActiveVehicle(driverID string) (models.Vehicle, error) {
+	vehicles, err := s.ListVehicles(driverID)
+	if err != nil {
+		return models.Vehicle{}, err
+	}
+	for _, v := range vehicles {
+		if v.IsActive {
+			return v, nil
+		}
+	}
+	return models.Vehicle{}, redis.Nil
+}
+
+func (s *RedisStore) DeleteVehicle(driverID, id string) error {
+	pipe := s.client.TxPipeline()
+	pipe.Del(s.ctx, "vehicle:"+id)
+	pipe.SRem(s.ctx, "vehicles:driver:"+driverID, id)
+	_, err := pipe.Exec(s.ctx)
+	return err
+}
+
+func (s *RedisStore) SetActiveVehicle(driverID, vehicleID string) error {
+	vehicles, err := s.ListVehicles(driverID)
+	if err != nil {
+		return err
+	}
+	found := false
+	pipe := s.client.TxPipeline()
+	for _, v := range vehicles {
+		if v.ID == vehicleID {
+			if !v.IsActive {
+				v.IsActive = true
+				v.UpdatedAt = time.Now().UTC()
+				b, _ := json.Marshal(v)
+				pipe.Set(s.ctx, "vehicle:"+v.ID, b, 0)
+				found = true
+			}
+		} else if v.IsActive {
+			v.IsActive = false
+			v.UpdatedAt = time.Now().UTC()
+			b, _ := json.Marshal(v)
+			pipe.Set(s.ctx, "vehicle:"+v.ID, b, 0)
+		}
+	}
+	if !found {
+		return redis.Nil
+	}
+	_, err = pipe.Exec(s.ctx)
+	return err
 }

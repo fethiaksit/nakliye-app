@@ -85,25 +85,23 @@ type Load struct {
 	UpdatedAt            time.Time    `json:"updatedAt"`
 	DeletedAt            *time.Time   `json:"deletedAt,omitempty"`
 
-	// FAZ 1 - Ilan Modeli Genişletme Alanları
-	UrgencyType             string     `json:"urgency_type"`                     
-	ScheduledDate           *time.Time `json:"scheduled_date,omitempty"`        
-	ScheduledTime           *string    `json:"scheduled_time,omitempty"`        
+	// Structured listing attributes. Scheduling is stored as one UTC instant;
+	// presentation clients render it in the user's local time zone.
+	UrgencyType UrgencyType `json:"urgencyType"`
+	ScheduledAt *time.Time  `json:"scheduledAt,omitempty"`
 
-	CargoType               string     `json:"cargo_type"`                         
-	CargoTypeNote           *string    `json:"cargo_type_note,omitempty"`           
+	CargoType     CargoType   `json:"cargoType"`
+	CargoTypeNote string      `json:"cargoTypeNote,omitempty"`
+	VehicleType   VehicleType `json:"vehicleType"`
 
-	VehicleType             string     `json:"vehicle_type"`                      
-
-	WeightKg                *float64   `json:"weightKg,omitempty"`                 
-	DimensionLengthCm       *float64   `json:"dimensionLengthCm,omitempty"`       
-	DimensionWidthCm        *float64   `json:"dimensionWidthCm,omitempty"`        
-	DimensionHeightCm       *float64   `json:"dimensionHeightCm,omitempty"`       
-
-	FloorInfo               *int       `json:"floorInfo,omitempty"`               
-	ElevatorAvailable       bool       `json:"elevatorAvailable,omitempty"`       
-	HelperNeeded            bool       `json:"helperNeeded,omitempty"`          
-	HelperCount             *int       `json:"helperCount,omitempty"`             
+	// Pickup and delivery access can differ, so their operational attributes
+	// are kept independently rather than in one ambiguous "floor" field.
+	PickupFloor               *int `json:"pickupFloor,omitempty"`
+	DeliveryFloor             *int `json:"deliveryFloor,omitempty"`
+	PickupElevatorAvailable   bool `json:"pickupElevatorAvailable"`
+	DeliveryElevatorAvailable bool `json:"deliveryElevatorAvailable"`
+	HelperNeeded              bool `json:"helperNeeded"`
+	HelperCount               int  `json:"helperCount"`
 }
 
 type User struct {
@@ -121,18 +119,46 @@ type User struct {
 	// LastSeenAt records a real authenticated API activity. It deliberately does
 	// not imply a live socket connection, so clients must present it as
 	// "son görülme" rather than "çevrimiçi".
-	LastSeenAt time.Time `json:"lastSeenAt,omitempty"`
+	LastSeenAt    time.Time  `json:"lastSeenAt,omitempty"`
+	AccountStatus string     `json:"accountStatus,omitempty"`
+	BlockedAt     *time.Time `json:"blockedAt,omitempty"`
+	BlockedReason string     `json:"blockedReason,omitempty"`
 }
 
 type DriverProfile struct {
-	VehicleType   string  `json:"vehicleType,omitempty"`
-	VehicleModel  string  `json:"vehicleModel,omitempty"`
-	LicensePlate  string  `json:"licensePlate,omitempty"`
-	CapacityKG    float64 `json:"capacityKg,omitempty"`
-	ServiceArea   string  `json:"serviceArea,omitempty"`
-	LicenseStatus string  `json:"licenseStatus,omitempty"`
-	CompletedJobs int     `json:"completedJobs"`
-	Rating        float64 `json:"rating"`
+	VehicleType        string     `json:"vehicleType,omitempty"`
+	VehicleModel       string     `json:"vehicleModel,omitempty"`
+	LicensePlate       string     `json:"licensePlate,omitempty"`
+	CapacityKG         float64    `json:"capacityKg,omitempty"`
+	ServiceArea        string     `json:"serviceArea,omitempty"`
+	LicenseStatus      string     `json:"licenseStatus,omitempty"`
+	CompletedJobs      int        `json:"completedJobs"`
+	Rating             float64    `json:"rating"`
+	VerificationStatus string     `json:"verificationStatus,omitempty"`
+	VerificationNote   string     `json:"verificationNote,omitempty"`
+	VerifiedAt         *time.Time `json:"verifiedAt,omitempty"`
+	VerifiedBy         string     `json:"verifiedBy,omitempty"`
+}
+
+type Vehicle struct {
+	ID                 string     `json:"id"`
+	DriverID           string     `json:"driverId"`
+	VehicleType        string     `json:"vehicleType"`
+	Brand              string     `json:"brand"`
+	Model              string     `json:"model"`
+	LicensePlate       string     `json:"licensePlate"`
+	CapacityKG         float64    `json:"capacityKg"`
+	LengthCM           float64    `json:"lengthCm"`
+	WidthCM            float64    `json:"widthCm"`
+	HeightCM           float64    `json:"heightCm"`
+	PhotoURL           string     `json:"photoUrl,omitempty"`
+	IsActive           bool       `json:"isActive"`
+	CreatedAt          time.Time  `json:"createdAt"`
+	UpdatedAt          time.Time  `json:"updatedAt"`
+	VerificationStatus string     `json:"verificationStatus,omitempty"`
+	VerificationNote   string     `json:"verificationNote,omitempty"`
+	VerifiedAt         *time.Time `json:"verifiedAt,omitempty"`
+	VerifiedBy         string     `json:"verifiedBy,omitempty"`
 }
 
 type Offer struct {
@@ -171,6 +197,7 @@ type ConversationMember struct {
 	Name       string    `json:"name"`
 	Role       string    `json:"role"`
 	LastSeenAt time.Time `json:"lastSeenAt,omitempty"`
+	Vehicle    *Vehicle  `json:"vehicle,omitempty"`
 }
 
 type Message struct {

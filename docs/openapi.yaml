@@ -29,18 +29,297 @@ paths:
   /api/listings:
     get:
       security: [{ bearerAuth: [] }]
-      responses: { '200': { description: Paginated listings } }
+      parameters:
+        - { in: query, name: urgencyType, schema: { $ref: '#/components/schemas/UrgencyType' } }
+        - { in: query, name: cargoType, schema: { $ref: '#/components/schemas/CargoType' } }
+        - { in: query, name: vehicleType, schema: { $ref: '#/components/schemas/VehicleType' } }
+        - { in: query, name: scheduledFrom, schema: { type: string, format: date-time } }
+        - { in: query, name: scheduledTo, schema: { type: string, format: date-time } }
+        - { in: query, name: pickupElevatorAvailable, schema: { type: boolean } }
+        - { in: query, name: deliveryElevatorAvailable, schema: { type: boolean } }
+        - { in: query, name: helperNeeded, schema: { type: boolean } }
+      responses: { '200': { description: Paginated, filterable listings } }
     post:
       security: [{ bearerAuth: [] }]
-      responses: { '201': { description: Draft listing created } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateListingRequest' }
+      responses:
+        '201':
+          description: Draft listing created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Listing' }
+        '400': { description: Validation error }
   /api/drivers/jobs/nearby:
     get:
       security: [{ bearerAuth: [] }]
-      responses: { '200': { description: Open jobs } }
+      parameters:
+        - { in: query, name: urgencyType, schema: { $ref: '#/components/schemas/UrgencyType' } }
+        - { in: query, name: cargoType, schema: { $ref: '#/components/schemas/CargoType' } }
+        - { in: query, name: vehicleType, schema: { $ref: '#/components/schemas/VehicleType' } }
+        - { in: query, name: scheduledFrom, schema: { type: string, format: date-time } }
+        - { in: query, name: scheduledTo, schema: { type: string, format: date-time } }
+        - { in: query, name: pickupElevatorAvailable, schema: { type: boolean } }
+        - { in: query, name: deliveryElevatorAvailable, schema: { type: boolean } }
+        - { in: query, name: helperNeeded, schema: { type: boolean } }
+      responses: { '200': { description: Open jobs with complete operational detail } }
+  /api/messages/{id}/complaints:
+    post:
+      summary: Report a message for admin review
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MessageComplaintRequest' }
+      responses:
+        '201': { description: Complaint opened }
+        '403': { description: User cannot access or report this message }
+        '409': { description: Complaint already exists }
+  /api/admin/auth/login:
+    post:
+      summary: Sign in to the separate admin security domain
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 12 }
+      responses:
+        '200': { description: Eight-hour admin access token }
+        '401': { description: Invalid admin credentials }
+        '429': { description: Login rate limited }
+        '503': { description: Admin access is not configured }
+  /api/admin/dashboard:
+    get:
+      security: [{ adminBearerAuth: [] }]
+      responses: { '200': { description: Dashboard counters, verification queue, daily series and recent activity } }
+  /api/admin/users:
+    get:
+      security: [{ adminBearerAuth: [] }]
+      parameters:
+        - { in: query, name: q, schema: { type: string } }
+        - { in: query, name: role, schema: { type: string, enum: [customer, driver] } }
+        - { in: query, name: status, schema: { type: string, enum: [active, blocked] } }
+      responses: { '200': { description: Paginated users without password hashes } }
+  /api/admin/users/{id}:
+    get:
+      security: [{ adminBearerAuth: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      responses: { '200': { description: User, load and driver details } }
+  /api/admin/users/{id}/status:
+    patch:
+      security: [{ adminBearerAuth: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [active, blocked] }
+                reason: { type: string, description: Required when blocking }
+      responses: { '200': { description: User status updated and audited } }
+  /api/admin/drivers:
+    get:
+      security: [{ adminBearerAuth: [] }]
+      parameters:
+        - { in: query, name: verificationStatus, schema: { $ref: '#/components/schemas/VerificationStatus' } }
+      responses: { '200': { description: Driver verification queue } }
+  /api/admin/drivers/{id}:
+    get:
+      security: [{ adminBearerAuth: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      responses: { '200': { description: Driver, documents and vehicles } }
+  /api/admin/drivers/{id}/verification:
+    patch:
+      security: [{ adminBearerAuth: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VerificationRequest' }
+      responses: { '200': { description: Driver verification updated and audited } }
+  /api/admin/drivers/{id}/documents:
+    post:
+      security: [{ adminBearerAuth: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      responses: { '201': { description: Driver document registered for review } }
+  /api/admin/driver-documents/{id}:
+    patch:
+      security: [{ adminBearerAuth: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VerificationRequest' }
+      responses: { '200': { description: Document reviewed } }
+  /api/admin/vehicles/{id}/verification:
+    patch:
+      security: [{ adminBearerAuth: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VerificationRequest' }
+      responses: { '200': { description: Vehicle reviewed } }
+  /api/admin/loads:
+    get:
+      security: [{ adminBearerAuth: [] }]
+      responses: { '200': { description: Searchable listings with customer and assigned driver } }
+  /api/admin/loads/{id}:
+    get:
+      security: [{ adminBearerAuth: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      responses: { '200': { description: Listing, offers and status history } }
+  /api/admin/loads/{id}/status:
+    patch:
+      security: [{ adminBearerAuth: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      responses: { '200': { description: Audited admin status override } }
+  /api/admin/complaints:
+    get:
+      security: [{ adminBearerAuth: [] }]
+      responses: { '200': { description: Searchable message complaints } }
+  /api/admin/complaints/{id}:
+    get:
+      security: [{ adminBearerAuth: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      responses: { '200': { description: Complaint, message and involved users } }
+    patch:
+      security: [{ adminBearerAuth: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      responses: { '200': { description: Complaint resolved, dismissed or moved to review } }
+  /api/admin/activity:
+    get:
+      security: [{ adminBearerAuth: [] }]
+      responses: { '200': { description: Combined admin audit and domain activity stream } }
+  /api/admin/stats:
+    get:
+      security: [{ adminBearerAuth: [] }]
+      responses: { '200': { description: Daily platform movement and basic system totals } }
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+    adminBearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: AdminJWT
+      description: Separate token signed with ADMIN_JWT_SECRET; mobile JWTs are rejected.
   schemas:
+    VerificationStatus:
+      type: string
+      enum: [pending, verified, rejected]
+    VerificationRequest:
+      type: object
+      required: [status]
+      properties:
+        status: { $ref: '#/components/schemas/VerificationStatus' }
+        note: { type: string }
+    MessageComplaintRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string, enum: [harassment, fraud, spam, inappropriate, privacy, other] }
+        detail: { type: string, maxLength: 1000 }
+    UrgencyType:
+      type: string
+      enum: [immediate, today, scheduled]
+    CargoType:
+      type: string
+      enum: [ev_esyasi, mobilya, beyaz_esya, paletli_yuk, motosiklet, ticari_yuk, parsiyel_yuk, diger]
+    VehicleType:
+      type: string
+      enum: [panelvan, kamyonet, acik_kasa, kapali_kasa, kamyon, tir, farketmez]
+    Location:
+      type: object
+      required: [address, latitude, longitude]
+      properties:
+        address: { type: string }
+        latitude: { type: number, format: double }
+        longitude: { type: number, format: double }
+        placeId: { type: string }
+        street: { type: string }
+        streetNumber: { type: string }
+        neighborhood: { type: string }
+        district: { type: string }
+        city: { type: string }
+        province: { type: string }
+        postalCode: { type: string }
+        country: { type: string }
+        countryCode: { type: string }
+    Dimensions:
+      type: object
+      required: [lengthCm, widthCm, heightCm, weightKg]
+      properties:
+        lengthCm: { type: number, minimum: 1, maximum: 5000 }
+        widthCm: { type: number, minimum: 1, maximum: 5000 }
+        heightCm: { type: number, minimum: 1, maximum: 5000 }
+        weightKg: { type: number, minimum: 0.1, maximum: 100000 }
+    CreateListingRequest:
+      type: object
+      required: [title, description, pickup, delivery, urgencyType, cargoType, vehicleType, dimensions, pickupFloor, deliveryFloor, pickupElevatorAvailable, deliveryElevatorAvailable, helperNeeded]
+      properties:
+        title: { type: string, maxLength: 120 }
+        description: { type: string, maxLength: 2000 }
+        photoUrls:
+          type: array
+          maxItems: 5
+          items: { type: string }
+        pickup: { $ref: '#/components/schemas/Location' }
+        delivery: { $ref: '#/components/schemas/Location' }
+        urgencyType: { $ref: '#/components/schemas/UrgencyType' }
+        scheduledAt:
+          type: string
+          format: date-time
+          description: Required and must be in the future when urgencyType is scheduled; omitted otherwise.
+        cargoType: { $ref: '#/components/schemas/CargoType' }
+        cargoTypeNote:
+          type: string
+          maxLength: 200
+          description: Required when cargoType is diger.
+        vehicleType: { $ref: '#/components/schemas/VehicleType' }
+        dimensions: { $ref: '#/components/schemas/Dimensions' }
+        pickupFloor: { type: integer, minimum: -5, maximum: 100 }
+        deliveryFloor: { type: integer, minimum: -5, maximum: 100 }
+        pickupElevatorAvailable: { type: boolean }
+        deliveryElevatorAvailable: { type: boolean }
+        helperNeeded: { type: boolean }
+        helperCount: { type: integer, minimum: 0, maximum: 20 }
+    Listing:
+      allOf:
+        - { $ref: '#/components/schemas/CreateListingRequest' }
+        - type: object
+          required: [id, customerId, status, createdAt, updatedAt]
+          properties:
+            id: { type: string, format: uuid }
+            customerId: { type: string, format: uuid }
+            status: { type: string, enum: [draft, published, offers_received, driver_selected, in_transit, completed, cancelled] }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
     RegisterRequest:
       type: object
       required: [name, email, password, role]

@@ -18,6 +18,10 @@ type Config struct {
 	MapsKeyError                       string
 	PricePerKM                         float64
 	MaxUploadMB                        int
+	AdminEmail                         string
+	AdminPassword                      string
+	AdminPasswordHash                  string
+	AdminJWTSecret                     string
 }
 
 func Load() Config {
@@ -63,6 +67,10 @@ func Load() Config {
 		PricePerKM:             pricePerKM,
 		MaxUploadMB:            maxUploadMB,
 		Environment:            environment,
+		AdminEmail:             strings.ToLower(strings.TrimSpace(os.Getenv("ADMIN_EMAIL"))),
+		AdminPassword:          os.Getenv("ADMIN_PASSWORD"),
+		AdminPasswordHash:      strings.TrimSpace(os.Getenv("ADMIN_PASSWORD_HASH")),
+		AdminJWTSecret:         strings.TrimSpace(os.Getenv("ADMIN_JWT_SECRET")),
 	}
 }
 
@@ -76,6 +84,24 @@ func (c Config) Validate() error {
 	}
 	if len(c.JWTSecret) < 32 {
 		return errors.New("JWT_SECRET en az 32 karakter olmalıdır")
+	}
+	adminConfigured := c.AdminEmail != "" || c.AdminPassword != "" || c.AdminPasswordHash != "" || c.AdminJWTSecret != ""
+	if adminConfigured {
+		if !strings.Contains(c.AdminEmail, "@") {
+			return errors.New("ADMIN_EMAIL geçerli bir e-posta olmalıdır")
+		}
+		if c.AdminPassword == "" && c.AdminPasswordHash == "" {
+			return errors.New("ADMIN_PASSWORD veya ADMIN_PASSWORD_HASH tanımlanmalıdır")
+		}
+		if c.AdminPassword != "" && len(c.AdminPassword) < 12 {
+			return errors.New("ADMIN_PASSWORD en az 12 karakter olmalıdır")
+		}
+		if c.AdminPasswordHash != "" && !strings.HasPrefix(c.AdminPasswordHash, "$argon2id$") {
+			return errors.New("ADMIN_PASSWORD_HASH geçerli Argon2id biçiminde olmalıdır")
+		}
+		if len(c.AdminJWTSecret) < 32 || c.AdminJWTSecret == c.JWTSecret {
+			return errors.New("ADMIN_JWT_SECRET mobil JWT_SECRET değerinden farklı ve en az 32 karakter olmalıdır")
+		}
 	}
 	switch c.Environment {
 	case "development", "test", "staging", "production":

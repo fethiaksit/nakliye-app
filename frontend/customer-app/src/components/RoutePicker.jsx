@@ -1,11 +1,14 @@
 import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import * as Location from 'expo-location';
 
 import { maps } from '../services/api';
 import { nativeGoogleMapsConfigured, nativeGoogleMapsMessage } from '../config/maps';
 import MapAdapter from '../../../shared/maps/MapAdapter';
 import MapUnavailable from '../../../shared/maps/MapUnavailable';
+import Icon from '../../../shared/ui/Icon';
+import { useToast } from '../../../shared/ui/feedback';
+import { colors, radius, shadows, spacing, typography } from '../../../shared/ui/theme';
 
 const { isLatestLocationRequest, updateLocationDraft } = require('../utils/locationSelection.cjs');
 
@@ -65,7 +68,7 @@ function useAddressSearch(query, enabled, sessionToken, locationBias) {
   return state;
 }
 
-const AddressField = memo(function AddressField({ accent, active, label, onActivate, onChange, onSelect, query, search }) {
+const AddressField = memo(function AddressField({ accent, active, label, onActivate, onChange, onClear, onSelect, query, search }) {
   return <View style={styles.addressField}>
     <Pressable onPress={onActivate} style={[styles.addressInput, active && { borderColor: accent }]}>
       <View style={[styles.locationDot, { backgroundColor: accent }]} />
@@ -81,18 +84,19 @@ const AddressField = memo(function AddressField({ accent, active, label, onActiv
           returnKeyType="search"
         />
       </View>
-      {search.loading && <ActivityIndicator color={accent} size="small" />}
+      {search.loading ? <ActivityIndicator color={accent} size="small" /> : query ? <Pressable accessibilityLabel={`${label} seçimini temizle`} hitSlop={9} onPress={onClear}><Icon name="close-circle" size={21} color={colors.textMuted} /></Pressable> : <Icon name="search-outline" size={20} color={colors.textMuted} />}
     </Pressable>
     {active && query.trim().length >= 3 && <View style={styles.suggestions}>
-      {search.items.map(item => <Pressable key={item.placeId || item.formattedAddress} style={styles.suggestion} onPress={() => void onSelect(item)}>
-        <Text style={styles.suggestionTitle} numberOfLines={2}>{item.formattedAddress}</Text>
+      {search.items.map(item => <Pressable key={item.placeId || item.formattedAddress} style={({ pressed }) => [styles.suggestion, pressed && styles.pressed]} onPress={() => void onSelect(item)}>
+        <View style={styles.suggestionIcon}><Icon name="location-outline" size={19} color={colors.primary} /></View><View style={styles.suggestionCopy}><Text style={styles.suggestionTitle} numberOfLines={1}>{item.primaryText || item.formattedAddress}</Text>{item.secondaryText || item.primaryText ? <Text style={styles.suggestionSubtitle} numberOfLines={2}>{item.secondaryText || item.formattedAddress}</Text> : null}</View><Icon name="chevron-forward" size={17} color={colors.textMuted} />
       </Pressable>)}
-      {!search.loading && search.items.length === 0 && <Text style={styles.searchMessage}>{search.error || 'Bu adres için sonuç bulunamadı.'}</Text>}
+      {!search.loading && search.items.length === 0 ? <View style={styles.searchMessageRow}><Icon name={search.error ? 'cloud-offline-outline' : 'search-outline'} size={18} color={search.error ? colors.danger : colors.textMuted} /><Text style={[styles.searchMessage, search.error && styles.searchError]}>{search.error || 'Bu adres için sonuç bulunamadı.'}</Text></View> : null}
     </View>}
   </View>;
 });
 
 export default function RoutePicker({ value, onLocationsChange, onRouteChange }) {
+  const { showToast } = useToast();
   const mapRef = useRef(null);
   const requestSequenceRef = useRef({ pickup: 0, dropoff: 0 });
   const reverseControllersRef = useRef({ pickup: null, dropoff: null });
@@ -180,9 +184,9 @@ export default function RoutePicker({ value, onLocationsChange, onRouteChange })
     } catch (error) {
       if (controller.signal.aborted || error?.code === 'ERR_CANCELED') return;
       if (isLatestLocationRequest(requestSequenceRef.current, field, sequence)) updateLocation(field, { coordinate, formattedAddress: '', resolvingAddress: false, geocodeError: true });
-      Alert.alert('Adres alınamadı', mapErrorMessage(error, 'Seçilen konumun açık adresi alınamadı.'));
+      showToast(mapErrorMessage(error, 'Seçilen konumun açık adresi alınamadı.'), { type: 'error', title: 'Adres alınamadı' });
     }
-  }, [updateLocation]);
+  }, [showToast, updateLocation]);
 
   const selectSuggestion = useCallback(async (field, item) => {
     reverseControllersRef.current[field]?.abort();
@@ -200,9 +204,9 @@ export default function RoutePicker({ value, onLocationsChange, onRouteChange })
       mapRef.current?.animateToRegion({ ...normalized.coordinate, latitudeDelta: 0.04, longitudeDelta: 0.04 }, 350);
     } catch (error) {
       if (controller.signal.aborted || error?.code === 'ERR_CANCELED') return;
-      Alert.alert('Adres seçilemedi', mapErrorMessage(error, 'Adres önerileri alınamadı.'));
+      showToast(mapErrorMessage(error, 'Adres önerileri alınamadı.'), { type: 'error', title: 'Adres seçilemedi' });
     }
-  }, [updateLocation]);
+  }, [showToast, updateLocation]);
 
   const editQuery = useCallback((field, query) => {
     reverseControllersRef.current[field]?.abort();
@@ -300,12 +304,12 @@ export default function RoutePicker({ value, onLocationsChange, onRouteChange })
       let permission = await Location.getForegroundPermissionsAsync();
       if (permission.status !== 'granted' && permission.canAskAgain) permission = await Location.requestForegroundPermissionsAsync();
       if (permission.status !== 'granted') {
-        Alert.alert('Konum izni verilmedi', permission.canAskAgain ? 'Başlangıç adresini yazarak veya haritadan seçebilirsiniz.' : 'Konum iznini Ayarlar uygulamasından açabilir veya adresi yazarak seçebilirsiniz.');
+        showToast(permission.canAskAgain ? 'Başlangıç adresini yazarak veya haritadan seçebilirsiniz.' : 'Konum iznini Ayarlar uygulamasından açabilir veya adresi yazarak seçebilirsiniz.', { type: 'warning', title: 'Konum izni verilmedi' });
         return;
       }
       const servicesEnabled = await Location.hasServicesEnabledAsync();
       if (!servicesEnabled) {
-        Alert.alert('Konum servisleri kapalı', 'GPS/konum servislerini açın veya başlangıç adresini haritadan seçin.');
+        showToast('GPS/konum servislerini açın veya başlangıç adresini haritadan seçin.', { type: 'warning', title: 'Konum servisleri kapalı' });
         return;
       }
       const timeout = new Promise((_, reject) => setTimeout(() => reject(Object.assign(new Error('Konum isteği zaman aşımına uğradı.'), { code: 'LOCATION_TIMEOUT' })), 12000));
@@ -324,11 +328,11 @@ export default function RoutePicker({ value, onLocationsChange, onRouteChange })
       mapRef.current?.animateToRegion({ ...coordinate, latitudeDelta: 0.025, longitudeDelta: 0.025 }, 350);
     } catch (error) {
       if (__DEV__) console.warn('[LOCATION] Current location could not be obtained.', { code: error?.code, message: error?.message });
-      Alert.alert('Konum alınamadı', error?.code === 'LOCATION_TIMEOUT' ? 'Konum isteği zaman aşımına uğradı. GPS ayarlarını kontrol edin veya adresi seçin.' : 'Mevcut konumunuza ulaşılamadı. Adresi yazarak veya haritadan seçebilirsiniz.');
+      showToast(error?.code === 'LOCATION_TIMEOUT' ? 'Konum isteği zaman aşımına uğradı. GPS ayarlarını kontrol edin veya adresi seçin.' : 'Mevcut konumunuza ulaşılamadı. Adresi yazarak veya haritadan seçebilirsiniz.', { type: 'error', title: 'Konum alınamadı' });
     } finally {
       setLocating(false);
     }
-  }, [selectCoordinate]);
+  }, [selectCoordinate, showToast]);
 
   const swapLocations = useCallback(() => {
     reverseControllersRef.current.pickup?.abort();
@@ -358,12 +362,9 @@ export default function RoutePicker({ value, onLocationsChange, onRouteChange })
 
   return <View style={styles.container}>
     <View style={styles.titleRow}>
-      <View>
-        <Text style={styles.title}>Nakliye Rotası</Text>
-        <Text style={styles.subtitle}>Konumları adresle arayın veya haritada işaretleyin.</Text>
-      </View>
+      <Text style={styles.instruction}>Aktif adresi haritaya dokunarak da seçebilirsiniz.</Text>
       <Pressable style={styles.swapButton} onPress={swapLocations} accessibilityLabel="Başlangıç ve varışı değiştir">
-        <Text style={styles.swapText}>⇅</Text>
+        <Icon name="swap-vertical" size={21} color={colors.primary} />
       </Pressable>
     </View>
 
@@ -373,6 +374,7 @@ export default function RoutePicker({ value, onLocationsChange, onRouteChange })
       label="Yük nereden alınacak?"
       onActivate={() => { setActiveLocationField('pickup'); setPickupFocused(true); setDropoffFocused(false); }}
       onChange={value => editQuery('pickup', value)}
+      onClear={() => updateLocation('pickup', null)}
       onSelect={item => selectSuggestion('pickup', item)}
       query={pickupQuery}
       search={pickupSearch}
@@ -383,6 +385,7 @@ export default function RoutePicker({ value, onLocationsChange, onRouteChange })
       label="Yük nereye teslim edilecek?"
       onActivate={() => { setActiveLocationField('dropoff'); setDropoffFocused(true); setPickupFocused(false); }}
       onChange={value => editQuery('dropoff', value)}
+      onClear={() => updateLocation('dropoff', null)}
       onSelect={item => selectSuggestion('dropoff', item)}
       query={dropoffQuery}
       search={dropoffSearch}
@@ -390,10 +393,10 @@ export default function RoutePicker({ value, onLocationsChange, onRouteChange })
 
     <View style={styles.actions}>
       <Pressable style={styles.currentLocationButton} onPress={useCurrentLocation} disabled={locating}>
-        {locating ? <ActivityIndicator color="#3658cb" size="small" /> : <Text style={styles.currentLocationText}>◎ Mevcut konumumu kullan</Text>}
+        {locating ? <ActivityIndicator color={colors.primary} size="small" /> : <><Icon name="locate-outline" size={18} color={colors.primary} /><Text style={styles.currentLocationText}>Konumumu kullan</Text></>}
       </Pressable>
       <Pressable style={styles.clearButton} onPress={clearActiveLocation}>
-        <Text style={styles.clearText}>Seçimi temizle</Text>
+        <Icon name="trash-outline" size={17} color={colors.textSecondary} /><Text style={styles.clearText}>Temizle</Text>
       </Pressable>
     </View>
 
@@ -415,7 +418,7 @@ export default function RoutePicker({ value, onLocationsChange, onRouteChange })
       {nativeGoogleMapsConfigured ? <View style={styles.mapHint}><Text style={styles.mapHintText}>Haritaya dokun: {activeLocationField === 'pickup' ? 'başlangıç' : 'varış'} seçiliyor</Text></View> : null}
     </View>
 
-    <View style={styles.routeStatus}><Text style={styles.routeStatusText}>{routeState}</Text>{routeState === 'Rota hesaplanıyor…' && <ActivityIndicator size="small" color="#3658cb" />}</View>
+    <View style={styles.routeStatus}><Icon name={route ? 'checkmark-circle' : routeState.includes('hesaplanıyor') ? 'sync-outline' : 'information-circle-outline'} size={18} color={route ? colors.success : colors.primary} /><Text style={styles.routeStatusText}>{routeState}</Text>{routeState === 'Rota hesaplanıyor…' && <ActivityIndicator size="small" color={colors.primary} />}</View>
 
     {route && <View style={styles.priceCard}>
       <View style={styles.metric}><Text style={styles.metricLabel}>MESAFE</Text><Text style={styles.metricValue}>{number(route.distanceKm)} km</Text></View>
@@ -431,40 +434,10 @@ export default function RoutePicker({ value, onLocationsChange, onRouteChange })
 }
 
 const styles = StyleSheet.create({
-  container: { marginTop: 14 },
-  titleRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 10 },
-  title: { color: '#202b43', fontSize: 17, fontWeight: '800' },
-  subtitle: { color: '#7d8798', fontSize: 12, lineHeight: 17, marginTop: 3, maxWidth: 255 },
-  swapButton: { alignItems: 'center', backgroundColor: '#eef1ff', borderRadius: 10, height: 38, justifyContent: 'center', width: 42 },
-  swapText: { color: '#3658cb', fontSize: 22, fontWeight: '800' },
-  addressField: { marginTop: 9 },
-  addressInput: { alignItems: 'center', backgroundColor: '#fbfcff', borderColor: '#dfe5ef', borderRadius: 13, borderWidth: 1, flexDirection: 'row', minHeight: 66, paddingHorizontal: 12 },
-  locationDot: { borderColor: '#fff', borderRadius: 8, borderWidth: 3, height: 16, marginRight: 10, width: 16 },
-  inputContent: { flex: 1 },
-  addressLabel: { color: '#657089', fontSize: 11, fontWeight: '700', marginBottom: 2 },
-  addressTextInput: { color: '#202b43', fontSize: 14, padding: 0 },
-  suggestions: { backgroundColor: '#fff', borderColor: '#e2e7f0', borderRadius: 12, borderWidth: 1, marginTop: 5, overflow: 'hidden' },
-  suggestion: { borderBottomColor: '#eff2f6', borderBottomWidth: 1, paddingHorizontal: 14, paddingVertical: 11 },
-  suggestionTitle: { color: '#35415a', fontSize: 13, lineHeight: 18 },
-  searchMessage: { color: '#7d8798', fontSize: 12, padding: 13 },
-  actions: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginTop: 12 },
-  currentLocationButton: { alignItems: 'center', backgroundColor: '#eef1ff', borderRadius: 10, flexDirection: 'row', minHeight: 38, paddingHorizontal: 12 },
-  currentLocationText: { color: '#3658cb', fontSize: 12, fontWeight: '800' },
-  clearButton: { paddingHorizontal: 5, paddingVertical: 9 },
-  clearText: { color: '#7d8798', fontSize: 12, fontWeight: '700' },
-  mapFrame: { borderColor: '#dbe3ef', borderRadius: 16, borderWidth: 1, height: 270, marginTop: 12, overflow: 'hidden' },
-  map: { flex: 1 }, nativeMapError: { alignItems: 'center', backgroundColor: '#fff6f4', flex: 1, justifyContent: 'center', padding: 24 }, nativeMapErrorText: { color: '#a74238', fontSize: 13, fontWeight: '800', lineHeight: 20, textAlign: 'center' }, nativeMapErrorHint: { color: '#7a8495', fontSize: 11, lineHeight: 17, marginTop: 7, textAlign: 'center' },
-  mapHint: { backgroundColor: '#202b43df', borderRadius: 8, bottom: 12, left: 12, paddingHorizontal: 10, paddingVertical: 7, position: 'absolute' },
-  mapHintText: { color: '#fff', fontSize: 11, fontWeight: '700' },
-  routeStatus: { alignItems: 'center', flexDirection: 'row', gap: 7, minHeight: 35, paddingHorizontal: 2 },
-  routeStatusText: { color: '#657089', flex: 1, fontSize: 12 },
-  priceCard: { backgroundColor: '#eef1ff', borderColor: '#dce3ff', borderRadius: 16, borderWidth: 1, marginTop: 2, padding: 16 },
-  metric: { flex: 1 },
-  metricLabel: { color: '#7581a4', fontSize: 10, fontWeight: '800', letterSpacing: 0.6 },
-  metricValue: { color: '#263a85', fontSize: 16, fontWeight: '800', marginTop: 4 },
-  priceDivider: { borderTopColor: '#d7def9', borderTopWidth: 1, marginVertical: 14 },
-  rateValue: { color: '#35415a', fontSize: 14, fontWeight: '800', marginTop: 3 },
-  estimateLabel: { color: '#526cc9', fontSize: 10, fontWeight: '800', letterSpacing: 0.8, marginTop: 15 },
-  estimateValue: { color: '#273dbe', fontSize: 28, fontWeight: '900', marginTop: 3 },
-  priceNote: { color: '#7581a4', fontSize: 11, lineHeight: 16, marginTop: 8 },
+  container: { marginTop: spacing.xxs }, titleRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' }, instruction: { ...typography.caption, color: colors.textSecondary, flex: 1, paddingRight: spacing.sm }, swapButton: { alignItems: 'center', backgroundColor: colors.primarySoft, borderRadius: radius.sm, height: 40, justifyContent: 'center', width: 44 },
+  addressField: { marginTop: spacing.sm }, addressInput: { alignItems: 'center', backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.sm, borderWidth: 1, flexDirection: 'row', minHeight: 66, paddingHorizontal: spacing.sm }, locationDot: { borderColor: colors.surface, borderRadius: 8, borderWidth: 3, height: 16, marginRight: spacing.sm, width: 16 }, inputContent: { flex: 1 }, addressLabel: { ...typography.caption, color: colors.textSecondary, marginBottom: 2 }, addressTextInput: { ...typography.body, color: colors.ink, padding: 0 },
+  suggestions: { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.md, borderWidth: 1, marginTop: spacing.xs, overflow: 'hidden', ...shadows.card }, suggestion: { alignItems: 'center', borderBottomColor: colors.border, borderBottomWidth: StyleSheet.hairlineWidth, flexDirection: 'row', minHeight: 62, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs }, suggestionIcon: { alignItems: 'center', backgroundColor: colors.primarySoft, borderRadius: radius.xs, height: 36, justifyContent: 'center', marginRight: spacing.sm, width: 36 }, suggestionCopy: { flex: 1 }, suggestionTitle: { ...typography.smallMedium, color: colors.ink }, suggestionSubtitle: { ...typography.caption, color: colors.textSecondary, marginTop: 2 }, pressed: { opacity: .65 }, searchMessageRow: { alignItems: 'center', flexDirection: 'row', gap: spacing.xs, padding: spacing.sm }, searchMessage: { ...typography.small, color: colors.textSecondary, flex: 1 }, searchError: { color: colors.danger },
+  actions: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginTop: spacing.sm }, currentLocationButton: { alignItems: 'center', backgroundColor: colors.primarySoft, borderRadius: radius.sm, flexDirection: 'row', gap: spacing.xs, minHeight: 42, paddingHorizontal: spacing.sm }, currentLocationText: { ...typography.smallMedium, color: colors.primaryDark }, clearButton: { alignItems: 'center', flexDirection: 'row', gap: spacing.xxs, minHeight: 42, paddingHorizontal: spacing.xs }, clearText: { ...typography.smallMedium, color: colors.textSecondary },
+  mapFrame: { borderColor: colors.border, borderRadius: radius.lg, borderWidth: 1, height: 270, marginTop: spacing.sm, overflow: 'hidden' }, map: { flex: 1 }, nativeMapError: { alignItems: 'center', backgroundColor: colors.dangerSoft, flex: 1, justifyContent: 'center', padding: spacing.xl }, nativeMapErrorText: { ...typography.smallMedium, color: colors.danger, textAlign: 'center' }, nativeMapErrorHint: { ...typography.caption, color: colors.textSecondary, marginTop: spacing.xs, textAlign: 'center' }, mapHint: { backgroundColor: 'rgba(19,34,56,.9)', borderRadius: radius.xs, bottom: spacing.sm, left: spacing.sm, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs, position: 'absolute' }, mapHintText: { ...typography.caption, color: colors.white },
+  routeStatus: { alignItems: 'center', backgroundColor: colors.surfaceMuted, borderRadius: radius.sm, flexDirection: 'row', gap: spacing.xs, marginTop: spacing.xs, minHeight: 42, paddingHorizontal: spacing.sm }, routeStatusText: { ...typography.small, color: colors.textSecondary, flex: 1 }, priceCard: { backgroundColor: colors.primarySoft, borderColor: '#C9E1DB', borderRadius: radius.lg, borderWidth: 1, marginTop: spacing.sm, padding: spacing.md }, metric: { flex: 1 }, metricLabel: { ...typography.caption, color: colors.textMuted, letterSpacing: .6 }, metricValue: { ...typography.h3, color: colors.primaryDark, marginTop: spacing.xxs }, priceDivider: { borderTopColor: '#C9E1DB', borderTopWidth: 1, marginVertical: spacing.md }, rateValue: { ...typography.bodyMedium, color: colors.text, marginTop: spacing.xxs }, estimateLabel: { ...typography.caption, color: colors.primary, letterSpacing: .8, marginTop: spacing.md }, estimateValue: { ...typography.display, color: colors.primaryDark, marginTop: spacing.xxs }, priceNote: { ...typography.caption, color: colors.textSecondary, marginTop: spacing.xs },
 });

@@ -37,7 +37,7 @@ func main() {
 	offset := 0
 	updated := 0
 	for {
-		loads, total, err := redisStore.ListLoads("", "", "", "", offset, 100)
+		loads, total, err := redisStore.ListLoads("", "", store.LoadFilter{}, offset, 100)
 		if err != nil {
 			log.Fatal(err)
 		}

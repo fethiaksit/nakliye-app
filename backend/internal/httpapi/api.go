@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/argon2"
 	"io"
 	"log"
@@ -27,12 +28,17 @@ import (
 )
 
 type API struct {
-	store          *store.RedisStore
-	secret         []byte
-	maps           mapsService
-	mapsKeyIssue   string
-	locationRate   *service.FixedWindowLimiter
-	maxUploadBytes int64
+	store             *store.RedisStore
+	secret            []byte
+	maps              mapsService
+	mapsKeyIssue      string
+	locationRate      *service.FixedWindowLimiter
+	maxUploadBytes    int64
+	adminEmail        string
+	adminPassword     string
+	adminPasswordHash string
+	adminSecret       []byte
+	adminLoginRate    *service.FixedWindowLimiter
 }
 
 type mapsService interface {
@@ -52,6 +58,10 @@ type Options struct {
 	MapsKeyError           string
 	PricePerKM             float64
 	MaxUploadMB            int
+	AdminEmail             string
+	AdminPassword          string
+	AdminPasswordHash      string
+	AdminSecret            string
 }
 
 func New(s *store.RedisStore, secret string) *API {
@@ -70,12 +80,17 @@ func NewWithOptions(s *store.RedisStore, options Options) *API {
 		options.MaxUploadMB = 10
 	}
 	return &API{
-		store:          s,
-		secret:         []byte(options.Secret),
-		maps:           service.NewGoogleMapsClient(options.GoogleMapsServerAPIKey, options.PricePerKM),
-		mapsKeyIssue:   options.MapsKeyError,
-		locationRate:   service.NewFixedWindowLimiter(60, time.Minute),
-		maxUploadBytes: int64(options.MaxUploadMB) << 20,
+		store:             s,
+		secret:            []byte(options.Secret),
+		maps:              service.NewGoogleMapsClient(options.GoogleMapsServerAPIKey, options.PricePerKM),
+		mapsKeyIssue:      options.MapsKeyError,
+		locationRate:      service.NewFixedWindowLimiter(60, time.Minute),
+		maxUploadBytes:    int64(options.MaxUploadMB) << 20,
+		adminEmail:        strings.ToLower(strings.TrimSpace(options.AdminEmail)),
+		adminPassword:     options.AdminPassword,
+		adminPasswordHash: strings.TrimSpace(options.AdminPasswordHash),
+		adminSecret:       []byte(options.AdminSecret),
+		adminLoginRate:    service.NewFixedWindowLimiter(5, time.Minute),
 	}
 }
 func (a *API) Routes() http.Handler {
@@ -87,6 +102,26 @@ func (a *API) Routes() http.Handler {
 	mux.HandleFunc("POST /api/auth/refresh", a.refresh)
 	mux.HandleFunc("POST /api/auth/logout", a.logout)
 	mux.HandleFunc("POST /api/auth/password-reset", a.passwordReset)
+	mux.HandleFunc("POST /api/admin/auth/login", a.adminLogin)
+	mux.Handle("GET /api/admin/auth/me", a.adminAuth(http.HandlerFunc(a.adminMe)))
+	mux.Handle("GET /api/admin/dashboard", a.adminAuth(http.HandlerFunc(a.adminDashboard)))
+	mux.Handle("GET /api/admin/users", a.adminAuth(http.HandlerFunc(a.adminUsers)))
+	mux.Handle("GET /api/admin/users/{id}", a.adminAuth(http.HandlerFunc(a.adminUser)))
+	mux.Handle("PATCH /api/admin/users/{id}/status", a.adminAuth(http.HandlerFunc(a.adminUserStatus)))
+	mux.Handle("GET /api/admin/drivers", a.adminAuth(http.HandlerFunc(a.adminDrivers)))
+	mux.Handle("GET /api/admin/drivers/{id}", a.adminAuth(http.HandlerFunc(a.adminDriver)))
+	mux.Handle("PATCH /api/admin/drivers/{id}/verification", a.adminAuth(http.HandlerFunc(a.adminDriverVerification)))
+	mux.Handle("POST /api/admin/drivers/{id}/documents", a.adminAuth(http.HandlerFunc(a.adminCreateDriverDocument)))
+	mux.Handle("PATCH /api/admin/driver-documents/{id}", a.adminAuth(http.HandlerFunc(a.adminReviewDriverDocument)))
+	mux.Handle("PATCH /api/admin/vehicles/{id}/verification", a.adminAuth(http.HandlerFunc(a.adminVehicleVerification)))
+	mux.Handle("GET /api/admin/loads", a.adminAuth(http.HandlerFunc(a.adminLoads)))
+	mux.Handle("GET /api/admin/loads/{id}", a.adminAuth(http.HandlerFunc(a.adminLoad)))
+	mux.Handle("PATCH /api/admin/loads/{id}/status", a.adminAuth(http.HandlerFunc(a.adminLoadStatus)))
+	mux.Handle("GET /api/admin/complaints", a.adminAuth(http.HandlerFunc(a.adminComplaints)))
+	mux.Handle("GET /api/admin/complaints/{id}", a.adminAuth(http.HandlerFunc(a.adminComplaint)))
+	mux.Handle("PATCH /api/admin/complaints/{id}", a.adminAuth(http.HandlerFunc(a.adminUpdateComplaint)))
+	mux.Handle("GET /api/admin/activity", a.adminAuth(http.HandlerFunc(a.adminActivity)))
+	mux.Handle("GET /api/admin/stats", a.adminAuth(http.HandlerFunc(a.adminStats)))
 	mux.Handle("GET /api/me", a.auth(http.HandlerFunc(a.me)))
 	mux.Handle("PATCH /api/me", a.auth(http.HandlerFunc(a.updateMe)))
 	mux.Handle("PATCH /api/me/password", a.auth(http.HandlerFunc(a.updatePassword)))
@@ -126,6 +161,7 @@ func (a *API) Routes() http.Handler {
 	mux.Handle("POST /api/conversations/{id}/read", a.auth(http.HandlerFunc(a.readConversation)))
 	mux.Handle("POST /api/conversations/{id}/attachments", a.auth(http.HandlerFunc(a.uploadConversationAttachment)))
 	mux.Handle("DELETE /api/messages/{id}", a.auth(http.HandlerFunc(a.deleteMessage)))
+	mux.Handle("POST /api/messages/{id}/complaints", a.auth(http.HandlerFunc(a.createMessageComplaint)))
 	mux.Handle("GET /api/listings", a.auth(http.HandlerFunc(a.loads)))
 	mux.Handle("POST /api/listings", a.auth(http.HandlerFunc(a.createLoad)))
 	mux.Handle("GET /api/listings/{id}", a.auth(http.HandlerFunc(a.load)))
@@ -137,6 +173,11 @@ func (a *API) Routes() http.Handler {
 	mux.Handle("POST /api/drivers/jobs/{id}/offers", a.auth(http.HandlerFunc(a.createOffer)))
 	mux.Handle("PATCH /api/drivers/jobs/{id}/offers/me", a.auth(http.HandlerFunc(a.withdrawOwnOffer)))
 	mux.Handle("GET /api/drivers/offers", a.auth(http.HandlerFunc(a.driverOffers)))
+	mux.Handle("GET /api/driver/vehicles", a.auth(http.HandlerFunc(a.listVehicles)))
+	mux.Handle("POST /api/driver/vehicles", a.auth(http.HandlerFunc(a.createVehicle)))
+	mux.Handle("PATCH /api/driver/vehicles/{id}", a.auth(http.HandlerFunc(a.updateVehicle)))
+	mux.Handle("DELETE /api/driver/vehicles/{id}", a.auth(http.HandlerFunc(a.deleteVehicle)))
+	mux.Handle("PATCH /api/driver/vehicles/{id}/activate", a.auth(http.HandlerFunc(a.activateVehicle)))
 	return requestID(logging(cors(mux)))
 }
 func (a *API) health(w http.ResponseWriter, r *http.Request) {
@@ -173,7 +214,11 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 		serverError(w, err)
 		return
 	}
-	u := models.User{ID: uuid.NewString(), Name: strings.TrimSpace(req.Name), Email: req.Email, Phone: req.Phone, Role: req.Role, PasswordHash: hash, CreatedAt: time.Now().UTC()}
+	u := models.User{ID: uuid.NewString(), Name: strings.TrimSpace(req.Name), Email: req.Email, Phone: req.Phone, Role: req.Role, PasswordHash: hash, AccountStatus: models.AccountStatusActive, CreatedAt: time.Now().UTC()}
+	if u.Role == models.RoleDriver {
+		u.DriverProfile.VerificationStatus = models.VerificationPending
+		u.DriverProfile.LicenseStatus = models.VerificationPending
+	}
 	if e := a.store.CreateUser(u); errors.Is(e, store.ErrUserExists) {
 		conflict(w, "e-posta veya telefon numarası zaten kayıtlı")
 		return
@@ -195,7 +240,7 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 	} else {
 		u, e = a.store.GetUserByPhone(normalizePhone(req.Phone))
 	}
-	if e != nil || !models.ValidRole(u.Role) || !verifyPassword(u.PasswordHash, req.Password) {
+	if e != nil || (u.Role != models.RoleCustomer && u.Role != models.RoleDriver) || accountStatus(u) != models.AccountStatusActive || !verifyPassword(u.PasswordHash, req.Password) {
 		unauthorized(w, "e-posta veya şifre hatalı")
 		return
 	}
@@ -223,6 +268,10 @@ func validTurkishPhone(value string) bool {
 	return true
 }
 func (a *API) session(w http.ResponseWriter, u models.User) {
+	if accountStatus(u) != models.AccountStatusActive || (u.Role != models.RoleCustomer && u.Role != models.RoleDriver) {
+		unauthorized(w, "hesap aktif değil")
+		return
+	}
 	access, e := a.sign(u, 15*time.Minute)
 	if e != nil {
 		serverError(w, e)
@@ -233,7 +282,13 @@ func (a *API) session(w http.ResponseWriter, u models.User) {
 		serverError(w, e)
 		return
 	}
-	jsonResponse(w, 200, map[string]any{"accessToken": access, "refreshToken": refresh, "user": publicUser(u)})
+	user := publicUser(u)
+	if u.Role == models.RoleDriver {
+		if vehicle, err := a.store.GetActiveVehicle(u.ID); err == nil {
+			user["activeVehicle"] = vehicle
+		}
+	}
+	jsonResponse(w, 200, map[string]any{"accessToken": access, "refreshToken": refresh, "user": user})
 }
 func (a *API) refresh(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -248,7 +303,7 @@ func (a *API) refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u, e := a.store.GetUser(id)
-	if e != nil {
+	if e != nil || accountStatus(u) != models.AccountStatusActive || (u.Role != models.RoleCustomer && u.Role != models.RoleDriver) {
 		unauthorized(w, "kullanıcı bulunamadı")
 		return
 	}
@@ -273,12 +328,19 @@ func (a *API) passwordReset(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, 202, map[string]string{"message": "Hesap varsa şifre sıfırlama talimatları gönderildi."})
 }
 func (a *API) me(w http.ResponseWriter, r *http.Request) {
-	u, err := a.store.GetUser(current(r).ID)
+	p := current(r)
+	u, err := a.store.GetUser(p.ID)
 	if err != nil {
 		notFound(w)
 		return
 	}
-	jsonResponse(w, http.StatusOK, publicUser(u))
+	user := publicUser(u)
+	if p.Role == models.RoleDriver {
+		if vehicle, err := a.store.GetActiveVehicle(p.ID); err == nil {
+			user["activeVehicle"] = vehicle
+		}
+	}
+	jsonResponse(w, http.StatusOK, user)
 }
 func (a *API) updateMe(w http.ResponseWriter, r *http.Request) {
 	principal := current(r)
@@ -381,7 +443,12 @@ func (a *API) loads(w http.ResponseWriter, r *http.Request) {
 	if limit <= 0 || limit > 100 {
 		limit = 20
 	}
-	ls, total, e := a.store.ListLoads(p.ID, "", q.Get("status"), q.Get("q"), offset, limit)
+	filter, e := parseLoadFilter(q)
+	if e != nil {
+		badRequest(w, e.Error())
+		return
+	}
+	ls, total, e := a.store.ListLoads(p.ID, "", filter, offset, limit)
 	if e != nil {
 		serverError(w, e)
 		return
@@ -410,7 +477,12 @@ func (a *API) driverLoads(w http.ResponseWriter, r *http.Request) {
 	if limit <= 0 || limit > 100 {
 		limit = 20
 	}
-	items, total, err := a.store.ListDriverLoads(p.ID, q.Get("q"), offset, limit)
+	filter, err := parseLoadFilter(q)
+	if err != nil {
+		badRequest(w, err.Error())
+		return
+	}
+	items, total, err := a.store.ListDriverLoads(p.ID, filter, offset, limit)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -432,6 +504,74 @@ func (a *API) withOfferSummary(loads []models.Load) []models.Load {
 }
 func (a *API) nearbyLoads(w http.ResponseWriter, r *http.Request) {
 	a.driverLoads(w, r)
+}
+
+// mapQuery is the small URL-query surface needed by parseLoadFilter. Using an
+// interface keeps the parser directly testable with url.Values.
+type mapQuery interface {
+	Get(string) string
+}
+
+func parseLoadFilter(queryValues mapQuery) (store.LoadFilter, error) {
+	filter := store.LoadFilter{
+		Status:      strings.TrimSpace(queryValues.Get("status")),
+		Query:       strings.TrimSpace(queryValues.Get("q")),
+		UrgencyType: models.UrgencyType(strings.TrimSpace(queryValues.Get("urgencyType"))),
+		CargoType:   models.CargoType(strings.TrimSpace(queryValues.Get("cargoType"))),
+		VehicleType: models.VehicleType(strings.TrimSpace(queryValues.Get("vehicleType"))),
+	}
+	if filter.UrgencyType != "" && !models.ValidUrgencyType(filter.UrgencyType) {
+		return filter, errors.New("geçersiz urgencyType filtresi")
+	}
+	if filter.CargoType != "" && !models.ValidCargoType(filter.CargoType) {
+		return filter, errors.New("geçersiz cargoType filtresi")
+	}
+	if filter.VehicleType != "" && !models.ValidVehicleType(filter.VehicleType) {
+		return filter, errors.New("geçersiz vehicleType filtresi")
+	}
+	var err error
+	if filter.ScheduledFrom, err = parseOptionalRFC3339(queryValues.Get("scheduledFrom"), "scheduledFrom"); err != nil {
+		return filter, err
+	}
+	if filter.ScheduledTo, err = parseOptionalRFC3339(queryValues.Get("scheduledTo"), "scheduledTo"); err != nil {
+		return filter, err
+	}
+	if filter.ScheduledFrom != nil && filter.ScheduledTo != nil && filter.ScheduledFrom.After(*filter.ScheduledTo) {
+		return filter, errors.New("scheduledFrom, scheduledTo değerinden sonra olamaz")
+	}
+	if filter.PickupElevatorAvailable, err = parseOptionalBool(queryValues.Get("pickupElevatorAvailable"), "pickupElevatorAvailable"); err != nil {
+		return filter, err
+	}
+	if filter.DeliveryElevatorAvailable, err = parseOptionalBool(queryValues.Get("deliveryElevatorAvailable"), "deliveryElevatorAvailable"); err != nil {
+		return filter, err
+	}
+	if filter.HelperNeeded, err = parseOptionalBool(queryValues.Get("helperNeeded"), "helperNeeded"); err != nil {
+		return filter, err
+	}
+	return filter, nil
+}
+
+func parseOptionalRFC3339(raw, field string) (*time.Time, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	parsed, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return nil, fmt.Errorf("%s RFC3339 biçiminde olmalıdır", field)
+	}
+	parsed = parsed.UTC()
+	return &parsed, nil
+}
+
+func parseOptionalBool(raw, field string) (*bool, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	parsed, err := strconv.ParseBool(raw)
+	if err != nil {
+		return nil, fmt.Errorf("%s true veya false olmalıdır", field)
+	}
+	return &parsed, nil
 }
 
 func (a *API) searchLocations(w http.ResponseWriter, r *http.Request) {
@@ -713,22 +853,87 @@ func (a *API) mapCalculateRoute(w http.ResponseWriter, r *http.Request) {
 }
 
 type loadRequest struct {
-	Title, Description string
-	PhotoURLs          []string          `json:"photoUrls"`
-	Dimensions         models.Dimensions `json:"dimensions"`
-	Pickup             models.Location   `json:"pickup"`
-	Delivery           models.Location   `json:"delivery"`
+	Title                     string
+	Description               string
+	PhotoURLs                 []string           `json:"photoUrls"`
+	Dimensions                models.Dimensions  `json:"dimensions"`
+	Pickup                    models.Location    `json:"pickup"`
+	Delivery                  models.Location    `json:"delivery"`
+	UrgencyType               models.UrgencyType `json:"urgencyType"`
+	ScheduledAt               *time.Time         `json:"scheduledAt"`
+	CargoType                 models.CargoType   `json:"cargoType"`
+	CargoTypeNote             string             `json:"cargoTypeNote"`
+	VehicleType               models.VehicleType `json:"vehicleType"`
+	PickupFloor               *int               `json:"pickupFloor"`
+	DeliveryFloor             *int               `json:"deliveryFloor"`
+	PickupElevatorAvailable   bool               `json:"pickupElevatorAvailable"`
+	DeliveryElevatorAvailable bool               `json:"deliveryElevatorAvailable"`
+	HelperNeeded              bool               `json:"helperNeeded"`
+	HelperCount               int                `json:"helperCount"`
 }
 
-func validLoad(req loadRequest) error {
-	if strings.TrimSpace(req.Title) == "" || strings.TrimSpace(req.Pickup.Address) == "" || strings.TrimSpace(req.Delivery.Address) == "" {
+func normalizeLoadRequest(req *loadRequest) {
+	req.Title = strings.TrimSpace(req.Title)
+	req.Description = strings.TrimSpace(req.Description)
+	req.CargoTypeNote = strings.TrimSpace(req.CargoTypeNote)
+	if req.ScheduledAt != nil {
+		scheduledAt := req.ScheduledAt.UTC()
+		req.ScheduledAt = &scheduledAt
+	}
+	if req.UrgencyType != models.UrgencyScheduled {
+		req.ScheduledAt = nil
+	}
+	if !req.HelperNeeded {
+		req.HelperCount = 0
+	}
+}
+
+func validLoad(req loadRequest, now time.Time) error {
+	if req.Title == "" || strings.TrimSpace(req.Pickup.Address) == "" || strings.TrimSpace(req.Delivery.Address) == "" {
 		return errors.New("başlık, çıkış ve varış zorunludur")
+	}
+	if len([]rune(req.Title)) > 120 {
+		return errors.New("başlık en fazla 120 karakter olabilir")
+	}
+	if req.Description == "" || len([]rune(req.Description)) > 2000 {
+		return errors.New("açıklama zorunludur ve en fazla 2000 karakter olabilir")
 	}
 	if !service.ValidCoordinate(models.Coordinate{Latitude: req.Pickup.Latitude, Longitude: req.Pickup.Longitude}) || !service.ValidCoordinate(models.Coordinate{Latitude: req.Delivery.Latitude, Longitude: req.Delivery.Longitude}) {
 		return service.ErrInvalidCoordinates
 	}
-	if req.Dimensions.WeightKG <= 0 {
-		return errors.New("ağırlık sıfırdan büyük olmalıdır")
+	if req.Dimensions.WeightKG < models.MinWeightKG || req.Dimensions.WeightKG > models.MaxWeightKG {
+		return fmt.Errorf("ağırlık %.1f ile %.0f kg arasında olmalıdır", models.MinWeightKG, models.MaxWeightKG)
+	}
+	for _, dimension := range []float64{req.Dimensions.LengthCM, req.Dimensions.WidthCM, req.Dimensions.HeightCM} {
+		if dimension < models.MinDimensionCM || dimension > models.MaxDimensionCM {
+			return fmt.Errorf("her ölçü %.0f ile %.0f cm arasında olmalıdır", models.MinDimensionCM, models.MaxDimensionCM)
+		}
+	}
+	if !models.ValidUrgencyType(req.UrgencyType) {
+		return errors.New("nakliye zamanı hemen, bugün veya planlı olmalıdır")
+	}
+	if req.UrgencyType == models.UrgencyScheduled && (req.ScheduledAt == nil || !req.ScheduledAt.After(now)) {
+		return errors.New("planlı nakliye tarihi ve saati gelecekte olmalıdır")
+	}
+	if !models.ValidCargoType(req.CargoType) {
+		return errors.New("geçerli bir nakliye türü seçiniz")
+	}
+	if req.CargoType == models.CargoTypeOther && req.CargoTypeNote == "" {
+		return errors.New("diğer nakliye türü için kısa bir açıklama giriniz")
+	}
+	if len([]rune(req.CargoTypeNote)) > 200 {
+		return errors.New("nakliye türü açıklaması en fazla 200 karakter olabilir")
+	}
+	if !models.ValidVehicleType(req.VehicleType) {
+		return errors.New("geçerli bir araç ihtiyacı seçiniz")
+	}
+	for _, floor := range []*int{req.PickupFloor, req.DeliveryFloor} {
+		if floor == nil || *floor < models.MinFloor || *floor > models.MaxFloor {
+			return fmt.Errorf("çıkış ve varış katları %d ile %d arasında olmalıdır", models.MinFloor, models.MaxFloor)
+		}
+	}
+	if req.HelperNeeded && (req.HelperCount < 1 || req.HelperCount > models.MaxHelperCount) {
+		return fmt.Errorf("yardımcı personel sayısı 1 ile %d arasında olmalıdır", models.MaxHelperCount)
 	}
 	return nil
 }
@@ -758,7 +963,8 @@ func (a *API) createLoad(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
-	if e := validLoad(req); e != nil {
+	normalizeLoadRequest(&req)
+	if e := validLoad(req, time.Now().UTC()); e != nil {
 		badRequest(w, e.Error())
 		return
 	}
@@ -771,6 +977,7 @@ func (a *API) createLoad(w http.ResponseWriter, r *http.Request) {
 		serverError(w, e)
 		return
 	}
+	a.recordLoadStatus(l.ID, "", l.Status, p.ID, p.Role, "İlan oluşturuldu", l.CreatedAt)
 	jsonResponse(w, 201, l)
 }
 func (a *API) newLoad(ctx context.Context, customerID string, req loadRequest, status string) (models.Load, error) {
@@ -782,28 +989,41 @@ func (a *API) newLoad(ctx context.Context, customerID string, req loadRequest, s
 		return models.Load{}, e
 	}
 	now := time.Now().UTC()
-	return models.Load{
-		ID:                   uuid.NewString(),
-		CustomerID:           customerID,
-		Title:                strings.TrimSpace(req.Title),
-		Description:          strings.TrimSpace(req.Description),
-		PhotoURLs:            req.PhotoURLs,
-		Dimensions:           req.Dimensions,
-		Pickup:               normalizeLocation(req.Pickup),
-		Delivery:             normalizeLocation(req.Delivery),
-		RouteDistanceMeters:  route.DistanceMeters,
-		RouteDurationSeconds: route.DurationSeconds,
-		PricePerKM:           route.PricePerKM,
-		RouteEncodedPolyline: route.EncodedPolyline,
-		RouteProvider:        route.RouteProvider,
-		RouteCoordinates:     route.RouteCoordinates,
-		EstimatedKM:          route.DistanceKM,
-		BasePriceTL:          route.EstimatedPriceTL,
-		AgreedPriceTL:        route.EstimatedPriceTL,
-		Status:               status,
-		CreatedAt:            now,
-		UpdatedAt:            now,
-	}, nil
+	// Build the load with all extended fields from the request.
+	load := models.Load{
+		ID:                        uuid.NewString(),
+		CustomerID:                customerID,
+		Title:                     req.Title,
+		Description:               req.Description,
+		PhotoURLs:                 req.PhotoURLs,
+		Dimensions:                req.Dimensions,
+		Pickup:                    normalizeLocation(req.Pickup),
+		Delivery:                  normalizeLocation(req.Delivery),
+		RouteDistanceMeters:       route.DistanceMeters,
+		RouteDurationSeconds:      route.DurationSeconds,
+		PricePerKM:                route.PricePerKM,
+		RouteEncodedPolyline:      route.EncodedPolyline,
+		RouteProvider:             route.RouteProvider,
+		RouteCoordinates:          route.RouteCoordinates,
+		EstimatedKM:               route.DistanceKM,
+		BasePriceTL:               route.EstimatedPriceTL,
+		AgreedPriceTL:             route.EstimatedPriceTL,
+		Status:                    status,
+		CreatedAt:                 now,
+		UpdatedAt:                 now,
+		UrgencyType:               req.UrgencyType,
+		ScheduledAt:               req.ScheduledAt,
+		CargoType:                 req.CargoType,
+		CargoTypeNote:             req.CargoTypeNote,
+		VehicleType:               req.VehicleType,
+		PickupFloor:               req.PickupFloor,
+		DeliveryFloor:             req.DeliveryFloor,
+		PickupElevatorAvailable:   req.PickupElevatorAvailable,
+		DeliveryElevatorAvailable: req.DeliveryElevatorAvailable,
+		HelperNeeded:              req.HelperNeeded,
+		HelperCount:               req.HelperCount,
+	}
+	return load, nil
 }
 func (a *API) getOwnedLoad(w http.ResponseWriter, r *http.Request) (models.Load, bool) {
 	l, e := a.store.GetLoad(r.PathValue("id"))
@@ -853,7 +1073,8 @@ func (a *API) updateLoad(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
-	if e := validLoad(req); e != nil {
+	normalizeLoadRequest(&req)
+	if e := validLoad(req, time.Now().UTC()); e != nil {
 		badRequest(w, e.Error())
 		return
 	}
@@ -879,12 +1100,14 @@ func (a *API) publish(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, "yalnızca taslak ilan yayınlanabilir")
 		return
 	}
+	from := l.Status
 	l.Status = models.LoadStatusPublished
 	l.UpdatedAt = time.Now().UTC()
 	if e := a.store.SaveLoad(l); e != nil {
 		serverError(w, e)
 		return
 	}
+	a.recordLoadStatus(l.ID, from, l.Status, current(r).ID, current(r).Role, "İlan yayınlandı", l.UpdatedAt)
 	jsonResponse(w, 200, l)
 }
 func (a *API) updateStatus(w http.ResponseWriter, r *http.Request) {
@@ -918,12 +1141,14 @@ func (a *API) updateStatus(w http.ResponseWriter, r *http.Request) {
 		forbidden(w)
 		return
 	}
+	from := l.Status
 	l.Status = req.Status
 	l.UpdatedAt = time.Now().UTC()
 	if e := a.store.SaveLoad(l); e != nil {
 		serverError(w, e)
 		return
 	}
+	a.recordLoadStatus(l.ID, from, l.Status, p.ID, p.Role, "Durum mobil akıştan güncellendi", l.UpdatedAt)
 	if l.AssignedDriver != "" {
 		if e := a.store.SaveConversation(a.conversationRecord(l)); e != nil {
 			log.Printf("conversation update after load status: %v", e)
@@ -1001,11 +1226,13 @@ func (a *API) createOffer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if l.Status == models.LoadStatusPublished || l.Status == models.LoadStatusOpenLegacy {
+		from := l.Status
 		l.Status, l.UpdatedAt = models.LoadStatusOffersReceived, now
 		if e = a.store.SaveLoad(l); e != nil {
 			serverError(w, e)
 			return
 		}
+		a.recordLoadStatus(l.ID, from, l.Status, p.ID, p.Role, "İlk teklif alındı", l.UpdatedAt)
 	}
 	jsonResponse(w, 201, o)
 }
@@ -1037,6 +1264,9 @@ func (a *API) offerViews(offers []models.Offer) []map[string]any {
 		view := map[string]any{"offer": offer}
 		if driver, err := a.store.GetUser(offer.DriverID); err == nil {
 			view["driver"] = publicUser(driver)
+			if vehicle, err := a.store.GetActiveVehicle(offer.DriverID); err == nil {
+				view["vehicle"] = vehicle
+			}
 		}
 		views = append(views, view)
 	}
@@ -1054,6 +1284,7 @@ func (a *API) acceptOffer(w http.ResponseWriter, r *http.Request) {
 		forbidden(w)
 		return
 	}
+	from := l.Status
 	l.Status = models.LoadStatusDriverSelected
 	l.AssignedDriver = o.DriverID
 	l.AgreedPriceTL = o.AmountTL
@@ -1070,6 +1301,7 @@ func (a *API) acceptOffer(w http.ResponseWriter, r *http.Request) {
 		serverError(w, e)
 		return
 	}
+	a.recordLoadStatus(l.ID, from, l.Status, p.ID, p.Role, "Teklif kabul edildi", l.UpdatedAt)
 	a.addOfferMessage(l, o)
 	a.addSystemMessage(l, "Teklif kabul edildi.")
 	jsonResponse(w, 200, l)
@@ -1115,6 +1347,7 @@ func (a *API) driverOffers(w http.ResponseWriter, r *http.Request) {
 		serverError(w, err)
 		return
 	}
+	activeVehicle, _ := a.store.GetActiveVehicle(p.ID)
 	status := r.URL.Query().Get("status")
 	response := make([]map[string]any, 0, len(items))
 	for _, offer := range items {
@@ -1125,7 +1358,11 @@ func (a *API) driverOffers(w http.ResponseWriter, r *http.Request) {
 		if loadErr != nil || load.DeletedAt != nil {
 			continue
 		}
-		response = append(response, map[string]any{"offer": offer, "load": load})
+		item := map[string]any{"offer": offer, "load": load}
+		if activeVehicle.ID != "" {
+			item["vehicle"] = activeVehicle
+		}
+		response = append(response, item)
 	}
 	jsonResponse(w, http.StatusOK, map[string]any{"items": response})
 }
@@ -1162,6 +1399,220 @@ func (a *API) withdrawOwnOffer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+func (a *API) listVehicles(w http.ResponseWriter, r *http.Request) {
+	p := current(r)
+	if p.Role != models.RoleDriver {
+		forbidden(w)
+		return
+	}
+	vehicles, err := a.store.ListVehicles(p.ID)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]any{"items": vehicles})
+}
+func (a *API) createVehicle(w http.ResponseWriter, r *http.Request) {
+	p := current(r)
+	if p.Role != models.RoleDriver {
+		forbidden(w)
+		return
+	}
+	var req struct {
+		VehicleType  string  `json:"vehicleType"`
+		Brand        string  `json:"brand"`
+		Model        string  `json:"model"`
+		LicensePlate string  `json:"licensePlate"`
+		CapacityKG   float64 `json:"capacityKg"`
+		LengthCM     float64 `json:"lengthCm"`
+		WidthCM      float64 `json:"widthCm"`
+		HeightCM     float64 `json:"heightCm"`
+		PhotoURL     string  `json:"photoUrl"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	req.VehicleType = strings.TrimSpace(req.VehicleType)
+	req.Brand = strings.TrimSpace(req.Brand)
+	req.Model = strings.TrimSpace(req.Model)
+	req.LicensePlate = strings.TrimSpace(strings.ToUpper(req.LicensePlate))
+	if req.VehicleType == "" || req.Brand == "" || req.Model == "" || req.LicensePlate == "" || req.CapacityKG <= 0 {
+		badRequest(w, "araç tipi, marka, model, plaka ve kapasite zorunludur")
+		return
+	}
+	if !models.ValidVehicleType(models.VehicleType(req.VehicleType)) {
+		badRequest(w, "geçersiz araç tipi")
+		return
+	}
+	existing, err := a.store.ListVehicles(p.ID)
+	if err == nil {
+		for _, v := range existing {
+			if v.LicensePlate == req.LicensePlate {
+				conflict(w, "bu plaka zaten kayıtlı")
+				return
+			}
+		}
+	}
+	now := time.Now().UTC()
+	v := models.Vehicle{
+		ID:                 uuid.NewString(),
+		DriverID:           p.ID,
+		VehicleType:        req.VehicleType,
+		Brand:              req.Brand,
+		Model:              req.Model,
+		LicensePlate:       req.LicensePlate,
+		CapacityKG:         req.CapacityKG,
+		LengthCM:           req.LengthCM,
+		WidthCM:            req.WidthCM,
+		HeightCM:           req.HeightCM,
+		PhotoURL:           strings.TrimSpace(req.PhotoURL),
+		IsActive:           false,
+		CreatedAt:          now,
+		UpdatedAt:          now,
+		VerificationStatus: models.VerificationPending,
+	}
+	if err = a.store.SaveVehicle(v); err != nil {
+		serverError(w, err)
+		return
+	}
+	jsonResponse(w, http.StatusCreated, v)
+}
+func (a *API) updateVehicle(w http.ResponseWriter, r *http.Request) {
+	p := current(r)
+	if p.Role != models.RoleDriver {
+		forbidden(w)
+		return
+	}
+	vehicleID := r.PathValue("id")
+	v, err := a.store.GetVehicle(vehicleID)
+	if err != nil {
+		notFound(w)
+		return
+	}
+	if v.DriverID != p.ID {
+		forbidden(w)
+		return
+	}
+	var req struct {
+		VehicleType  string  `json:"vehicleType"`
+		Brand        string  `json:"brand"`
+		Model        string  `json:"model"`
+		LicensePlate string  `json:"licensePlate"`
+		CapacityKG   float64 `json:"capacityKg"`
+		LengthCM     float64 `json:"lengthCm"`
+		WidthCM      float64 `json:"widthCm"`
+		HeightCM     float64 `json:"heightCm"`
+		PhotoURL     string  `json:"photoUrl"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	req.VehicleType = strings.TrimSpace(req.VehicleType)
+	req.Brand = strings.TrimSpace(req.Brand)
+	req.Model = strings.TrimSpace(req.Model)
+	req.LicensePlate = strings.TrimSpace(strings.ToUpper(req.LicensePlate))
+	if req.VehicleType != "" && !models.ValidVehicleType(models.VehicleType(req.VehicleType)) {
+		badRequest(w, "geçersiz araç tipi")
+		return
+	}
+	if req.LicensePlate != "" && req.LicensePlate != v.LicensePlate {
+		existing, err := a.store.ListVehicles(p.ID)
+		if err == nil {
+			for _, ev := range existing {
+				if ev.LicensePlate == req.LicensePlate {
+					conflict(w, "bu plaka zaten kayıtlı")
+					return
+				}
+			}
+		}
+	}
+	if req.VehicleType != "" {
+		v.VehicleType = req.VehicleType
+	}
+	if req.Brand != "" {
+		v.Brand = req.Brand
+	}
+	if req.Model != "" {
+		v.Model = req.Model
+	}
+	if req.LicensePlate != "" {
+		v.LicensePlate = req.LicensePlate
+	}
+	if req.CapacityKG > 0 {
+		v.CapacityKG = req.CapacityKG
+	}
+	if req.LengthCM > 0 {
+		v.LengthCM = req.LengthCM
+	}
+	if req.WidthCM > 0 {
+		v.WidthCM = req.WidthCM
+	}
+	if req.HeightCM > 0 {
+		v.HeightCM = req.HeightCM
+	}
+	if req.PhotoURL != "" {
+		v.PhotoURL = strings.TrimSpace(req.PhotoURL)
+	}
+	v.UpdatedAt = time.Now().UTC()
+	if err = a.store.SaveVehicle(v); err != nil {
+		serverError(w, err)
+		return
+	}
+	jsonResponse(w, http.StatusOK, v)
+}
+func (a *API) deleteVehicle(w http.ResponseWriter, r *http.Request) {
+	p := current(r)
+	if p.Role != models.RoleDriver {
+		forbidden(w)
+		return
+	}
+	vehicleID := r.PathValue("id")
+	v, err := a.store.GetVehicle(vehicleID)
+	if err != nil {
+		notFound(w)
+		return
+	}
+	if v.DriverID != p.ID {
+		forbidden(w)
+		return
+	}
+	if v.IsActive {
+		badRequest(w, "aktif araç silinemez; önce başka bir aracı aktif edin")
+		return
+	}
+	if err = a.store.DeleteVehicle(p.ID, vehicleID); err != nil {
+		serverError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+func (a *API) activateVehicle(w http.ResponseWriter, r *http.Request) {
+	p := current(r)
+	if p.Role != models.RoleDriver {
+		forbidden(w)
+		return
+	}
+	vehicleID := r.PathValue("id")
+	v, err := a.store.GetVehicle(vehicleID)
+	if err != nil {
+		notFound(w)
+		return
+	}
+	if v.DriverID != p.ID {
+		forbidden(w)
+		return
+	}
+	if err = a.store.SetActiveVehicle(p.ID, vehicleID); err != nil {
+		if errors.Is(err, redis.Nil) {
+			notFound(w)
+			return
+		}
+		serverError(w, err)
+		return
+	}
+	updated, _ := a.store.GetVehicle(vehicleID)
+	jsonResponse(w, http.StatusOK, updated)
 }
 func (a *API) messages(w http.ResponseWriter, r *http.Request) {
 	l, ok := a.getMessageLoad(w, r)
@@ -1210,7 +1661,7 @@ func (a *API) conversations(w http.ResponseWriter, r *http.Request) {
 		forbidden(w)
 		return
 	}
-	loads, _, err := a.store.ListLoads(customerID, driverID, "", "", 0, 0)
+	loads, _, err := a.store.ListLoads(customerID, driverID, store.LoadFilter{}, 0, 0)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -1307,6 +1758,11 @@ func (a *API) conversationView(l models.Load, p principal) (models.Conversation,
 	conversation.OtherParty = models.ConversationMember{ID: otherID, Name: "Karşı taraf"}
 	if other, err := a.store.GetUser(otherID); err == nil {
 		conversation.OtherParty = models.ConversationMember{ID: other.ID, Name: other.Name, Role: other.Role, LastSeenAt: other.LastSeenAt}
+		if other.Role == models.RoleDriver {
+			if vehicle, err := a.store.GetActiveVehicle(other.ID); err == nil {
+				conversation.OtherParty.Vehicle = &vehicle
+			}
+		}
 	}
 	messages, err := a.store.Messages(l.ID)
 	if err != nil {
@@ -1729,7 +2185,7 @@ func (a *API) auth(next http.Handler) http.Handler {
 			return
 		}
 		u, userErr := a.store.GetUser(p.ID)
-		if userErr != nil || !models.ValidRole(u.Role) || u.Role != p.Role {
+		if userErr != nil || (u.Role != models.RoleCustomer && u.Role != models.RoleDriver) || u.Role != p.Role || accountStatus(u) != models.AccountStatusActive {
 			unauthorized(w, "oturum kullanıcısı artık geçerli değil")
 			return
 		}
@@ -1801,7 +2257,7 @@ func verifyPassword(encoded, value string) bool {
 	return hmac.Equal(expected, actual)
 }
 func publicUser(u models.User) map[string]any {
-	user := map[string]any{"id": u.ID, "name": u.Name, "email": u.Email, "phone": u.Phone, "role": u.Role, "createdAt": u.CreatedAt}
+	user := map[string]any{"id": u.ID, "name": u.Name, "email": u.Email, "phone": u.Phone, "role": u.Role, "accountStatus": accountStatus(u), "createdAt": u.CreatedAt}
 	if !u.LastSeenAt.IsZero() {
 		user["lastSeenAt"] = u.LastSeenAt
 	}

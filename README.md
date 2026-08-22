@@ -92,6 +92,36 @@ npm run ios -- --device # veya: npm run android -- --device
 npm start
 ```
 
+## Web admin paneli
+
+Admin paneli `frontend/admin-panel` altında ayrı bir web uygulamasıdır. Mobil
+uygulamaların JWT ve refresh tokenları admin endpointlerinde kabul edilmez.
+Backend `.env` dosyasında aşağıdaki bağımsız kimliği tanımlayın:
+
+```env
+ADMIN_EMAIL=operations@example.com
+ADMIN_PASSWORD=replace-with-a-strong-admin-password
+ADMIN_JWT_SECRET=replace-with-a-different-32-character-secret
+```
+
+Production'da düz `ADMIN_PASSWORD` yerine Argon2id biçimindeki
+`ADMIN_PASSWORD_HASH` kullanılabilir. `ADMIN_JWT_SECRET`, mobil `JWT_SECRET`
+değerinden farklı olmalıdır. Admin değişkenleri boş bırakılırsa mevcut mobil API
+çalışmaya devam eder, ancak admin girişi güvenli biçimde kapalı kalır.
+
+Paneli yerelde başlatmak için:
+
+```bash
+cd frontend/admin-panel
+cp .env.example .env.local
+npm ci
+npm run dev
+```
+
+Panel; dashboard, kullanıcı engelleme/aktifleştirme, şoför-belge-araç
+doğrulama, ilan ve durum geçmişi, mesaj şikâyeti inceleme, günlük hareketler ve
+sistem istatistiklerini `/api/admin` üzerinden yönetir.
+
 Repository içindeki opsiyonel Node kurulumu kullanılacaksa, kök dizinde zsh ile şunu source edin:
 
 ```bash
@@ -177,6 +207,10 @@ npx expo-doctor
 cd ../driver-app
 npx expo export --platform ios --output-dir /tmp/nakliye-driver-export
 npx expo-doctor
+
+cd ../admin-panel
+npm test
+npm run lint
 ```
 
 Frontend kaynakları JavaScript/JSX'tir; repository'de TypeScript config'i olmadığı için `tsc --noEmit` uygulanmaz. Metro export, JSX çözümleme ve bundle doğrulaması olarak kullanılır.

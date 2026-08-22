@@ -1,20 +1,29 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Image, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { colors, control, spacing, typography } from '../shared/ui/theme';
+import { ConfirmationModal, ToastProvider, useToast } from '../shared/ui/feedback';
+import { AppHeader, BottomNav } from '../shared/ui/navigation';
+import { InlineNotice, ListSkeleton } from '../shared/ui/primitives';
 import { apiError, auth, checkApiHealth, conversations, loads, logApiError, maps, offers, profile, restoreSession, saveSession, subscribeSessionExpired, updateStoredUser } from './src/services/api';
 import { apiOrigin, healthUrl } from './src/config/api';
 import AuthFlow from './src/components/AuthFlow';
 import ConversationCenter from './src/components/ConversationCenter';
-import LoadPhotoPicker from './src/components/LoadPhotoPicker';
-import RoutePicker from './src/components/RoutePicker';
 import { nativeGoogleMapsConfigured, nativeGoogleMapsMessage } from './src/config/maps';
-import { formatMoney, loadStatusLabel, resolveMediaUrl, toFiniteNumber } from './src/utils/presentation';
+import { CustomerAccount, CustomerHome, CustomerLoads } from './src/screens/CustomerScreens';
+import { formatMoney, loadStatusLabel, resolveMediaUrl } from './src/utils/presentation';
 
-const Field = ({ label, value, onChangeText, placeholder, numeric, secure }) => <View style={s.field}><Text style={s.label}>{label}</Text><TextInput style={s.input} value={String(value || '')} onChangeText={onChangeText} placeholder={placeholder} placeholderTextColor="#9aa3b2" keyboardType={numeric ? 'numeric' : 'default'} secureTextEntry={secure} autoCapitalize="none" /></View>;
-const Empty = ({ title, detail, retry }) => <View style={s.empty}><Text style={s.emptyTitle}>{title}</Text><Text style={s.emptyText}>{detail}</Text>{retry && <Pressable style={s.smallButton} onPress={retry}><Text style={s.smallButtonText}>Tekrar dene</Text></Pressable>}</View>;
-const LoadImage = ({ path }) => { const uri = resolveMediaUrl(path); return uri ? <Image source={{ uri }} style={s.loadImage} /> : <View style={s.photoFallback}><Text>▦</Text></View>; };
+const { number, scheduledAtISO, validateLoadFormFields } = require('./src/utils/loadForm.cjs');
+
+const initialLoadForm = () => ({
+  title: '', description: '', urgencyType: 'immediate', scheduledDate: '', scheduledTime: '',
+  cargoType: '', cargoTypeNote: '', vehicleType: 'farketmez', weight: '', length: '', width: '', height: '',
+  pickupFloor: '0', deliveryFloor: '0', pickupElevatorAvailable: false, deliveryElevatorAvailable: false,
+  helperNeeded: false, helperCount: '1',
+});
+
 const locationPayload = location => ({
   address: location.formattedAddress,
   latitude: location.coordinate.latitude,
@@ -31,60 +40,299 @@ const locationPayload = location => ({
   countryCode: location.countryCode || '',
 });
 
-export default function App() { return <SafeAreaProvider><CustomerApp /></SafeAreaProvider>; }
+const navItems = [
+  { value: 'home', label: 'Ana Sayfa', icon: 'home-outline', activeIcon: 'home' },
+  { value: 'loads', label: 'İlanlarım', icon: 'file-tray-full-outline', activeIcon: 'file-tray-full' },
+  { value: 'messages', label: 'Mesajlar', icon: 'chatbubbles-outline', activeIcon: 'chatbubbles' },
+  { value: 'account', label: 'Hesabım', icon: 'person-outline', activeIcon: 'person' },
+];
+
+export default function App() {
+  return <SafeAreaProvider><ToastProvider><CustomerApp /></ToastProvider></SafeAreaProvider>;
+}
 
 function CustomerApp() {
   const insets = useSafeAreaInsets();
-  const [user, setUser] = useState(null); const [restoring, setRestoring] = useState(true); const [tab, setTab] = useState('home');
-  const [form, setForm] = useState({ title: '', description: '', weight: '' }); const [routeDraft, setRouteDraft] = useState({ pickup: null, dropoff: null, route: null }); const [photos, setPhotos] = useState([]); const [pendingDraftId, setPendingDraftId] = useState(null);
+  const { showToast } = useToast();
+  const [user, setUser] = useState(null);
+  const [restoring, setRestoring] = useState(true);
+  const [tab, setTab] = useState('home');
+  const [form, setForm] = useState(initialLoadForm);
+  const [formErrors, setFormErrors] = useState({});
+  const [routeDraft, setRouteDraft] = useState({ pickup: null, dropoff: null, route: null });
+  const [photos, setPhotos] = useState([]);
+  const [pendingDraftId, setPendingDraftId] = useState(null);
   const [saving, setSaving] = useState(false);
   const publishBusy = useRef(false);
-  const [myLoads, setMyLoads] = useState([]); const [loadsLoading, setLoadsLoading] = useState(false); const [loadsError, setLoadsError] = useState(''); const [selectedLoad, setSelectedLoad] = useState(null); const [loadOffers, setLoadOffers] = useState([]); const [offersLoading, setOffersLoading] = useState(false);
-  const [account, setAccount] = useState(null); const [accountLoading, setAccountLoading] = useState(false); const [accountError, setAccountError] = useState(''); const [accountForm, setAccountForm] = useState({ name: '', email: '', phone: '', currentPassword: '', newPassword: '' });
+  const [myLoads, setMyLoads] = useState([]);
+  const [loadsLoading, setLoadsLoading] = useState(false);
+  const [loadsError, setLoadsError] = useState('');
+  const [selectedLoad, setSelectedLoad] = useState(null);
+  const [loadOffers, setLoadOffers] = useState([]);
+  const [offersLoading, setOffersLoading] = useState(false);
+  const [account, setAccount] = useState(null);
+  const [accountLoading, setAccountLoading] = useState(false);
+  const [accountError, setAccountError] = useState('');
+  const [accountSaving, setAccountSaving] = useState(false);
+  const [passwordSaving, setPasswordSaving] = useState(false);
+  const [accountForm, setAccountForm] = useState({ name: '', email: '', phone: '', currentPassword: '', newPassword: '' });
+  const [confirmation, setConfirmation] = useState(null);
+  const [confirmationLoading, setConfirmationLoading] = useState(false);
 
-  useEffect(() => { let active = true; restoreSession().then(session => { if (active) setUser(session?.user || null); }).catch(error => { logApiError('CUSTOMER AUTH HYDRATION', error); }).finally(() => { if (active) setRestoring(false); }); return () => { active = false; }; }, []);
-  useEffect(() => subscribeSessionExpired(() => { setUser(null); setTab('home'); setSelectedLoad(null); }), []);
-  const fetchLoads = useCallback(async () => { setLoadsLoading(true); setLoadsError(''); try { const { data } = await loads.mine({ limit: 100 }); setMyLoads(data.items || []); } catch (error) { setLoadsError(apiError(error)); } finally { setLoadsLoading(false); } }, []);
-  const fetchAccount = useCallback(async () => { setAccountLoading(true); setAccountError(''); try { const { data } = await profile.get(); setAccount(data); setAccountForm(current => ({ ...current, name: data.name || '', email: data.email || '', phone: data.phone || '' })); } catch (error) { setAccountError(apiError(error)); } finally { setAccountLoading(false); } }, []);
-  useEffect(() => { if (!user) return; if (tab === 'loads') void fetchLoads(); if (tab === 'account') void fetchAccount(); }, [fetchAccount, fetchLoads, tab, user]);
+  useEffect(() => {
+    let active = true;
+    restoreSession().then(session => { if (active) setUser(session?.user || null); }).catch(error => logApiError('CUSTOMER AUTH HYDRATION', error)).finally(() => { if (active) setRestoring(false); });
+    return () => { active = false; };
+  }, []);
+  useEffect(() => subscribeSessionExpired(() => {
+    setUser(null);
+    setTab('home');
+    setSelectedLoad(null);
+    showToast('Oturumunuz sona erdi. Lütfen tekrar giriş yapın.', { type: 'warning' });
+  }), [showToast]);
 
-  const handleLocationsChange = useCallback(({ pickup, dropoff }) => setRouteDraft({ pickup, dropoff, route: null }), []);
-  const handleRouteChange = useCallback(route => setRouteDraft(current => ({ ...current, route })), []);
+  const fetchLoads = useCallback(async () => {
+    setLoadsLoading(true);
+    setLoadsError('');
+    try {
+      const { data } = await loads.mine({ limit: 100 });
+      setMyLoads(data.items || []);
+    } catch (error) {
+      setLoadsError(apiError(error));
+    } finally {
+      setLoadsLoading(false);
+    }
+  }, []);
+  const fetchAccount = useCallback(async () => {
+    setAccountLoading(true);
+    setAccountError('');
+    try {
+      const { data } = await profile.get();
+      setAccount(data);
+      setAccountForm(current => ({ ...current, name: data.name || '', email: data.email || '', phone: data.phone || '' }));
+    } catch (error) {
+      setAccountError(apiError(error));
+    } finally {
+      setAccountLoading(false);
+    }
+  }, []);
+  useEffect(() => {
+    if (!user) return;
+    if (tab === 'home' || tab === 'loads') void fetchLoads();
+    if (tab === 'account') void fetchAccount();
+  }, [fetchAccount, fetchLoads, tab, user]);
+
+  const handleLocationsChange = useCallback(({ pickup, dropoff }) => {
+    setRouteDraft({ pickup, dropoff, route: null });
+    setFormErrors(current => ({ ...current, route: '' }));
+  }, []);
+  const handleRouteChange = useCallback(route => {
+    setRouteDraft(current => ({ ...current, route }));
+    if (route) setFormErrors(current => ({ ...current, route: '' }));
+  }, []);
   const publish = useCallback(async () => {
     if (publishBusy.current) return;
+    const nextErrors = validateLoadFormFields(form);
     const { pickup, dropoff, route } = routeDraft;
-    if (!form.title.trim() || !pickup || !dropoff || !route || toFiniteNumber(form.weight) <= 0) return Alert.alert('Eksik bilgi', 'Başlık, başlangıç/varış konumu, hesaplanmış rota ve geçerli ağırlık zorunludur.');
+    if (!pickup || !dropoff || !route) nextErrors.route = 'Başlangıç ve varış adreslerini seçin; rota hesabının tamamlanmasını bekleyin.';
+    setFormErrors(nextErrors);
+    if (Object.keys(nextErrors).length) {
+      showToast('Eksik veya hatalı alanları kontrol edin.', { type: 'error', title: 'İlan yayınlanamadı' });
+      return;
+    }
     publishBusy.current = true;
     setSaving(true);
     try {
+      const payload = {
+        title: form.title.trim(),
+        description: form.description.trim(),
+        photoUrls: [],
+        pickup: locationPayload(pickup),
+        delivery: locationPayload(dropoff),
+        urgencyType: form.urgencyType,
+        ...(form.urgencyType === 'scheduled' ? { scheduledAt: scheduledAtISO(form.scheduledDate, form.scheduledTime) } : {}),
+        cargoType: form.cargoType,
+        cargoTypeNote: form.cargoType === 'diger' ? form.cargoTypeNote.trim() : '',
+        vehicleType: form.vehicleType,
+        dimensions: { lengthCm: number(form.length), widthCm: number(form.width), heightCm: number(form.height), weightKg: number(form.weight) },
+        pickupFloor: number(form.pickupFloor),
+        deliveryFloor: number(form.deliveryFloor),
+        pickupElevatorAvailable: form.pickupElevatorAvailable,
+        deliveryElevatorAvailable: form.deliveryElevatorAvailable,
+        helperNeeded: form.helperNeeded,
+        helperCount: form.helperNeeded ? number(form.helperCount) : 0,
+      };
       let draftId = pendingDraftId;
       if (!draftId) {
-        const { data } = await loads.create({ title: form.title.trim(), description: form.description.trim(), photoUrls: [], pickup: locationPayload(pickup), delivery: locationPayload(dropoff), dimensions: { lengthCm: 120, widthCm: 80, heightCm: 100, weightKg: toFiniteNumber(form.weight) } });
-        draftId = data.id; setPendingDraftId(draftId);
+        const { data } = await loads.create(payload);
+        draftId = data.id;
+        setPendingDraftId(draftId);
       }
-      if (photos.length) { await loads.photos(draftId, photos); setPhotos([]); }
-      await loads.publish(draftId); setPendingDraftId(null); setPhotos([]); setForm({ title: '', description: '', weight: '' }); setRouteDraft({ pickup: null, dropoff: null, route: null }); setTab('loads'); await fetchLoads();
-      Alert.alert('İlan yayınlandı', 'İlanınız ve fotoğraflarınız şoförlere açıldı.');
-    } catch (error) { Alert.alert('İşlem yapılamadı', apiError(error)); } finally { publishBusy.current = false; setSaving(false); }
-  }, [fetchLoads, form, pendingDraftId, photos, routeDraft]);
-  const openLoad = useCallback(async load => { setSelectedLoad(load); setOffersLoading(true); try { const { data } = await offers.list(load.id); setLoadOffers(data || []); } catch (error) { Alert.alert('Teklifler alınamadı', apiError(error)); setLoadOffers([]); } finally { setOffersLoading(false); } }, []);
-  const openMessageLoad = useCallback(async id => { try { const { data } = await loads.get(id); setTab('loads'); await openLoad(data); } catch (error) { Alert.alert('İlan açılamadı', apiError(error)); } }, [openLoad]);
-  const acceptOffer = useCallback(async offer => { try { await offers.accept(offer.id); Alert.alert('Şoför seçildi', 'Teklif kabul edildi; mesajlaşma açıldı.'); setSelectedLoad(null); await fetchLoads(); } catch (error) { Alert.alert('Teklif kabul edilemedi', apiError(error)); } }, [fetchLoads]);
-  const cancelLoad = useCallback(async load => { try { await loads.status(load.id, 'cancelled'); setSelectedLoad(null); await fetchLoads(); } catch (error) { Alert.alert('İlan iptal edilemedi', apiError(error)); } }, [fetchLoads]);
-  const saveAccount = useCallback(async () => { try { const { data } = await profile.update({ name: accountForm.name, email: accountForm.email, phone: accountForm.phone }); setAccount(data); setUser(data); await updateStoredUser(data); Alert.alert('Hesap güncellendi', 'Profil bilgileriniz kaydedildi.'); } catch (error) { Alert.alert('Hesap güncellenemedi', apiError(error)); } }, [accountForm]);
-  const changePassword = useCallback(async () => { if (!accountForm.currentPassword || accountForm.newPassword.length < 8) return Alert.alert('Şifre bilgisi eksik', 'Mevcut şifrenizi ve en az 8 karakterlik yeni şifrenizi girin.'); try { await profile.changePassword({ currentPassword: accountForm.currentPassword, newPassword: accountForm.newPassword }); setAccountForm(current => ({ ...current, currentPassword: '', newPassword: '' })); Alert.alert('Şifre değiştirildi', 'Yeni şifreniz kaydedildi.'); } catch (error) { Alert.alert('Şifre değiştirilemedi', apiError(error)); } }, [accountForm]);
-  const logout = useCallback(async () => { try { await auth.logout(); } catch (error) { logApiError('CUSTOMER LOGOUT', error); } finally { setUser(null); setTab('home'); setSelectedLoad(null); } }, []);
+      if (photos.length) await loads.photos(draftId, photos);
+      await loads.publish(draftId);
+      setPendingDraftId(null);
+      setPhotos([]);
+      setForm(initialLoadForm());
+      setFormErrors({});
+      setRouteDraft({ pickup: null, dropoff: null, route: null });
+      setTab('loads');
+      await fetchLoads();
+      showToast('İlanınız ve fotoğraflarınız şoförlere açıldı.', { type: 'success', title: 'İlan yayınlandı' });
+    } catch (error) {
+      showToast(apiError(error), { type: 'error', title: 'İşlem yapılamadı' });
+    } finally {
+      publishBusy.current = false;
+      setSaving(false);
+    }
+  }, [fetchLoads, form, pendingDraftId, photos, routeDraft, showToast]);
 
-  if (restoring) return <View style={s.center}><ActivityIndicator color="#405bd2" /><Text style={s.centerText}>Oturum yükleniyor…</Text></View>;
+  const openLoad = useCallback(async load => {
+    setSelectedLoad(load);
+    setOffersLoading(true);
+    try {
+      const { data } = await offers.list(load.id);
+      setLoadOffers(data || []);
+    } catch (error) {
+      showToast(apiError(error), { type: 'error', title: 'Teklifler alınamadı' });
+      setLoadOffers([]);
+    } finally {
+      setOffersLoading(false);
+    }
+  }, [showToast]);
+  const openMessageLoad = useCallback(async id => {
+    try {
+      const { data } = await loads.get(id);
+      setTab('loads');
+      await openLoad(data);
+    } catch (error) {
+      showToast(apiError(error), { type: 'error', title: 'İlan açılamadı' });
+    }
+  }, [openLoad, showToast]);
+  const performAcceptOffer = useCallback(async offer => {
+    setConfirmationLoading(true);
+    try {
+      await offers.accept(offer.id);
+      setSelectedLoad(null);
+      setConfirmation(null);
+      await fetchLoads();
+      showToast('Teklif kabul edildi; mesajlaşma açıldı.', { type: 'success', title: 'Şoför seçildi' });
+    } catch (error) {
+      showToast(apiError(error), { type: 'error', title: 'Teklif kabul edilemedi' });
+    } finally {
+      setConfirmationLoading(false);
+    }
+  }, [fetchLoads, showToast]);
+  const performCancelLoad = useCallback(async load => {
+    setConfirmationLoading(true);
+    try {
+      await loads.status(load.id, 'cancelled');
+      setSelectedLoad(null);
+      setConfirmation(null);
+      await fetchLoads();
+      showToast('İlan iptal edildi.', { type: 'success' });
+    } catch (error) {
+      showToast(apiError(error), { type: 'error', title: 'İlan iptal edilemedi' });
+    } finally {
+      setConfirmationLoading(false);
+    }
+  }, [fetchLoads, showToast]);
+  const saveAccount = useCallback(async () => {
+    setAccountSaving(true);
+    try {
+      const { data } = await profile.update({ name: accountForm.name, email: accountForm.email, phone: accountForm.phone });
+      setAccount(data);
+      setUser(data);
+      await updateStoredUser(data);
+      showToast('Profil bilgileriniz kaydedildi.', { type: 'success', title: 'Hesap güncellendi' });
+    } catch (error) {
+      showToast(apiError(error), { type: 'error', title: 'Hesap güncellenemedi' });
+    } finally {
+      setAccountSaving(false);
+    }
+  }, [accountForm, showToast]);
+  const changePassword = useCallback(async () => {
+    if (!accountForm.currentPassword || accountForm.newPassword.length < 8) {
+      showToast('Mevcut şifrenizi ve en az 8 karakterlik yeni şifrenizi girin.', { type: 'error', title: 'Şifre bilgisi eksik' });
+      return;
+    }
+    setPasswordSaving(true);
+    try {
+      await profile.changePassword({ currentPassword: accountForm.currentPassword, newPassword: accountForm.newPassword });
+      setAccountForm(current => ({ ...current, currentPassword: '', newPassword: '' }));
+      showToast('Yeni şifreniz kaydedildi.', { type: 'success', title: 'Şifre değiştirildi' });
+    } catch (error) {
+      showToast(apiError(error), { type: 'error', title: 'Şifre değiştirilemedi' });
+    } finally {
+      setPasswordSaving(false);
+    }
+  }, [accountForm, showToast]);
+  const performLogout = useCallback(async () => {
+    setConfirmationLoading(true);
+    try {
+      await auth.logout();
+    } catch (error) {
+      logApiError('CUSTOMER LOGOUT', error);
+    } finally {
+      setConfirmation(null);
+      setConfirmationLoading(false);
+      setUser(null);
+      setTab('home');
+      setSelectedLoad(null);
+    }
+  }, []);
+
+  if (restoring) return <View style={styles.center}><ListSkeleton count={2} /><Text style={styles.centerText}>Oturum güvenli biçimde yükleniyor…</Text></View>;
   if (!user) return <AuthFlow auth={auth} saveSession={saveSession} apiError={apiError} onSession={setUser} allowedRole="customer" connectionCheck={<ConnectionCheck />} />;
-  const body = tab === 'home' ? <Home form={form} setForm={setForm} photos={photos} setPhotos={setPhotos} routeDraft={routeDraft} onLocationsChange={handleLocationsChange} onRouteChange={handleRouteChange} saving={saving} publish={publish} /> : tab === 'loads' ? <MyLoads loading={loadsLoading} error={loadsError} items={myLoads} selected={selectedLoad} offers={loadOffers} offersLoading={offersLoading} onOpen={openLoad} onClose={() => setSelectedLoad(null)} onAccept={acceptOffer} onCancel={cancelLoad} retry={fetchLoads} /> : tab === 'messages' ? <ConversationCenter currentUser={user} api={conversations} apiError={apiError} resolveMediaUrl={resolveMediaUrl} formatMoney={formatMoney} loadStatusLabel={loadStatusLabel} onOpenLoad={openMessageLoad} reverseGeocode={maps.reverse} nativeMapsConfigured={nativeGoogleMapsConfigured} nativeMapsMessage={nativeGoogleMapsMessage} bottomInset={72 + insets.bottom} /> : <Account loading={accountLoading} error={accountError} account={account} form={accountForm} setForm={setAccountForm} save={saveAccount} changePassword={changePassword} logout={logout} retry={fetchAccount} />;
-  return <View style={s.screen}><StatusBar style="light" /><View style={s.header}><Text style={s.brand}>▰ Nakliye<Text style={s.go}>go</Text></Text><View style={s.avatar}><Text>{user.name?.slice(0, 2).toUpperCase()}</Text></View></View>{tab === 'messages' ? body : <ScrollView contentContainerStyle={[s.content, { paddingBottom: 92 + insets.bottom }]} refreshControl={<RefreshControl refreshing={tab === 'loads' ? loadsLoading : tab === 'account' ? accountLoading : false} onRefresh={tab === 'loads' ? fetchLoads : tab === 'account' ? fetchAccount : undefined} tintColor="#405bd2" />}>{body}</ScrollView>}<Nav tab={tab} setTab={setTab} bottom={insets.bottom} /></View>;
+
+  const body = tab === 'home'
+    ? <CustomerHome form={form} setForm={setForm} errors={formErrors} setErrors={setFormErrors} photos={photos} setPhotos={setPhotos} routeDraft={routeDraft} onLocationsChange={handleLocationsChange} onRouteChange={handleRouteChange} saving={saving} publish={publish} loads={myLoads} onShowLoads={() => setTab('loads')} />
+    : tab === 'loads'
+      ? <CustomerLoads loading={loadsLoading} error={loadsError} items={myLoads} selected={selectedLoad} offers={loadOffers} offersLoading={offersLoading} onOpen={openLoad} onClose={() => setSelectedLoad(null)} onAccept={offer => setConfirmation({ type: 'accept', target: offer })} onCancel={load => setConfirmation({ type: 'cancel', target: load })} retry={fetchLoads} />
+      : tab === 'messages'
+        ? <ConversationCenter currentUser={user} api={conversations} apiError={apiError} resolveMediaUrl={resolveMediaUrl} formatMoney={formatMoney} loadStatusLabel={loadStatusLabel} onOpenLoad={openMessageLoad} reverseGeocode={maps.reverse} nativeMapsConfigured={nativeGoogleMapsConfigured} nativeMapsMessage={nativeGoogleMapsMessage} bottomInset={control.bottomNavHeight + insets.bottom} />
+        : <CustomerAccount loading={accountLoading} error={accountError} account={account} form={accountForm} setForm={setAccountForm} save={saveAccount} saveLoading={accountSaving} changePassword={changePassword} passwordLoading={passwordSaving} logout={() => setConfirmation({ type: 'logout' })} retry={fetchAccount} />;
+
+  const refresh = tab === 'home' || tab === 'loads' ? fetchLoads : tab === 'account' ? fetchAccount : undefined;
+  return <View style={styles.screen}>
+    <StatusBar style="light" />
+    <AppHeader title="NakliyeGo" subtitle={tab === 'home' ? 'Müşteri paneli' : tab === 'loads' ? 'İlan yönetimi' : tab === 'messages' ? 'Mesajlar' : 'Hesabım'} initials={user.name?.split(' ').map(part => part[0]).join('').slice(0, 2).toUpperCase()} topInset={insets.top} />
+    {tab === 'messages' ? body : <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0}><ScrollView contentContainerStyle={[styles.content, { paddingBottom: control.bottomNavHeight + insets.bottom + spacing.xl }]} keyboardShouldPersistTaps="handled" keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'} showsVerticalScrollIndicator={false} refreshControl={refresh ? <RefreshControl refreshing={tab === 'account' ? accountLoading : loadsLoading} onRefresh={refresh} tintColor={colors.primary} /> : undefined}>{body}</ScrollView></KeyboardAvoidingView>}
+    <BottomNav items={navItems} value={tab} onChange={value => { setTab(value); if (value !== 'loads') setSelectedLoad(null); }} bottomInset={insets.bottom} />
+    <ConfirmationModal
+      visible={Boolean(confirmation)}
+      title={confirmation?.type === 'accept' ? 'Teklifi kabul et' : confirmation?.type === 'cancel' ? 'İlanı iptal et' : 'Hesaptan çıkış'}
+      message={confirmation?.type === 'accept' ? 'Bu şoför seçilecek ve ilan diğer tekliflere kapanacak.' : confirmation?.type === 'cancel' ? 'İlan iptal edilecek. Bu işlem geri alınamaz.' : 'Hesabınızdan çıkış yapmak istediğinizden emin misiniz?'}
+      confirmLabel={confirmation?.type === 'accept' ? 'Kabul et' : confirmation?.type === 'cancel' ? 'İlanı iptal et' : 'Çıkış yap'}
+      destructive={confirmation?.type !== 'accept'}
+      loading={confirmationLoading}
+      onCancel={() => setConfirmation(null)}
+      onConfirm={() => confirmation?.type === 'accept' ? performAcceptOffer(confirmation.target) : confirmation?.type === 'cancel' ? performCancelLoad(confirmation.target) : performLogout()}
+    />
+  </View>;
 }
 
-function Home({ form, setForm, photos, setPhotos, routeDraft, onLocationsChange, onRouteChange, saving, publish }) { return <><View style={s.hero}><Text style={s.overline}>HIZLI VE GÜVENLİ NAKLİYE</Text><Text style={s.heroTitle}>Yükünü taşıt, yoluna devam et.</Text><Text style={s.heroText}>İlanın uygun şoförlere anında ulaşır.</Text></View><View style={s.card}><Text style={s.cardTitle}>📦 Ne taşıyacaksın?</Text><Text style={s.cardSub}>Şoförlerin uygun araç seçmesine yardım et.</Text><Field label="Yük başlığı" value={form.title} onChangeText={value => setForm(current => ({ ...current, title: value }))} placeholder="Örn. 3 parça ev eşyası" /><Field label="Açıklama" value={form.description} onChangeText={value => setForm(current => ({ ...current, description: value }))} placeholder="Kat bilgisi, paket durumu…" /><LoadPhotoPicker photos={photos} onChange={setPhotos} /></View><View style={s.card}><RoutePicker value={routeDraft} onLocationsChange={onLocationsChange} onRouteChange={onRouteChange} /></View><View style={s.card}><Text style={s.cardTitle}>⚖ Ölçü ve ağırlık</Text><Text style={s.cardSub}>Yaklaşık değer girmen yeterli.</Text><Field label="Tahmini ağırlık (kg)" value={form.weight} onChangeText={value => setForm(current => ({ ...current, weight: value }))} numeric /></View><Pressable style={[s.primary, saving && s.disabled]} onPress={publish} disabled={saving}><Text style={s.primaryText}>{saving ? 'İlan hazırlanıyor…' : 'İlanı yayınla  →'}</Text></Pressable></> }
-function MyLoads({ loading, error, items, selected, offers: offerItems, offersLoading, onOpen, onClose, onAccept, onCancel, retry }) { if (selected) return <View style={s.detail}><Pressable onPress={onClose}><Text style={s.back}>‹ İlanlarıma dön</Text></Pressable><Text style={s.detailTitle}>{selected.title || 'Başlıksız ilan'}</Text><Text style={s.status}>{loadStatusLabel(selected.status)}</Text>{selected.photoUrls?.length > 0 && <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.photoList}>{selected.photoUrls.map(url => <LoadImage key={url} path={url} />)}</ScrollView>}<Text style={s.detailText}>● {selected.pickup?.address || 'Başlangıç adresi yok'}</Text><Text style={s.detailText}>● {selected.delivery?.address || 'Varış adresi yok'}</Text><Text style={s.detailPrice}>{formatMoney(selected.agreedPriceTl)}</Text><Text style={s.sectionTitle}>Gelen teklifler</Text>{offersLoading ? <ActivityIndicator color="#405bd2" /> : offerItems.length === 0 ? <Empty title="Henüz teklif yok" detail="Şoför teklifleri geldiğinde burada göreceksiniz." /> : offerItems.map(item => { const offer = item.offer || item; const driver = item.driver || {}; const difference = toFiniteNumber(offer.amountTl) - toFiniteNumber(selected.basePriceTl); return <View key={offer.id} style={s.offerCard}><Text style={s.offerName}>{driver.name || 'Şoför'}</Text><Text style={s.offerNote}>{offer.note || 'Not eklenmedi.'}</Text><Text style={s.offerPrice}>{formatMoney(offer.amountTl)}</Text><Text style={s.offerDifference}>{difference < 0 ? `${formatMoney(Math.abs(difference))} daha uygun` : difference > 0 ? `${formatMoney(difference)} fark` : 'Tahmini fiyatla aynı'}</Text>{offer.status === 'pending' && <Pressable style={s.smallButton} onPress={() => onAccept(offer)}><Text style={s.smallButtonText}>Teklifi kabul et</Text></Pressable>}</View>; })}{['draft', 'published', 'open', 'offers_received'].includes(selected.status) && <Pressable style={s.dangerButton} onPress={() => onCancel(selected)}><Text style={s.dangerText}>İlanı iptal et</Text></Pressable>}</View>; if (loading) return <ActivityIndicator style={s.loader} color="#405bd2" />; if (error) return <Empty title="İlanlar yüklenemedi" detail={error} retry={retry} />; if (!items.length) return <Empty title="Henüz ilanınız yok" detail="Yeni nakliye talebinizi Ana Sayfa’dan oluşturabilirsiniz." />; return <><Text style={s.pageTitle}>İlanlarım</Text><Text style={s.pageSub}>Oluşturduğunuz ilanlar ve şoför teklifleri</Text>{items.map(load => <Pressable key={load.id} style={s.loadCard} onPress={() => onOpen(load)}><LoadImage path={load.photoUrls?.[0]} /><View style={s.loadInfo}><Text style={s.status}>{loadStatusLabel(load.status)}</Text><Text style={s.loadTitle}>{load.title || 'Başlıksız ilan'}</Text><Text style={s.routeText} numberOfLines={1}>{load.pickup?.address || 'Başlangıç yok'} → {load.delivery?.address || 'Varış yok'}</Text><Text style={s.routeText}>{toFiniteNumber(load.estimatedKm).toFixed(1)} km · {Math.round(toFiniteNumber(load.routeDurationSeconds) / 60)} dk · {toFiniteNumber(load.offerCount)} teklif</Text><Text style={s.routeText}>{load.createdAt ? new Date(load.createdAt).toLocaleDateString('tr-TR') : 'Tarih yok'}</Text><Text style={s.loadPrice}>{load.offerCount ? `Son teklif: ${formatMoney(load.lastOfferTl)}` : formatMoney(load.agreedPriceTl)}</Text></View></Pressable>)}</> }
-function Account({ loading, error, account, form, setForm, save, changePassword, logout, retry }) { if (loading) return <ActivityIndicator style={s.loader} color="#405bd2" />; if (error || !account) return <Empty title="Hesap yüklenemedi" detail={error || 'Profil bulunamadı.'} retry={retry} />; return <><Text style={s.pageTitle}>Hesabım</Text><View style={s.card}><Text style={s.cardTitle}>Profil bilgileri</Text><Text style={s.cardSub}>Müşteri hesabı · {new Date(account.createdAt).toLocaleDateString('tr-TR')}</Text><Field label="Ad soyad" value={form.name} onChangeText={value => setForm(current => ({ ...current, name: value }))} /><Field label="E-posta" value={form.email} onChangeText={value => setForm(current => ({ ...current, email: value }))} /><Field label="Telefon" value={form.phone} onChangeText={value => setForm(current => ({ ...current, phone: value }))} numeric /><Pressable style={s.primary} onPress={save}><Text style={s.primaryText}>Bilgileri kaydet</Text></Pressable></View><View style={s.card}><Text style={s.cardTitle}>Şifre değiştir</Text><Field label="Mevcut şifre" value={form.currentPassword} onChangeText={value => setForm(current => ({ ...current, currentPassword: value }))} secure /><Field label="Yeni şifre" value={form.newPassword} onChangeText={value => setForm(current => ({ ...current, newPassword: value }))} secure /><Pressable style={s.smallButton} onPress={changePassword}><Text style={s.smallButtonText}>Şifreyi değiştir</Text></Pressable></View><Pressable style={s.dangerButton} onPress={logout}><Text style={s.dangerText}>Çıkış yap</Text></Pressable></> }
-function Nav({ tab, setTab, bottom }) { return <View style={[s.nav, { height: 72 + bottom, paddingBottom: bottom }]}>{[['home', '⌂', 'Ana Sayfa'], ['loads', '▤', 'İlanlarım'], ['messages', '◌', 'Mesajlar'], ['account', '●', 'Hesabım']].map(([key, icon, label]) => <Pressable key={key} style={s.navItem} onPress={() => setTab(key)}><Text style={tab === key ? s.navOn : s.navOff}>{icon}{'\n'}{label}</Text></Pressable>)}</View> }
-function ConnectionCheck() { const [state, setState] = useState(''); const check = useCallback(async signal => { setState('Kontrol ediliyor…'); try { if (__DEV__) console.info(`[API] Health URL: ${healthUrl}`); await checkApiHealth({ signal }); setState('API bağlantısı başarılı.'); } catch (error) { if (error?.code !== 'ERR_CANCELED') setState(error?.code === 'ECONNABORTED' ? 'Sunucu zamanında yanıt vermedi.' : 'Sunucuya bağlanılamadı.'); } }, []); useEffect(() => { if (!__DEV__) return undefined; const controller = new AbortController(); void check(controller.signal); return () => controller.abort(); }, [check]); if (!__DEV__) return null; return <View style={s.connection}><Text style={s.connectionText}>Geliştirme API: {apiOrigin || 'tanımlı değil'}</Text><Pressable onPress={() => void check()}><Text style={s.refresh}>Bağlantıyı kontrol et</Text></Pressable><Text style={s.connectionText}>{state}</Text></View>; }
+function ConnectionCheck() {
+  const [state, setState] = useState({ tone: 'info', message: 'Bağlantı kontrol ediliyor…' });
+  const check = useCallback(async signal => {
+    setState({ tone: 'info', message: 'Bağlantı kontrol ediliyor…' });
+    try {
+      if (__DEV__) console.info(`[API] Health URL: ${healthUrl}`);
+      await checkApiHealth({ signal });
+      setState({ tone: 'success', message: 'API bağlantısı hazır.' });
+    } catch (error) {
+      if (error?.code !== 'ERR_CANCELED') setState({ tone: 'danger', message: error?.code === 'ECONNABORTED' ? 'Sunucu zamanında yanıt vermedi.' : 'Sunucuya bağlanılamadı.' });
+    }
+  }, []);
+  useEffect(() => {
+    if (!__DEV__) return undefined;
+    const controller = new AbortController();
+    void check(controller.signal);
+    return () => controller.abort();
+  }, [check]);
+  if (!__DEV__) return null;
+  return <InlineNotice title={`Geliştirme API: ${apiOrigin || 'tanımlı değil'}`} message={state.message} tone={state.tone} actionLabel="Kontrol et" onAction={() => void check()} />;
+}
 
-const s = StyleSheet.create({ screen: { flex: 1, backgroundColor: '#f7f8fc' }, center: { alignItems: 'center', flex: 1, justifyContent: 'center' }, centerText: { color: '#657089', marginTop: 10 }, header: { alignItems: 'center', backgroundColor: '#405bd2', flexDirection: 'row', height: 90, justifyContent: 'space-between', paddingHorizontal: 22, paddingTop: 36 }, brand: { color: '#fff', fontSize: 20, fontWeight: '800' }, go: { color: '#aebdff' }, avatar: { alignItems: 'center', backgroundColor: '#e9edff', borderRadius: 17, height: 34, justifyContent: 'center', width: 34 }, content: { padding: 18 }, hero: { backgroundColor: '#273875', borderRadius: 20, marginBottom: 15, padding: 24 }, overline: { color: '#aebeff', fontSize: 10, fontWeight: '800', letterSpacing: 1 }, heroTitle: { color: '#fff', fontSize: 27, fontWeight: '800', lineHeight: 33, marginTop: 8 }, heroText: { color: '#dce5ff', marginTop: 9 }, card: { backgroundColor: '#fff', borderRadius: 17, marginBottom: 14, padding: 18 }, cardTitle: { color: '#202b43', fontSize: 16, fontWeight: '800' }, cardSub: { color: '#8d97a7', fontSize: 12, marginTop: 4 }, field: { marginTop: 15 }, label: { color: '#3d4962', fontSize: 12, fontWeight: '700', marginBottom: 7 }, input: { borderColor: '#e0e5ed', borderRadius: 10, borderWidth: 1, color: '#202b43', fontSize: 14, padding: 12 }, primary: { alignItems: 'center', backgroundColor: '#445fd4', borderRadius: 13, height: 53, justifyContent: 'center', marginTop: 12 }, disabled: { opacity: .6 }, primaryText: { color: '#fff', fontSize: 15, fontWeight: '800' }, nav: { backgroundColor: '#fff', borderColor: '#edf0f4', borderTopWidth: 1, bottom: 0, flexDirection: 'row', left: 0, position: 'absolute', right: 0 }, navItem: { alignItems: 'center', flex: 1, justifyContent: 'center' }, navOn: { color: '#405bd2', fontSize: 10, fontWeight: '800', textAlign: 'center' }, navOff: { color: '#7d8798', fontSize: 10, textAlign: 'center' }, empty: { alignItems: 'center', backgroundColor: '#fff', borderRadius: 16, marginTop: 20, padding: 28 }, emptyTitle: { color: '#25314b', fontSize: 16, fontWeight: '800' }, emptyText: { color: '#7d8798', lineHeight: 19, marginTop: 7, textAlign: 'center' }, smallButton: { alignItems: 'center', backgroundColor: '#eef1ff', borderRadius: 10, justifyContent: 'center', marginTop: 12, minHeight: 42, paddingHorizontal: 14 }, smallButtonText: { color: '#405bd2', fontSize: 12, fontWeight: '800' }, pageTitle: { color: '#25314b', fontSize: 25, fontWeight: '800', marginTop: 5 }, pageSub: { color: '#7d8798', fontSize: 12, marginBottom: 16, marginTop: 5 }, loadCard: { backgroundColor: '#fff', borderRadius: 16, flexDirection: 'row', marginTop: 13, overflow: 'hidden', padding: 12 }, loadImage: { borderRadius: 10, height: 76, width: 76 }, photoFallback: { alignItems: 'center', backgroundColor: '#eef1ff', borderRadius: 10, height: 76, justifyContent: 'center', width: 76 }, loadInfo: { flex: 1, marginLeft: 12 }, status: { alignSelf: 'flex-start', backgroundColor: '#e5f8ed', borderRadius: 5, color: '#259561', fontSize: 9, fontWeight: '800', overflow: 'hidden', paddingHorizontal: 6, paddingVertical: 3 }, loadTitle: { color: '#2b3750', fontSize: 15, fontWeight: '800', marginTop: 5 }, routeText: { color: '#768197', fontSize: 11, marginTop: 4 }, loadPrice: { color: '#344bc0', fontSize: 16, fontWeight: '800', marginTop: 5 }, detail: { paddingBottom: 14 }, back: { color: '#405bd2', fontSize: 13, fontWeight: '800', marginBottom: 16 }, detailTitle: { color: '#25314b', fontSize: 24, fontWeight: '800' }, detailText: { color: '#4b5870', fontSize: 13, lineHeight: 22, marginTop: 12 }, detailPrice: { color: '#344bc0', fontSize: 25, fontWeight: '900', marginTop: 15 }, photoList: { marginTop: 14 }, offerCard: { backgroundColor: '#fff', borderColor: '#e4e8f0', borderRadius: 13, borderWidth: 1, marginTop: 10, padding: 14 }, offerName: { color: '#25314b', fontWeight: '800' }, offerNote: { color: '#67738a', fontSize: 12, marginTop: 5 }, offerPrice: { color: '#344bc0', fontSize: 18, fontWeight: '800', marginTop: 9 }, offerDifference: { color: '#71809e', fontSize: 11, marginTop: 3 }, dangerButton: { alignItems: 'center', borderColor: '#f2b9b5', borderRadius: 11, borderWidth: 1, justifyContent: 'center', marginTop: 15, minHeight: 46 }, dangerText: { color: '#c7352e', fontSize: 13, fontWeight: '800' }, loader: { marginTop: 35 }, conversation: { backgroundColor: '#fff', borderRadius: 14, marginTop: 10, padding: 15 }, conversationText: { color: '#657089', fontSize: 12, marginTop: 7 }, chat: { backgroundColor: '#eef1f6', borderRadius: 14, marginTop: 18, minHeight: 260, padding: 12 }, bubble: { alignSelf: 'flex-start', backgroundColor: '#fff', borderRadius: 12, marginBottom: 8, maxWidth: '82%', padding: 10 }, mine: { alignSelf: 'flex-end', backgroundColor: '#dce5ff' }, bubbleText: { color: '#35415a', fontSize: 13 }, messageRow: { flexDirection: 'row', gap: 8, marginTop: 12 }, messageInput: { backgroundColor: '#fff', borderColor: '#dfe5ed', borderRadius: 11, borderWidth: 1, flex: 1, paddingHorizontal: 12 }, send: { alignItems: 'center', backgroundColor: '#405bd2', borderRadius: 11, justifyContent: 'center', width: 48 }, sendText: { color: '#fff', fontSize: 20 }, connection: { backgroundColor: '#eef1ff', borderRadius: 10, marginTop: 28, padding: 12 }, connectionText: { color: '#63708e', fontSize: 11, marginVertical: 3 }, refresh: { color: '#405bd2', fontSize: 12, fontWeight: '800', marginTop: 8 } });
+const styles = StyleSheet.create({
+  screen: { backgroundColor: colors.background, flex: 1 }, flex: { flex: 1 }, content: { paddingHorizontal: spacing.md, paddingTop: spacing.lg }, center: { backgroundColor: colors.background, flex: 1, justifyContent: 'center', padding: spacing.xl }, centerText: { ...typography.small, color: colors.textSecondary, marginTop: spacing.md, textAlign: 'center' },
+});

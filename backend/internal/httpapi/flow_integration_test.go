@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"nakliye-api/internal/models"
@@ -163,9 +165,12 @@ func TestPhaseZeroCoreFlow(t *testing.T) {
 	for index := 0; index < 3; index++ {
 		created := requestJSON(t, handler, http.MethodPost, "/api/loads", customer.AccessToken, map[string]any{
 			"title": fmt.Sprintf("Yük %d", index+1), "description": "Kırılabilir",
-			"pickup":     map[string]any{"address": "Bornova, İzmir", "latitude": 38.46, "longitude": 27.21, "placeId": "origin-place", "city": "İzmir", "district": "Bornova", "province": "İzmir", "postalCode": "35030", "country": "Türkiye", "countryCode": "TR"},
-			"delivery":   map[string]any{"address": "Konak, İzmir", "latitude": 38.42, "longitude": 27.13, "placeId": "destination-place", "city": "İzmir", "district": "Konak", "province": "İzmir", "country": "Türkiye", "countryCode": "TR"},
-			"dimensions": map[string]any{"lengthCm": 120, "widthCm": 80, "heightCm": 100, "weightKg": 100},
+			"pickup":      map[string]any{"address": "Bornova, İzmir", "latitude": 38.46, "longitude": 27.21, "placeId": "origin-place", "city": "İzmir", "district": "Bornova", "province": "İzmir", "postalCode": "35030", "country": "Türkiye", "countryCode": "TR"},
+			"delivery":    map[string]any{"address": "Konak, İzmir", "latitude": 38.42, "longitude": 27.13, "placeId": "destination-place", "city": "İzmir", "district": "Konak", "province": "İzmir", "country": "Türkiye", "countryCode": "TR"},
+			"dimensions":  map[string]any{"lengthCm": 120, "widthCm": 80, "heightCm": 100, "weightKg": 100},
+			"urgencyType": "immediate", "cargoType": "ev_esyasi", "vehicleType": "kamyonet",
+			"pickupFloor": 2, "deliveryFloor": 0, "pickupElevatorAvailable": true, "deliveryElevatorAvailable": false,
+			"helperNeeded": false, "helperCount": 0,
 		})
 		if created.Code != http.StatusCreated {
 			t.Fatalf("create load status=%d body=%s", created.Code, created.Body.String())
@@ -182,8 +187,9 @@ func TestPhaseZeroCoreFlow(t *testing.T) {
 	}
 
 	draft := requestJSON(t, handler, http.MethodPost, "/api/loads", customer.AccessToken, map[string]any{
-		"title": "Gizli taslak", "pickup": map[string]any{"address": "A", "latitude": 38.46, "longitude": 27.21},
-		"delivery": map[string]any{"address": "B", "latitude": 38.42, "longitude": 27.13}, "dimensions": map[string]any{"weightKg": 10},
+		"title": "Gizli taslak", "description": "Paketlenmiş yük", "pickup": map[string]any{"address": "A", "latitude": 38.46, "longitude": 27.21},
+		"delivery": map[string]any{"address": "B", "latitude": 38.42, "longitude": 27.13}, "dimensions": map[string]any{"lengthCm": 30, "widthCm": 30, "heightCm": 30, "weightKg": 10},
+		"urgencyType": "today", "cargoType": "ticari_yuk", "vehicleType": "farketmez", "pickupFloor": 0, "deliveryFloor": 1,
 	})
 	draftLoad := decodeResponse[models.Load](t, draft)
 	forbiddenDraft := requestJSON(t, handler, http.MethodGet, "/api/loads/"+draftLoad.ID, driver.AccessToken, nil)
@@ -285,6 +291,81 @@ func TestPhaseZeroCoreFlow(t *testing.T) {
 	restartedMessages := requestJSON(t, restartedAPI.Routes(), http.MethodGet, "/api/conversations/"+createdLoads[0].ID+"/messages", driver.AccessToken, nil)
 	if restartedMessages.Code != http.StatusOK {
 		t.Fatalf("messages after API restart status=%d body=%s", restartedMessages.Code, restartedMessages.Body.String())
+	}
+}
+
+func TestStructuredListingTimingOperationsAndFilters(t *testing.T) {
+	handler, _ := newFlowTestAPI(t)
+	customer := registerTestUser(t, handler, "phase1customer", models.RoleCustomer)
+	driver := registerTestUser(t, handler, "phase1driver", models.RoleDriver)
+
+	basePayload := func(title string) map[string]any {
+		return map[string]any{
+			"title": title, "description": "Ambalajlı ve taşımaya hazır yük.",
+			"pickup":     map[string]any{"address": "Bornova, İzmir", "latitude": 38.46, "longitude": 27.21},
+			"delivery":   map[string]any{"address": "Konak, İzmir", "latitude": 38.42, "longitude": 27.13},
+			"dimensions": map[string]any{"lengthCm": 80, "widthCm": 75, "heightCm": 190, "weightKg": 95},
+			"cargoType":  "beyaz_esya", "vehicleType": "kapali_kasa",
+			"pickupFloor": 3, "deliveryFloor": 1,
+			"pickupElevatorAvailable": true, "deliveryElevatorAvailable": false,
+			"helperNeeded": true, "helperCount": 2,
+		}
+	}
+
+	invalidScheduled := basePayload("Eksik planlı ilan")
+	invalidScheduled["urgencyType"] = "scheduled"
+	invalidResponse := requestJSON(t, handler, http.MethodPost, "/api/loads", customer.AccessToken, invalidScheduled)
+	if invalidResponse.Code != http.StatusBadRequest {
+		t.Fatalf("planned listing without scheduledAt status=%d body=%s", invalidResponse.Code, invalidResponse.Body.String())
+	}
+
+	createdByUrgency := make(map[models.UrgencyType]models.Load)
+	for _, urgency := range []models.UrgencyType{models.UrgencyImmediate, models.UrgencyToday, models.UrgencyScheduled} {
+		payload := basePayload("Zaman seçimi " + string(urgency))
+		payload["urgencyType"] = urgency
+		if urgency == models.UrgencyScheduled {
+			payload["scheduledAt"] = time.Now().UTC().Add(48 * time.Hour).Format(time.RFC3339)
+		}
+		createdResponse := requestJSON(t, handler, http.MethodPost, "/api/loads", customer.AccessToken, payload)
+		if createdResponse.Code != http.StatusCreated {
+			t.Fatalf("create %s listing status=%d body=%s", urgency, createdResponse.Code, createdResponse.Body.String())
+		}
+		created := decodeResponse[models.Load](t, createdResponse)
+		if created.UrgencyType != urgency || created.CargoType != models.CargoTypeWhiteGoods || created.VehicleType != models.VehicleTypeClosedBody {
+			t.Fatalf("structured fields not persisted: %#v", created)
+		}
+		if urgency == models.UrgencyScheduled && created.ScheduledAt == nil {
+			t.Fatal("planned listing lost scheduledAt")
+		}
+		if urgency != models.UrgencyScheduled && created.ScheduledAt != nil {
+			t.Fatalf("urgent listing unexpectedly has scheduledAt: %v", created.ScheduledAt)
+		}
+		published := requestJSON(t, handler, http.MethodPost, "/api/loads/"+created.ID+"/publish", customer.AccessToken, nil)
+		if published.Code != http.StatusOK {
+			t.Fatalf("publish %s listing status=%d body=%s", urgency, published.Code, published.Body.String())
+		}
+		createdByUrgency[urgency] = created
+	}
+
+	filterPath := "/api/drivers/jobs/nearby?urgencyType=scheduled&cargoType=beyaz_esya&vehicleType=kapali_kasa&helperNeeded=true&pickupElevatorAvailable=true&deliveryElevatorAvailable=false&scheduledFrom=" + url.QueryEscape(time.Now().UTC().Format(time.RFC3339))
+	filteredResponse := requestJSON(t, handler, http.MethodGet, filterPath, driver.AccessToken, nil)
+	var filtered struct {
+		Items []models.Load `json:"items"`
+		Total int           `json:"total"`
+	}
+	filtered = decodeResponse[struct {
+		Items []models.Load `json:"items"`
+		Total int           `json:"total"`
+	}](t, filteredResponse)
+	if filteredResponse.Code != http.StatusOK || filtered.Total != 1 || len(filtered.Items) != 1 {
+		t.Fatalf("structured filter total=%d items=%d body=%s", filtered.Total, len(filtered.Items), filteredResponse.Body.String())
+	}
+
+	planned := createdByUrgency[models.UrgencyScheduled]
+	detailResponse := requestJSON(t, handler, http.MethodGet, "/api/loads/"+planned.ID, driver.AccessToken, nil)
+	detail := decodeResponse[models.Load](t, detailResponse)
+	if detailResponse.Code != http.StatusOK || detail.PickupFloor == nil || *detail.PickupFloor != 3 || detail.DeliveryFloor == nil || *detail.DeliveryFloor != 1 || !detail.PickupElevatorAvailable || detail.DeliveryElevatorAvailable || !detail.HelperNeeded || detail.HelperCount != 2 {
+		t.Fatalf("driver operational detail incomplete: %#v", detail)
 	}
 }
 
