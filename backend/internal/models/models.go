@@ -84,6 +84,26 @@ type Load struct {
 	CreatedAt            time.Time    `json:"createdAt"`
 	UpdatedAt            time.Time    `json:"updatedAt"`
 	DeletedAt            *time.Time   `json:"deletedAt,omitempty"`
+
+	// FAZ 1 - Ilan Modeli Genişletme Alanları
+	UrgencyType             string     `json:"urgency_type"`                     
+	ScheduledDate           *time.Time `json:"scheduled_date,omitempty"`        
+	ScheduledTime           *string    `json:"scheduled_time,omitempty"`        
+
+	CargoType               string     `json:"cargo_type"`                         
+	CargoTypeNote           *string    `json:"cargo_type_note,omitempty"`           
+
+	VehicleType             string     `json:"vehicle_type"`                      
+
+	WeightKg                *float64   `json:"weightKg,omitempty"`                 
+	DimensionLengthCm       *float64   `json:"dimensionLengthCm,omitempty"`       
+	DimensionWidthCm        *float64   `json:"dimensionWidthCm,omitempty"`        
+	DimensionHeightCm       *float64   `json:"dimensionHeightCm,omitempty"`       
+
+	FloorInfo               *int       `json:"floorInfo,omitempty"`               
+	ElevatorAvailable       bool       `json:"elevatorAvailable,omitempty"`       
+	HelperNeeded            bool       `json:"helperNeeded,omitempty"`          
+	HelperCount             *int       `json:"helperCount,omitempty"`             
 }
 
 type User struct {

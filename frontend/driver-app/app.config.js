@@ -34,6 +34,8 @@ module.exports = {
   plugins: [
     ...(expo.plugins || []),
     'expo-secure-store',
+    'expo-font',
+    '@react-native-community/datetimepicker',
     ['expo-image-picker', {
       photosPermission: 'Sohbette fotoğraf göndermek için galeri erişimi gerekir.',
       cameraPermission: 'Sohbette fotoğraf çekmek için kamera erişimi gerekir.',

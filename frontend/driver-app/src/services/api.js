@@ -195,6 +195,13 @@ export const profile = {
   update: data => client.patch('/api/me', data),
   changePassword: data => client.patch('/api/me/password', data),
 };
+export const vehicles = {
+  list: () => client.get('/api/driver/vehicles'),
+  create: data => client.post('/api/driver/vehicles', data),
+  update: (id, data) => client.patch(`/api/driver/vehicles/${id}`, data),
+  delete: id => client.delete(`/api/driver/vehicles/${id}`),
+  activate: id => client.patch(`/api/driver/vehicles/${id}/activate`),
+};
 
 export const apiError = error => {
   return normalizeApiError(error).messageWithRequestId;
