@@ -10,16 +10,22 @@ const (
 )
 
 const (
-	LoadStatusDraft          = "draft"
-	LoadStatusPublished      = "published"
+	LoadStatusDraft             = "draft"
+	LoadStatusPublished         = "published"
+	LoadStatusDriverSelected    = "driver_selected"
+	LoadStatusDriverEnRoute     = "driver_en_route"
+	LoadStatusAtPickup          = "at_pickup"
+	LoadStatusPickedUp          = "picked_up"
+	LoadStatusEnRouteToDelivery = "en_route_to_delivery"
+	LoadStatusDelivered         = "delivered"
+	LoadStatusCompleted         = "completed"
+	LoadStatusCancelled         = "cancelled"
+
+	// Legacy statuses remain readable so existing Redis records can be
+	// normalized without inventing status-history events.
 	LoadStatusOffersReceived = "offers_received"
-	LoadStatusDriverSelected = "driver_selected"
 	LoadStatusInTransit      = "in_transit"
-	LoadStatusCompleted      = "completed"
-	LoadStatusCancelled      = "cancelled"
-	// LoadStatusOpenLegacy is read-only compatibility for records created by
-	// the first mobile client. New listings use LoadStatusPublished.
-	LoadStatusOpenLegacy = "open"
+	LoadStatusOpenLegacy     = "open"
 )
 
 func ValidRole(role string) bool {

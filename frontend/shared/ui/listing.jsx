@@ -6,10 +6,10 @@ import Icon from './Icon';
 import { Badge } from './primitives';
 import { colors, radius, shadows, spacing, typography } from './theme';
 
-const statusTone = status => ({ completed: 'success', in_transit: 'info', driver_selected: 'primary', cancelled: 'danger', offers_received: 'warning', published: 'success', open: 'success', draft: 'neutral' }[status] || 'neutral');
+const statusTone = status => ({ completed: 'success', delivered: 'success', en_route_to_delivery: 'info', picked_up: 'info', at_pickup: 'info', driver_en_route: 'info', in_transit: 'info', driver_selected: 'primary', cancelled: 'danger', offers_received: 'success', published: 'success', open: 'success', draft: 'neutral' }[status] || 'neutral');
 
 export function StatusBadge({ status, label }) {
-  const icon = status === 'completed' ? 'checkmark-circle' : status === 'in_transit' ? 'navigate-circle' : status === 'cancelled' ? 'close-circle' : status === 'offers_received' ? 'pricetag' : status === 'driver_selected' ? 'person-circle' : 'radio-button-on';
+  const icon = status === 'completed' || status === 'delivered' ? 'checkmark-circle' : ['driver_en_route', 'at_pickup', 'picked_up', 'en_route_to_delivery', 'in_transit'].includes(status) ? 'navigate-circle' : status === 'cancelled' ? 'close-circle' : status === 'driver_selected' ? 'person-circle' : 'radio-button-on';
   return <Badge label={label} tone={statusTone(status)} icon={icon} />;
 }
 

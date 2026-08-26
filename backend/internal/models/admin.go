@@ -51,14 +51,21 @@ type MessageComplaint struct {
 }
 
 type LoadStatusEvent struct {
-	ID         string    `json:"id"`
-	LoadID     string    `json:"loadId"`
-	FromStatus string    `json:"fromStatus,omitempty"`
-	ToStatus   string    `json:"toStatus"`
-	ActorID    string    `json:"actorId,omitempty"`
-	ActorRole  string    `json:"actorRole"`
-	Note       string    `json:"note,omitempty"`
-	CreatedAt  time.Time `json:"createdAt"`
+	ID              string    `json:"id"`
+	LoadID          string    `json:"loadId"`
+	FromStatus      string    `json:"fromStatus,omitempty"`
+	ToStatus        string    `json:"toStatus"`
+	ChangedAt       time.Time `json:"changedAt"`
+	ChangedByUserID string    `json:"changedByUserId"`
+	ChangedByRole   string    `json:"changedByRole"`
+	Source          string    `json:"source"`
+	Note            string    `json:"note,omitempty"`
+
+	// Deprecated response aliases keep existing admin/API consumers working
+	// while old persisted history records are read into the canonical fields.
+	ActorID   string    `json:"actorId,omitempty"`
+	ActorRole string    `json:"actorRole,omitempty"`
+	CreatedAt time.Time `json:"createdAt,omitempty"`
 }
 
 type ActivityEvent struct {
@@ -88,11 +95,5 @@ func ValidComplaintStatus(status string) bool {
 }
 
 func ValidLoadStatus(status string) bool {
-	switch status {
-	case LoadStatusDraft, LoadStatusPublished, LoadStatusOffersReceived, LoadStatusDriverSelected,
-		LoadStatusInTransit, LoadStatusCompleted, LoadStatusCancelled, LoadStatusOpenLegacy:
-		return true
-	default:
-		return false
-	}
+	return ValidCanonicalLoadStatus(status) || IsLegacyLoadStatus(status)
 }

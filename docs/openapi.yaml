@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: NakliyeGo API
-  version: 2.0.0
+  version: 2.1.0
 servers:
   - url: http://localhost:8080
 paths:
@@ -66,6 +66,25 @@ paths:
         - { in: query, name: deliveryElevatorAvailable, schema: { type: boolean } }
         - { in: query, name: helperNeeded, schema: { type: boolean } }
       responses: { '200': { description: Open jobs with complete operational detail } }
+  /api/loads/{id}/status:
+    patch:
+      summary: Advance or cancel a load through the validated operation state machine
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { $ref: '#/components/schemas/LoadStatus' }
+      responses:
+        '200': { description: Load status and immutable history event committed atomically }
+        '403': { description: User is not the owning customer or assigned driver }
+        '409': { description: Invalid, terminal, duplicate, or concurrent transition }
   /api/messages/{id}/complaints:
     post:
       summary: Report a message for admin review
@@ -191,13 +210,30 @@ paths:
       security: [{ adminBearerAuth: [] }]
       parameters:
         - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
-      responses: { '200': { description: Listing, offers and status history } }
+      responses:
+        '200':
+          description: Listing, offers and immutable status history
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminLoadDetail' }
   /api/admin/loads/{id}/status:
     patch:
       security: [{ adminBearerAuth: [] }]
       parameters:
         - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
-      responses: { '200': { description: Audited admin status override } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, note]
+              properties:
+                status: { $ref: '#/components/schemas/LoadStatus' }
+                note: { type: string, minLength: 1 }
+      responses:
+        '200': { description: State-machine-validated admin transition recorded with source admin }
+        '409': { description: Invalid, terminal, duplicate, or concurrent transition }
   /api/admin/complaints:
     get:
       security: [{ adminBearerAuth: [] }]
@@ -317,9 +353,40 @@ components:
           properties:
             id: { type: string, format: uuid }
             customerId: { type: string, format: uuid }
-            status: { type: string, enum: [draft, published, offers_received, driver_selected, in_transit, completed, cancelled] }
+            status: { $ref: '#/components/schemas/LoadStatus' }
             createdAt: { type: string, format: date-time }
             updatedAt: { type: string, format: date-time }
+    LoadStatus:
+      type: string
+      enum: [draft, published, driver_selected, driver_en_route, at_pickup, picked_up, en_route_to_delivery, delivered, completed, cancelled]
+    LoadStatusEvent:
+      type: object
+      required: [id, loadId, toStatus, changedAt, changedByUserId, changedByRole, source]
+      properties:
+        id: { type: string, format: uuid }
+        loadId: { type: string, format: uuid }
+        fromStatus: { $ref: '#/components/schemas/HistoricalLoadStatus' }
+        toStatus: { $ref: '#/components/schemas/HistoricalLoadStatus' }
+        changedAt: { type: string, format: date-time }
+        changedByUserId: { type: string }
+        changedByRole: { type: string, enum: [customer, driver, admin, system] }
+        source: { type: string, enum: [customer_app, driver_app, admin, system, offer_acceptance] }
+        note: { type: string }
+    HistoricalLoadStatus:
+      type: string
+      description: New events use canonical values; legacy values can appear only in pre-migration history.
+      enum: [draft, published, driver_selected, driver_en_route, at_pickup, picked_up, en_route_to_delivery, delivered, completed, cancelled, open, offers_received, in_transit]
+    AdminLoadDetail:
+      type: object
+      required: [load, statusHistory, offers]
+      properties:
+        load: { $ref: '#/components/schemas/Listing' }
+        statusHistory:
+          type: array
+          items: { $ref: '#/components/schemas/LoadStatusEvent' }
+        offers:
+          type: array
+          items: { type: object, additionalProperties: true }
     RegisterRequest:
       type: object
       required: [name, email, password, role]

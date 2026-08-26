@@ -463,7 +463,7 @@ func (a *API) myLoads(w http.ResponseWriter, r *http.Request) {
 	a.loads(w, r)
 }
 func isOfferableStatus(status string) bool {
-	return status == models.LoadStatusPublished || status == models.LoadStatusOffersReceived || status == models.LoadStatusOpenLegacy
+	return models.CanonicalLoadStatus(status) == models.LoadStatusPublished
 }
 func (a *API) driverLoads(w http.ResponseWriter, r *http.Request) {
 	p := current(r)
@@ -977,7 +977,7 @@ func (a *API) createLoad(w http.ResponseWriter, r *http.Request) {
 		serverError(w, e)
 		return
 	}
-	a.recordLoadStatus(l.ID, "", l.Status, p.ID, p.Role, "İlan oluşturuldu", l.CreatedAt)
+	a.recordLoadStatus(l.ID, "", l.Status, p.ID, p.Role, models.LoadStatusSourceCustomerApp, "İlan oluşturuldu", l.CreatedAt)
 	jsonResponse(w, 201, l)
 }
 func (a *API) newLoad(ctx context.Context, customerID string, req loadRequest, status string) (models.Load, error) {
@@ -1103,11 +1103,11 @@ func (a *API) publish(w http.ResponseWriter, r *http.Request) {
 	from := l.Status
 	l.Status = models.LoadStatusPublished
 	l.UpdatedAt = time.Now().UTC()
-	if e := a.store.SaveLoad(l); e != nil {
-		serverError(w, e)
+	event := newLoadStatusEvent(l.ID, from, l.Status, current(r).ID, current(r).Role, models.LoadStatusSourceCustomerApp, "İlan yayınlandı", l.UpdatedAt)
+	if e := a.store.TransitionLoadStatus(from, l, event); e != nil {
+		writeLoadStatusError(w, e)
 		return
 	}
-	a.recordLoadStatus(l.ID, from, l.Status, current(r).ID, current(r).Role, "İlan yayınlandı", l.UpdatedAt)
 	jsonResponse(w, 200, l)
 }
 func (a *API) updateStatus(w http.ResponseWriter, r *http.Request) {
@@ -1115,25 +1115,30 @@ func (a *API) updateStatus(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var req struct{ Status string }
+	var req struct {
+		Status string `json:"status"`
+	}
 	if !decode(w, r, &req) {
 		return
 	}
-	allowed := map[string]bool{models.LoadStatusCancelled: true, models.LoadStatusInTransit: true, models.LoadStatusCompleted: true}
-	if !allowed[req.Status] {
+	req.Status = strings.TrimSpace(req.Status)
+	if !models.ValidCanonicalLoadStatus(req.Status) || req.Status == models.LoadStatusDraft || req.Status == models.LoadStatusPublished {
 		badRequest(w, "geçersiz durum")
 		return
 	}
 	p := current(r)
 	switch p.Role {
 	case models.RoleCustomer:
-		if req.Status != models.LoadStatusCancelled || l.CustomerID != p.ID || l.Status == models.LoadStatusCompleted || l.Status == models.LoadStatusCancelled {
+		if req.Status != models.LoadStatusCancelled || l.CustomerID != p.ID {
 			forbidden(w)
 			return
 		}
 	case models.RoleDriver:
-		validTransition := (req.Status == models.LoadStatusInTransit && l.Status == models.LoadStatusDriverSelected) || (req.Status == models.LoadStatusCompleted && l.Status == models.LoadStatusInTransit)
-		if l.AssignedDriver != p.ID || !validTransition {
+		if l.AssignedDriver != p.ID {
+			forbidden(w)
+			return
+		}
+		if req.Status == models.LoadStatusCancelled {
 			forbidden(w)
 			return
 		}
@@ -1142,21 +1147,33 @@ func (a *API) updateStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	from := l.Status
-	l.Status = req.Status
-	l.UpdatedAt = time.Now().UTC()
-	if e := a.store.SaveLoad(l); e != nil {
-		serverError(w, e)
+	if !models.CanTransition(from, req.Status) {
+		conflict(w, "geçersiz durum geçişi")
 		return
 	}
-	a.recordLoadStatus(l.ID, from, l.Status, p.ID, p.Role, "Durum mobil akıştan güncellendi", l.UpdatedAt)
+	l.Status = req.Status
+	l.UpdatedAt = time.Now().UTC()
+	source := models.LoadStatusSourceCustomerApp
+	if p.Role == models.RoleDriver {
+		source = models.LoadStatusSourceDriverApp
+	}
+	event := newLoadStatusEvent(l.ID, from, l.Status, p.ID, p.Role, source, "Durum mobil akıştan güncellendi", l.UpdatedAt)
+	if e := a.store.TransitionLoadStatus(from, l, event); e != nil {
+		writeLoadStatusError(w, e)
+		return
+	}
 	if l.AssignedDriver != "" {
 		if e := a.store.SaveConversation(a.conversationRecord(l)); e != nil {
 			log.Printf("conversation update after load status: %v", e)
 		}
 		statusText := map[string]string{
-			models.LoadStatusCancelled: "İlan iptal edildi.",
-			models.LoadStatusInTransit: "Nakliye işlemi başladı.",
-			models.LoadStatusCompleted: "Nakliye tamamlandı.",
+			models.LoadStatusDriverEnRoute:     "Şoför yola çıktı.",
+			models.LoadStatusAtPickup:          "Şoför yükleme noktasına ulaştı.",
+			models.LoadStatusPickedUp:          "Yük alındı.",
+			models.LoadStatusEnRouteToDelivery: "Yük teslim noktasına gidiyor.",
+			models.LoadStatusDelivered:         "Yük teslim edildi.",
+			models.LoadStatusCompleted:         "Nakliye tamamlandı.",
+			models.LoadStatusCancelled:         "İlan iptal edildi.",
 		}[l.Status]
 		if statusText != "" {
 			a.addSystemMessage(l, statusText)
@@ -1225,15 +1242,6 @@ func (a *API) createOffer(w http.ResponseWriter, r *http.Request) {
 		serverError(w, e)
 		return
 	}
-	if l.Status == models.LoadStatusPublished || l.Status == models.LoadStatusOpenLegacy {
-		from := l.Status
-		l.Status, l.UpdatedAt = models.LoadStatusOffersReceived, now
-		if e = a.store.SaveLoad(l); e != nil {
-			serverError(w, e)
-			return
-		}
-		a.recordLoadStatus(l.ID, from, l.Status, p.ID, p.Role, "İlk teklif alındı", l.UpdatedAt)
-	}
 	jsonResponse(w, 201, o)
 }
 func (a *API) offers(w http.ResponseWriter, r *http.Request) {
@@ -1285,6 +1293,10 @@ func (a *API) acceptOffer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	from := l.Status
+	if !models.CanTransition(from, models.LoadStatusDriverSelected) {
+		conflict(w, "ilan şoför seçimine uygun değil")
+		return
+	}
 	l.Status = models.LoadStatusDriverSelected
 	l.AssignedDriver = o.DriverID
 	l.AgreedPriceTL = o.AmountTL
@@ -1297,11 +1309,11 @@ func (a *API) acceptOffer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	conversation := a.conversationRecord(l)
-	if e = a.store.AcceptOffer(l, o, allOffers, conversation); e != nil {
-		serverError(w, e)
+	event := newLoadStatusEvent(l.ID, from, l.Status, p.ID, p.Role, models.LoadStatusSourceOfferAcceptance, "Teklif kabul edildi", l.UpdatedAt)
+	if e = a.store.AcceptOffer(l, o, allOffers, conversation, event); e != nil {
+		writeLoadStatusError(w, e)
 		return
 	}
-	a.recordLoadStatus(l.ID, from, l.Status, p.ID, p.Role, "Teklif kabul edildi", l.UpdatedAt)
 	a.addOfferMessage(l, o)
 	a.addSystemMessage(l, "Teklif kabul edildi.")
 	jsonResponse(w, 200, l)
@@ -1686,7 +1698,7 @@ func (a *API) conversations(w http.ResponseWriter, r *http.Request) {
 		if filter == "unread" && view.UnreadCount == 0 {
 			continue
 		}
-		if filter == "active" && load.Status != models.LoadStatusDriverSelected && load.Status != models.LoadStatusInTransit {
+		if filter == "active" && !models.IsActiveLoadStatus(load.Status) {
 			continue
 		}
 		if filter == "completed" && load.Status != models.LoadStatusCompleted {
@@ -2297,6 +2309,13 @@ func conflict(w http.ResponseWriter, message string) {
 func serverError(w http.ResponseWriter, e error) {
 	log.Printf("request_id=%s unexpected_api_error=%q", w.Header().Get("X-Request-ID"), e)
 	errorResponse(w, http.StatusInternalServerError, "INTERNAL_ERROR", "sunucu hatası", map[string]any{})
+}
+func writeLoadStatusError(w http.ResponseWriter, e error) {
+	if errors.Is(e, store.ErrLoadStatusConflict) || errors.Is(e, store.ErrInvalidLoadStatusTransition) {
+		conflict(w, "durum başka bir işlem tarafından değiştirildi veya geçiş artık geçerli değil")
+		return
+	}
+	serverError(w, e)
 }
 func errorResponse(w http.ResponseWriter, status int, code, message string, details map[string]any) {
 	if details == nil {

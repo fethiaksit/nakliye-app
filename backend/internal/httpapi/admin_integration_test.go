@@ -151,7 +151,7 @@ func TestAdminPanelManagementFlow(t *testing.T) {
 	detail = decodeResponse[struct {
 		StatusHistory []models.LoadStatusEvent `json:"statusHistory"`
 	}](t, loadDetail)
-	if loadDetail.Code != http.StatusOK || len(detail.StatusHistory) < 4 {
+	if loadDetail.Code != http.StatusOK || len(detail.StatusHistory) < 3 {
 		t.Fatalf("load history status=%d events=%d body=%s", loadDetail.Code, len(detail.StatusHistory), loadDetail.Body.String())
 	}
 

@@ -255,7 +255,9 @@ func dashboardCounts(users []models.User, loads []models.Load, complaints []mode
 			continue
 		}
 		switch load.Status {
-		case models.LoadStatusPublished, models.LoadStatusOffersReceived, models.LoadStatusDriverSelected, models.LoadStatusInTransit, models.LoadStatusOpenLegacy:
+		case models.LoadStatusPublished, models.LoadStatusDriverSelected, models.LoadStatusDriverEnRoute,
+			models.LoadStatusAtPickup, models.LoadStatusPickedUp, models.LoadStatusEnRouteToDelivery,
+			models.LoadStatusDelivered:
 			counts["activeLoads"]++
 		case models.LoadStatusCompleted:
 			counts["completedJobs"]++
@@ -611,9 +613,6 @@ func (a *API) adminLoad(w http.ResponseWriter, r *http.Request) {
 		serverError(w, err)
 		return
 	}
-	if len(history) == 0 {
-		history = []models.LoadStatusEvent{{ID: "legacy-" + load.ID, LoadID: load.ID, ToStatus: load.Status, ActorRole: "legacy", Note: "Geçmiş kaydı öncesinde oluşturuldu", CreatedAt: load.CreatedAt}}
-	}
 	offers, _ := a.store.ListOffers(load.ID, "")
 	response := map[string]any{"load": load, "statusHistory": history, "offers": a.offerViews(offers)}
 	if customer, getErr := a.store.GetUser(load.CustomerID); getErr == nil {
@@ -641,17 +640,25 @@ func (a *API) adminLoadStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	request.Status, request.Note = strings.TrimSpace(request.Status), strings.TrimSpace(request.Note)
-	if !models.ValidLoadStatus(request.Status) || request.Status == load.Status || request.Note == "" {
+	if !models.ValidCanonicalLoadStatus(request.Status) || request.Status == models.LoadStatusDraft || request.Status == models.LoadStatusPublished || request.Note == "" {
 		badRequest(w, "farklı ve geçerli durum ile işlem notu zorunludur")
 		return
 	}
 	from := load.Status
-	load.Status, load.UpdatedAt = request.Status, time.Now().UTC()
-	if err = a.store.SaveLoad(load); err != nil {
-		serverError(w, err)
+	if request.Status == models.LoadStatusDriverSelected && load.AssignedDriver == "" {
+		badRequest(w, "şoför atanmadan şoför seçildi durumuna geçilemez")
 		return
 	}
-	a.recordLoadStatus(load.ID, from, load.Status, currentAdmin(r).Email, models.RoleAdmin, request.Note, load.UpdatedAt)
+	if !models.CanTransition(from, request.Status) {
+		conflict(w, "geçersiz durum geçişi")
+		return
+	}
+	load.Status, load.UpdatedAt = request.Status, time.Now().UTC()
+	event := newLoadStatusEvent(load.ID, from, load.Status, currentAdmin(r).Email, models.RoleAdmin, models.LoadStatusSourceAdmin, request.Note, load.UpdatedAt)
+	if err = a.store.TransitionLoadStatus(from, load, event); err != nil {
+		writeLoadStatusError(w, err)
+		return
+	}
 	if load.AssignedDriver != "" {
 		_ = a.store.SaveConversation(a.conversationRecord(load))
 		a.addSystemMessage(load, "İlan durumu yönetim tarafından güncellendi: "+request.Note)
@@ -851,11 +858,16 @@ func (a *API) adminAudit(eventType string, r *http.Request, aggregateID string, 
 	}
 }
 
-func (a *API) recordLoadStatus(loadID, from, to, actorID, actorRole, note string, createdAt time.Time) {
-	event := models.LoadStatusEvent{
-		ID: uuid.NewString(), LoadID: loadID, FromStatus: from, ToStatus: to,
-		ActorID: actorID, ActorRole: actorRole, Note: note, CreatedAt: createdAt,
+func newLoadStatusEvent(loadID, from, to, actorID, actorRole, source, note string, changedAt time.Time) models.LoadStatusEvent {
+	return models.LoadStatusEvent{
+		ID: uuid.NewString(), LoadID: loadID, FromStatus: models.CanonicalLoadStatus(from), ToStatus: to,
+		ChangedAt: changedAt, ChangedByUserID: actorID, ChangedByRole: actorRole, Source: source, Note: note,
+		ActorID: actorID, ActorRole: actorRole, CreatedAt: changedAt,
 	}
+}
+
+func (a *API) recordLoadStatus(loadID, from, to, actorID, actorRole, source, note string, changedAt time.Time) {
+	event := newLoadStatusEvent(loadID, from, to, actorID, actorRole, source, note, changedAt)
 	if err := a.store.SaveLoadStatusEvent(event); err != nil {
 		log.Printf("load status history could not be persisted: %v", err)
 	}

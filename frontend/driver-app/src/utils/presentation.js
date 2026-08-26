@@ -1,5 +1,7 @@
 import { apiOrigin } from '../config/api';
 
+export { driverStatusAction, loadStatusLabel } from '../../../shared/loadStatus';
+
 export function toFiniteNumber(value, fallback = 0) {
   if (typeof value === 'number') return Number.isFinite(value) ? value : fallback;
   if (typeof value !== 'string') return fallback;
@@ -40,8 +42,4 @@ export function normalizeLoadPhotos(value) {
     photos.push({ id: String(typeof item === 'object' && item?.id || index) + ':' + url, url });
     return photos;
   }, []);
-}
-
-export function loadStatusLabel(status) {
-  return ({ draft: 'Taslak', published: 'Yayında', open: 'Yayında', offers_received: 'Teklif Geldi', driver_selected: 'Şoför Seçildi', in_transit: 'Yolda', completed: 'Tamamlandı', cancelled: 'İptal Edildi' })[status] || 'Bilinmiyor';
 }

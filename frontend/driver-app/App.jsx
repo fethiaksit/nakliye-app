@@ -12,7 +12,7 @@ import AuthFlow from './src/components/AuthFlow';
 import ConversationCenter from './src/components/ConversationCenter';
 import { nativeGoogleMapsConfigured, nativeGoogleMapsMessage } from './src/config/maps';
 import { DriverAccount, DriverJobs, DriverOffers } from './src/screens/DriverScreens';
-import { formatMoney, loadStatusLabel, resolveMediaUrl, toFiniteNumber } from './src/utils/presentation';
+import { driverStatusAction, formatMoney, loadStatusLabel, resolveMediaUrl, toFiniteNumber } from './src/utils/presentation';
 
 const navItems = [
   { value: 'jobs', label: 'İşler', icon: 'briefcase-outline', activeIcon: 'briefcase' },
@@ -202,7 +202,7 @@ function DriverApp() {
       await fetchOffers();
       setSelected(null);
       setConfirmation(null);
-      showToast(status === 'in_transit' ? 'Taşıma başlatıldı.' : 'Taşıma tamamlandı.', { type: 'success' });
+      showToast(driverStatusAction(load.status)?.successMessage || 'Operasyon durumu güncellendi.', { type: 'success' });
     } catch (error) {
       showToast(apiError(error), { type: 'error', title: 'Durum güncellenemedi' });
     } finally {
@@ -265,6 +265,7 @@ function DriverApp() {
         : <DriverAccount loading={accountLoading} error={accountError} account={account} form={accountForm} setForm={setAccountForm} save={saveAccount} saveLoading={accountSaving} changePassword={changePassword} passwordLoading={passwordSaving} logout={() => setConfirmation({ type: 'logout' })} retry={fetchAccount} />;
 
   const refresh = tab === 'jobs' ? fetchJobs : tab === 'offers' ? fetchOffers : tab === 'account' ? fetchAccount : undefined;
+  const confirmationAction = confirmation?.type === 'status' ? driverStatusAction(confirmation.target?.status) : null;
   return <View style={styles.screen}>
     <StatusBar style="light" />
     <AppHeader title="NakliyeGo" subtitle={tab === 'jobs' ? 'Şoför paneli' : tab === 'offers' ? 'Teklif yönetimi' : tab === 'messages' ? 'Mesajlar' : 'Hesabım'} initials={user.name?.split(' ').map(part => part[0]).join('').slice(0, 2).toUpperCase()} topInset={insets.top} />
@@ -272,9 +273,9 @@ function DriverApp() {
     <BottomNav items={navItems} value={tab} onChange={value => { setTab(value); if (value !== 'jobs') setSelected(null); }} bottomInset={insets.bottom} />
     <ConfirmationModal
       visible={Boolean(confirmation)}
-      title={confirmation?.type === 'withdraw' ? 'Teklifi geri çek' : confirmation?.type === 'status' ? confirmation.status === 'in_transit' ? 'Taşımayı başlat' : 'Taşımayı tamamla' : 'Hesaptan çıkış'}
-      message={confirmation?.type === 'withdraw' ? 'Teklif müşterinin ekranından kaldırılacak.' : confirmation?.type === 'status' ? confirmation.status === 'in_transit' ? 'Yükü teslim aldıysanız taşıma durumunu başlatabilirsiniz.' : 'Yük varış noktasına teslim edildiyse taşımayı tamamlayın.' : 'Hesabınızdan çıkış yapmak istediğinizden emin misiniz?'}
-      confirmLabel={confirmation?.type === 'withdraw' ? 'Geri çek' : confirmation?.type === 'status' ? confirmation.status === 'in_transit' ? 'Başlat' : 'Tamamla' : 'Çıkış yap'}
+      title={confirmation?.type === 'withdraw' ? 'Teklifi geri çek' : confirmationAction?.title || 'Hesaptan çıkış'}
+      message={confirmation?.type === 'withdraw' ? 'Teklif müşterinin ekranından kaldırılacak.' : confirmationAction?.message || 'Hesabınızdan çıkış yapmak istediğinizden emin misiniz?'}
+      confirmLabel={confirmation?.type === 'withdraw' ? 'Geri çek' : confirmationAction?.confirmLabel || 'Çıkış yap'}
       destructive={confirmation?.type !== 'status'}
       loading={confirmationLoading}
       onCancel={() => setConfirmation(null)}

@@ -12,7 +12,11 @@ import (
 	"nakliye-api/internal/models"
 )
 
-var ErrUserExists = errors.New("user already exists")
+var (
+	ErrUserExists                  = errors.New("user already exists")
+	ErrLoadStatusConflict          = errors.New("load status changed concurrently")
+	ErrInvalidLoadStatusTransition = errors.New("invalid load status transition")
+)
 
 type RedisStore struct {
 	client *redis.Client
@@ -59,7 +63,11 @@ func (s *RedisStore) GetLoad(id string) (models.Load, error) {
 	if err != nil {
 		return l, err
 	}
-	return l, json.Unmarshal(b, &l)
+	if err = json.Unmarshal(b, &l); err != nil {
+		return l, err
+	}
+	l.Status = models.CanonicalLoadStatus(l.Status)
+	return l, nil
 }
 func (s *RedisStore) ListOpenLoads() ([]models.Load, error) {
 	ids, err := s.client.ZRevRange(s.ctx, "loads", 0, -1).Result()
@@ -69,7 +77,7 @@ func (s *RedisStore) ListOpenLoads() ([]models.Load, error) {
 	loads := make([]models.Load, 0)
 	for _, id := range ids {
 		l, e := s.GetLoad(id)
-		if e == nil && l.Status == "open" && l.DeletedAt == nil {
+		if e == nil && l.Status == models.LoadStatusPublished && l.DeletedAt == nil {
 			loads = append(loads, l)
 		}
 	}
@@ -122,7 +130,7 @@ func (s *RedisStore) ListDriverLoads(driverID string, filter LoadFilter, offset,
 		if getErr != nil || load.DeletedAt != nil {
 			continue
 		}
-		offerable := load.Status == models.LoadStatusPublished || load.Status == models.LoadStatusOffersReceived || load.Status == models.LoadStatusOpenLegacy
+		offerable := load.Status == models.LoadStatusPublished
 		if !offerable && load.AssignedDriver != driverID {
 			continue
 		}
@@ -334,36 +342,96 @@ func (s *RedisStore) FindOfferByLoadDriver(loadID, driverID string) (models.Offe
 	}
 	return models.Offer{}, redis.Nil
 }
-func (s *RedisStore) AcceptOffer(load models.Load, accepted models.Offer, allOffers []models.Offer, conversation models.Conversation) error {
+func (s *RedisStore) AcceptOffer(load models.Load, accepted models.Offer, allOffers []models.Offer, conversation models.Conversation, event models.LoadStatusEvent) error {
+	event = normalizeLoadStatusEvent(event)
+	expected := models.CanonicalLoadStatus(event.FromStatus)
+	if load.ID == "" || accepted.ID == "" || event.LoadID != load.ID || load.Status != event.ToStatus || event.ChangedByUserID == "" || event.ChangedByRole == "" || event.Source == "" || event.ChangedAt.IsZero() ||
+		!models.CanTransition(expected, load.Status) {
+		return ErrInvalidLoadStatusTransition
+	}
 	loadBytes, err := json.Marshal(load)
 	if err != nil {
 		return err
 	}
-	pipe := s.client.TxPipeline()
-	pipe.Set(s.ctx, "load:"+load.ID, loadBytes, 0)
 	conversationBytes, err := json.Marshal(conversation)
 	if err != nil {
 		return err
 	}
-	// A load can have only one assigned driver. Persisting it under the load ID
-	// gives us the same unique (load, customer, driver) guarantee without a
-	// second source of truth.
-	pipe.Set(s.ctx, "conversation:"+conversation.ID, conversationBytes, 0)
-	for _, offer := range allOffers {
-		if offer.ID != accepted.ID && offer.Status == "pending" {
-			offer.Status = "rejected"
-			offer.UpdatedAt = accepted.UpdatedAt
-		}
-		if offer.ID == accepted.ID {
-			offer = accepted
-		}
-		body, marshalErr := json.Marshal(offer)
-		if marshalErr != nil {
-			return marshalErr
-		}
-		pipe.Set(s.ctx, "offer:"+offer.ID, body, 0)
+	eventBytes, err := json.Marshal(event)
+	if err != nil {
+		return err
 	}
-	_, err = pipe.Exec(s.ctx)
+	watchKeys := []string{"load:" + load.ID, "load-status-event:" + event.ID}
+	for _, offer := range allOffers {
+		watchKeys = append(watchKeys, "offer:"+offer.ID)
+	}
+	err = s.client.Watch(s.ctx, func(tx *redis.Tx) error {
+		storedLoadBytes, getErr := tx.Get(s.ctx, "load:"+load.ID).Bytes()
+		if getErr != nil {
+			return getErr
+		}
+		var storedLoad models.Load
+		if unmarshalErr := json.Unmarshal(storedLoadBytes, &storedLoad); unmarshalErr != nil {
+			return unmarshalErr
+		}
+		currentStatus := models.CanonicalLoadStatus(storedLoad.Status)
+		if currentStatus != expected {
+			return ErrLoadStatusConflict
+		}
+		if !models.CanTransition(currentStatus, load.Status) {
+			return ErrInvalidLoadStatusTransition
+		}
+		storedAcceptedBytes, getErr := tx.Get(s.ctx, "offer:"+accepted.ID).Bytes()
+		if getErr != nil {
+			return getErr
+		}
+		var storedAccepted models.Offer
+		if unmarshalErr := json.Unmarshal(storedAcceptedBytes, &storedAccepted); unmarshalErr != nil {
+			return unmarshalErr
+		}
+		if storedAccepted.Status != "pending" {
+			return ErrLoadStatusConflict
+		}
+
+		offerBodies := make(map[string][]byte, len(allOffers))
+		for _, listedOffer := range allOffers {
+			storedOfferBytes, offerErr := tx.Get(s.ctx, "offer:"+listedOffer.ID).Bytes()
+			if offerErr != nil {
+				return offerErr
+			}
+			var storedOffer models.Offer
+			if unmarshalErr := json.Unmarshal(storedOfferBytes, &storedOffer); unmarshalErr != nil {
+				return unmarshalErr
+			}
+			if storedOffer.ID == accepted.ID {
+				storedOffer = accepted
+			} else if storedOffer.Status == "pending" {
+				storedOffer.Status = "rejected"
+				storedOffer.UpdatedAt = accepted.UpdatedAt
+			}
+			offerBodies[storedOffer.ID], getErr = json.Marshal(storedOffer)
+			if getErr != nil {
+				return getErr
+			}
+		}
+
+		_, txErr := tx.TxPipelined(s.ctx, func(pipe redis.Pipeliner) error {
+			pipe.Set(s.ctx, "load:"+load.ID, loadBytes, 0)
+			// A load can have only one assigned driver. Persisting the
+			// conversation under the load ID preserves that invariant.
+			pipe.Set(s.ctx, "conversation:"+conversation.ID, conversationBytes, 0)
+			for offerID, body := range offerBodies {
+				pipe.Set(s.ctx, "offer:"+offerID, body, 0)
+			}
+			pipe.SetNX(s.ctx, "load-status-event:"+event.ID, eventBytes, 0)
+			pipe.ZAdd(s.ctx, "load-status-history:"+event.LoadID, redis.Z{Score: float64(event.ChangedAt.UnixMicro()), Member: event.ID})
+			return nil
+		})
+		return txErr
+	}, watchKeys...)
+	if errors.Is(err, redis.TxFailedErr) {
+		return ErrLoadStatusConflict
+	}
 	return err
 }
 func (s *RedisStore) SavePhoto(id string, data []byte, contentType string) error {

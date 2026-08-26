@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -61,6 +62,7 @@ func (s *RedisStore) ListAllLoads() ([]models.Load, error) {
 		}
 		var load models.Load
 		if json.Unmarshal(body, &load) == nil && load.ID != "" {
+			load.Status = models.CanonicalLoadStatus(load.Status)
 			loads = append(loads, load)
 		}
 	}
@@ -177,14 +179,89 @@ func (s *RedisStore) FindComplaint(messageID, reporterID string) (models.Message
 }
 
 func (s *RedisStore) SaveLoadStatusEvent(event models.LoadStatusEvent) error {
+	event = normalizeLoadStatusEvent(event)
+	if event.ID == "" || event.LoadID == "" || event.ToStatus == "" || event.ChangedAt.IsZero() ||
+		event.ChangedByUserID == "" || event.ChangedByRole == "" || event.Source == "" {
+		return ErrInvalidLoadStatusTransition
+	}
 	body, err := json.Marshal(event)
 	if err != nil {
 		return err
 	}
 	pipe := s.client.TxPipeline()
-	pipe.Set(s.ctx, "load-status-event:"+event.ID, body, 0)
-	pipe.ZAdd(s.ctx, "load-status-history:"+event.LoadID, redis.Z{Score: float64(event.CreatedAt.UnixMilli()), Member: event.ID})
+	pipe.SetNX(s.ctx, "load-status-event:"+event.ID, body, 0)
+	pipe.ZAdd(s.ctx, "load-status-history:"+event.LoadID, redis.Z{Score: float64(event.ChangedAt.UnixMicro()), Member: event.ID})
 	_, err = pipe.Exec(s.ctx)
+	return err
+}
+
+func normalizeLoadStatusEvent(event models.LoadStatusEvent) models.LoadStatusEvent {
+	if event.ChangedAt.IsZero() {
+		event.ChangedAt = event.CreatedAt
+	}
+	if event.ChangedByUserID == "" {
+		event.ChangedByUserID = event.ActorID
+	}
+	if event.ChangedByRole == "" {
+		event.ChangedByRole = event.ActorRole
+	}
+	// Response aliases are populated for existing clients. Canonical fields
+	// above are the persistence contract for all new records.
+	event.ActorID = event.ChangedByUserID
+	event.ActorRole = event.ChangedByRole
+	event.CreatedAt = event.ChangedAt
+	return event
+}
+
+func (s *RedisStore) TransitionLoadStatus(expectedStatus string, updated models.Load, event models.LoadStatusEvent) error {
+	expectedStatus = models.CanonicalLoadStatus(expectedStatus)
+	event = normalizeLoadStatusEvent(event)
+	if updated.ID == "" || event.LoadID != updated.ID || models.CanonicalLoadStatus(event.FromStatus) != expectedStatus ||
+		updated.Status != event.ToStatus || event.ChangedByUserID == "" || event.ChangedByRole == "" || event.Source == "" || event.ChangedAt.IsZero() || !models.CanTransition(expectedStatus, updated.Status) {
+		return ErrInvalidLoadStatusTransition
+	}
+	loadBody, err := json.Marshal(updated)
+	if err != nil {
+		return err
+	}
+	eventBody, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	loadKey := "load:" + updated.ID
+	eventKey := "load-status-event:" + event.ID
+	err = s.client.Watch(s.ctx, func(tx *redis.Tx) error {
+		storedBody, getErr := tx.Get(s.ctx, loadKey).Bytes()
+		if getErr != nil {
+			return getErr
+		}
+		var stored models.Load
+		if unmarshalErr := json.Unmarshal(storedBody, &stored); unmarshalErr != nil {
+			return unmarshalErr
+		}
+		currentStatus := models.CanonicalLoadStatus(stored.Status)
+		if currentStatus != expectedStatus {
+			return ErrLoadStatusConflict
+		}
+		if !models.CanTransition(currentStatus, updated.Status) {
+			return ErrInvalidLoadStatusTransition
+		}
+		if exists, existsErr := tx.Exists(s.ctx, eventKey).Result(); existsErr != nil {
+			return existsErr
+		} else if exists != 0 {
+			return ErrLoadStatusConflict
+		}
+		_, txErr := tx.TxPipelined(s.ctx, func(pipe redis.Pipeliner) error {
+			pipe.Set(s.ctx, loadKey, loadBody, 0)
+			pipe.Set(s.ctx, eventKey, eventBody, 0)
+			pipe.ZAdd(s.ctx, "load-status-history:"+updated.ID, redis.Z{Score: float64(event.ChangedAt.UnixMicro()), Member: event.ID})
+			return nil
+		})
+		return txErr
+	}, loadKey, eventKey)
+	if errors.Is(err, redis.TxFailedErr) {
+		return ErrLoadStatusConflict
+	}
 	return err
 }
 
@@ -201,9 +278,15 @@ func (s *RedisStore) ListLoadStatusHistory(loadID string) ([]models.LoadStatusEv
 		}
 		var event models.LoadStatusEvent
 		if json.Unmarshal(body, &event) == nil {
-			history = append(history, event)
+			history = append(history, normalizeLoadStatusEvent(event))
 		}
 	}
+	sort.SliceStable(history, func(i, j int) bool {
+		if history[i].ChangedAt.Equal(history[j].ChangedAt) {
+			return history[i].ID < history[j].ID
+		}
+		return history[i].ChangedAt.Before(history[j].ChangedAt)
+	})
 	return history, nil
 }
 

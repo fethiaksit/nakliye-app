@@ -2,6 +2,7 @@ import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { VEHICLE_TYPE_OPTIONS, cargoTypeLabel, formatListingTime, vehicleTypeLabel } from '../../../shared/loadMetadata';
+import { driverStatusAction, isOfferableLoadStatus } from '../../../shared/loadStatus';
 import Icon from '../../../shared/ui/Icon';
 import SearchableSelect from '../../../shared/ui/SearchableSelect';
 import { DetailRow, ListingCard, RouteTimeline, StatusBadge, SummaryCard } from '../../../shared/ui/listing';
@@ -40,6 +41,7 @@ export function DriverJobs({ loading, error, jobs, selected, form, setForm, form
     setForm(current => ({ ...current, [field]: value }));
     setFormErrors(current => ({ ...current, [field]: '' }));
   };
+  const statusAction = selected ? driverStatusAction(selected.status) : null;
   if (selected) return <View style={styles.detail}>
     <AppButton label="İşlere dön" icon="arrow-back" variant="ghost" compact fullWidth={false} onPress={onClose} style={styles.backButton} />
     <View style={styles.detailTitleRow}><View style={styles.detailTitleCopy}><Text style={styles.detailTitle}>{selected.title || 'Başlıksız ilan'}</Text><Text style={styles.detailCode}>İlan #{String(selected.id || '').slice(-8).toUpperCase()}</Text></View><StatusBadge status={selected.status} label={loadStatusLabel(selected.status)} /></View>
@@ -48,14 +50,14 @@ export function DriverJobs({ loading, error, jobs, selected, form, setForm, form
     <SectionCard title="Operasyon özeti" description="Yola çıkmadan önce tüm koşulları kontrol edin." icon="clipboard-outline"><OperationalDetails load={selected} /></SectionCard>
     <DriverRouteMap load={selected} />
     <View style={styles.pricePanel}><View><Text style={styles.priceLabel}>MÜŞTERİ TAHMİNİ FİYATI</Text><Text style={styles.priceValue}>{formatMoney(selected.basePriceTl || selected.agreedPriceTl)}</Text></View><View style={styles.priceMeta}><Icon name="navigate-outline" size={17} color={colors.primary} /><Text style={styles.priceMetaText}>{toFiniteNumber(selected.estimatedKm).toFixed(1)} km · {Math.round(toFiniteNumber(selected.routeDurationSeconds) / 60)} dk</Text></View></View>
-    {selected.status === 'driver_selected' || selected.status === 'in_transit' ? <SectionCard title="Aktif taşıma" description="Durumu yalnızca operasyon gerçekleştiğinde güncelleyin." icon="shield-checkmark-outline">
-      <AppButton label={selected.status === 'driver_selected' ? 'Taşımayı başlat' : 'Taşımayı tamamla'} icon={selected.status === 'driver_selected' ? 'play-circle-outline' : 'checkmark-done-circle-outline'} onPress={() => onStatus(selected, selected.status === 'driver_selected' ? 'in_transit' : 'completed')} />
-    </SectionCard> : <SectionCard title="Teklifiniz" description="Fiyatı, tahmini varış süresini ve notunuzu girin." icon="pricetag-outline">
+    {statusAction ? <SectionCard title="Aktif taşıma" description="Yalnızca gerçekleşen bir sonraki operasyon adımını kaydedin." icon="shield-checkmark-outline">
+      <AppButton label={statusAction.label} icon={statusAction.icon} onPress={() => onStatus(selected, statusAction.nextStatus)} />
+    </SectionCard> : isOfferableLoadStatus(selected.status) ? <SectionCard title="Teklifiniz" description="Fiyatı, tahmini varış süresini ve notunuzu girin." icon="pricetag-outline">
       <View style={styles.adjustRow}><AppButton label="−100 TL" variant="secondary" compact fullWidth={false} onPress={() => onAdjust(-100)} /><TextField containerStyle={styles.amountField} value={form.amount} onChangeText={value => setOfferField('amount', value)} keyboardType="decimal-pad" inputStyle={styles.amountInput} error={formErrors?.amount} /><AppButton label="+100 TL" variant="secondary" compact fullWidth={false} onPress={() => onAdjust(100)} /></View>
       <TextField label="Tahmini varış süresi" required value={form.eta} onChangeText={value => setOfferField('eta', value)} keyboardType="number-pad" placeholder="dakika" leftIcon="time-outline" error={formErrors?.eta} />
       <TextField label="Müşteriye not" value={form.note} onChangeText={value => setOfferField('note', value)} placeholder="Örn. Bugün taşıyabilirim." multiline maxLength={600} />
       <AppButton label={saving ? 'Teklif kaydediliyor' : 'Teklifi gönder'} icon="send-outline" loading={saving} onPress={onSaveOffer} style={styles.cardAction} />
-    </SectionCard>}
+    </SectionCard> : <SectionCard title="Operasyon durumu" description={loadStatusLabel(selected.status)} icon="information-circle-outline" />}
   </View>;
 
   return <>
