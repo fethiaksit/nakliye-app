@@ -15,6 +15,20 @@ function clampToMinimum(value, minimumDate) {
   return minimum && selected < minimum ? minimum : selected;
 }
 
+function pickerValueForOpen(mode, value, minimumDate, now = new Date()) {
+  const selected = asValidDate(value);
+  if (selected) return clampToMinimum(selected, minimumDate);
+  const fallback = asValidDate(now) || new Date();
+  if (mode === 'date') {
+    // Keep calendar-only values at local noon so UTC offsets and daylight
+    // saving changes cannot move the visible day across midnight.
+    fallback.setHours(12, 0, 0, 0);
+  } else {
+    fallback.setMinutes(fallback.getMinutes() + 60, 0, 0);
+  }
+  return clampToMinimum(fallback, minimumDate);
+}
+
 function sameInstant(left, right) {
   const leftDate = asValidDate(left);
   const rightDate = asValidDate(right);
@@ -29,4 +43,4 @@ function formatPickerValue(mode, value, locale = 'tr-TR') {
     : { hour: '2-digit', minute: '2-digit' }).format(date);
 }
 
-module.exports = { asValidDate, clampToMinimum, formatPickerValue, sameInstant };
+module.exports = { asValidDate, clampToMinimum, formatPickerValue, pickerValueForOpen, sameInstant };

@@ -6,13 +6,7 @@ import Icon from './Icon';
 import { AppButton } from './primitives';
 import { colors, control, radius, spacing, typography } from './theme';
 
-const { asValidDate, clampToMinimum, formatPickerValue } = require('./datePicker.cjs');
-
-function defaultPickerValue(minimumDate) {
-  const nextHour = new Date();
-  nextHour.setMinutes(nextHour.getMinutes() + 60, 0, 0);
-  return clampToMinimum(nextHour, minimumDate);
-}
+const { asValidDate, clampToMinimum, formatPickerValue, pickerValueForOpen } = require('./datePicker.cjs');
 
 export default function DatePickerField({
   label,
@@ -32,17 +26,17 @@ export default function DatePickerField({
   const selectedTimestamp = selectedValue?.getTime();
   const minimumTimestamp = minimumValue?.getTime();
   const initialValue = useMemo(
-    () => clampToMinimum(selectedValue || defaultPickerValue(minimumValue), minimumValue),
-    [minimumTimestamp, selectedTimestamp],
+    () => pickerValueForOpen(mode, selectedValue, minimumValue),
+    [minimumTimestamp, mode, selectedTimestamp],
   );
   const [visible, setVisible] = useState(false);
   const [draft, setDraft] = useState(initialValue);
 
   const openPicker = useCallback(() => {
     if (disabled) return;
-    setDraft(clampToMinimum(selectedValue || defaultPickerValue(minimumValue), minimumValue));
+    setDraft(pickerValueForOpen(mode, selectedValue, minimumValue));
     setVisible(true);
-  }, [disabled, minimumTimestamp, selectedTimestamp]);
+  }, [disabled, minimumTimestamp, mode, selectedTimestamp]);
 
   const closePicker = useCallback(() => setVisible(false), []);
 
@@ -103,24 +97,34 @@ export default function DatePickerField({
     >
       <View style={styles.overlay}>
         <View accessibilityElementsHidden pointerEvents="none" style={StyleSheet.absoluteFill} />
-        <View style={styles.sheet}>
-          <View style={styles.handle} />
+        <View style={[styles.sheet, styles.darkSheet]}>
+          <View style={[styles.handle, styles.darkHandle]} />
           <View style={styles.header}>
-            <Text style={styles.title}>{mode === 'date' ? 'Nakliye tarihini seçin' : 'Nakliye saatini seçin'}</Text>
+            <Text style={[styles.title, styles.darkTitle]}>{mode === 'date' ? 'Nakliye tarihini seçin' : 'Nakliye saatini seçin'}</Text>
           </View>
           <DateTimePicker
             value={draft}
             mode={mode}
-            display="spinner"
+            display={mode === 'date' ? 'inline' : 'spinner'}
             minimumDate={minimumValue || undefined}
             is24Hour
             locale="tr-TR"
+            themeVariant="dark"
+            accentColor="#55D6BE"
+            textColor={colors.white}
             onChange={handleIOSChange}
-            style={styles.picker}
+            style={[styles.picker, mode === 'date' ? styles.datePicker : styles.timePicker]}
             testID={`${testID || `date-picker-${mode}`}-native`}
           />
           <View style={styles.actions}>
-            <AppButton label="İptal" variant="outline" compact fullWidth={false} style={styles.action} onPress={closePicker} />
+            <TouchableOpacity
+              accessibilityRole="button"
+              activeOpacity={0.72}
+              onPress={closePicker}
+              style={[styles.cancelAction, styles.action]}
+            >
+              <Text style={styles.cancelActionText}>İptal</Text>
+            </TouchableOpacity>
             <AppButton label="Tamam" icon="checkmark" compact fullWidth={false} style={styles.action} onPress={confirmIOS} />
           </View>
         </View>
@@ -144,10 +148,17 @@ const styles = StyleSheet.create({
   helper: { ...typography.caption, color: colors.textSecondary, marginTop: spacing.xs },
   overlay: { backgroundColor: colors.overlay, flex: 1, justifyContent: 'flex-end' },
   sheet: { backgroundColor: colors.surface, borderTopLeftRadius: radius.xl, borderTopRightRadius: radius.xl, padding: spacing.md, paddingBottom: spacing.xxl },
+  darkSheet: { backgroundColor: '#0B1018' },
   handle: { alignSelf: 'center', backgroundColor: colors.borderStrong, borderRadius: radius.pill, height: 5, marginBottom: spacing.md, width: 44 },
+  darkHandle: { backgroundColor: '#506072' },
   header: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
   title: { ...typography.h2, color: colors.ink },
+  darkTitle: { color: colors.white },
   picker: { alignSelf: 'stretch' },
+  datePicker: { backgroundColor: '#0B1018', height: 340, width: '100%' },
+  timePicker: { backgroundColor: '#0B1018', height: 216, width: '100%' },
   actions: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md },
   action: { flex: 1 },
+  cancelAction: { alignItems: 'center', backgroundColor: '#172331', borderColor: '#344153', borderRadius: radius.sm, borderWidth: 1, height: 42, justifyContent: 'center' },
+  cancelActionText: { ...typography.button, color: '#E7EEF6' },
 });
