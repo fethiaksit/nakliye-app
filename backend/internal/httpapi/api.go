@@ -162,6 +162,7 @@ func (a *API) Routes() http.Handler {
 	mux.Handle("POST /api/conversations/{id}/attachments", a.auth(http.HandlerFunc(a.uploadConversationAttachment)))
 	mux.Handle("DELETE /api/messages/{id}", a.auth(http.HandlerFunc(a.deleteMessage)))
 	mux.Handle("POST /api/messages/{id}/complaints", a.auth(http.HandlerFunc(a.createMessageComplaint)))
+	mux.Handle("POST /api/loads/{id}/complaints", a.auth(http.HandlerFunc(a.createLoadComplaint)))
 	mux.Handle("GET /api/listings", a.auth(http.HandlerFunc(a.loads)))
 	mux.Handle("POST /api/listings", a.auth(http.HandlerFunc(a.createLoad)))
 	mux.Handle("GET /api/listings/{id}", a.auth(http.HandlerFunc(a.load)))

@@ -132,6 +132,8 @@ export const conversations = {
   send: (id, data) => client.post(`/api/conversations/${id}/messages`, data),
   read: (id, messageIds = []) => client.post(`/api/conversations/${id}/read`, { messageIds }),
   removeMessage: id => client.delete(`/api/messages/${id}`),
+  complainMessage: (id, data) => client.post(`/api/messages/${id}/complaints`, data),
+  complainLoad: (id, data) => client.post(`/api/loads/${id}/complaints`, data),
   attachment: (id, photo, onUploadProgress) => {
     const formData = new FormData();
     formData.append('photo', { uri: photo.uri, name: photo.fileName || `chat-${Date.now()}.jpg`, type: photo.mimeType || 'image/jpeg' });

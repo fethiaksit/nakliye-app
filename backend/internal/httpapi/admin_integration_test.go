@@ -119,29 +119,76 @@ func TestAdminPanelManagementFlow(t *testing.T) {
 		"type": "text", "body": "Şikâyete konu mesaj", "clientMessageId": "admin-complaint-message",
 	})
 	message := decodeResponse[models.Message](t, messageResponse)
+	if invalid := requestJSON(t, handler, http.MethodPost, "/api/messages/"+message.ID+"/complaints", customer.AccessToken, map[string]string{
+		"reason": "spam", "description": "Geçersiz neden",
+	}); invalid.Code != http.StatusBadRequest {
+		t.Fatalf("invalid complaint reason status=%d body=%s", invalid.Code, invalid.Body.String())
+	}
 	complaintResponse := requestJSON(t, handler, http.MethodPost, "/api/messages/"+message.ID+"/complaints", customer.AccessToken, map[string]string{
-		"reason": "inappropriate", "detail": "Uygunsuz içerik",
+		"reason": "behavior", "description": "Uygunsuz davranış",
 	})
 	if complaintResponse.Code != http.StatusCreated {
 		t.Fatalf("complaint status=%d body=%s", complaintResponse.Code, complaintResponse.Body.String())
 	}
 	complaint := decodeResponse[models.MessageComplaint](t, complaintResponse)
+	if complaint.Reason != "behavior" || complaint.ReporterID != customer.User.ID || complaint.ReportedUserID != driver.User.ID || complaint.LoadID != load.ID || complaint.ConversationID != load.ID || complaint.MessageID != message.ID {
+		t.Fatalf("complaint relations incorrect: %#v", complaint)
+	}
 
 	complaints := requestJSON(t, handler, http.MethodGet, "/api/admin/complaints?status=open", admin.AccessToken, nil)
 	var complaintsPage struct {
+		Items []struct {
+			Complaint models.MessageComplaint `json:"complaint"`
+		} `json:"items"`
 		Total int `json:"total"`
 	}
 	complaintsPage = decodeResponse[struct {
+		Items []struct {
+			Complaint models.MessageComplaint `json:"complaint"`
+		} `json:"items"`
 		Total int `json:"total"`
 	}](t, complaints)
-	if complaints.Code != http.StatusOK || complaintsPage.Total != 1 {
+	if complaints.Code != http.StatusOK || complaintsPage.Total != 1 || complaintsPage.Items[0].Complaint.ID != complaint.ID {
 		t.Fatalf("admin complaints status=%d total=%d body=%s", complaints.Code, complaintsPage.Total, complaints.Body.String())
 	}
+	if invalid := requestJSON(t, handler, http.MethodPatch, "/api/admin/complaints/"+complaint.ID, admin.AccessToken, map[string]string{"status": "dismissed", "adminNote": "Geçersiz"}); invalid.Code != http.StatusBadRequest {
+		t.Fatalf("invalid complaint status=%d body=%s", invalid.Code, invalid.Body.String())
+	}
+	reviewing := requestJSON(t, handler, http.MethodPatch, "/api/admin/complaints/"+complaint.ID, admin.AccessToken, map[string]string{
+		"status": models.ComplaintStatusReviewing, "adminNote": "İnceleme başladı",
+	})
+	if reviewing.Code != http.StatusOK || decodeResponse[struct {
+		Complaint models.MessageComplaint `json:"complaint"`
+	}](t, reviewing).Complaint.Status != models.ComplaintStatusReviewing {
+		t.Fatalf("review complaint status=%d body=%s", reviewing.Code, reviewing.Body.String())
+	}
 	resolved := requestJSON(t, handler, http.MethodPatch, "/api/admin/complaints/"+complaint.ID, admin.AccessToken, map[string]any{
-		"status": models.ComplaintStatusResolved, "resolutionNote": "İçerik kaldırıldı", "removeMessage": true,
+		"status": models.ComplaintStatusResolved, "adminNote": "İçerik kaldırıldı", "removeMessage": true,
 	})
 	if resolved.Code != http.StatusOK {
 		t.Fatalf("resolve complaint status=%d body=%s", resolved.Code, resolved.Body.String())
+	}
+	persisted := requestJSON(t, handler, http.MethodGet, "/api/admin/complaints/"+complaint.ID, admin.AccessToken, nil)
+	persistedComplaint := decodeResponse[struct {
+		Complaint models.MessageComplaint `json:"complaint"`
+	}](t, persisted).Complaint
+	if persistedComplaint.Status != models.ComplaintStatusResolved || persistedComplaint.ResolutionNote != "İçerik kaldırıldı" {
+		t.Fatalf("complaint resolution not persisted: %#v", persistedComplaint)
+	}
+	rejectedResponse := requestJSON(t, handler, http.MethodPost, "/api/loads/"+load.ID+"/complaints", driver.AccessToken, map[string]string{
+		"reason": "safety", "description": "Güvenlik riski",
+	})
+	rejectedComplaint := decodeResponse[models.MessageComplaint](t, rejectedResponse)
+	if rejectedResponse.Code != http.StatusCreated || rejectedComplaint.MessageID != "" || rejectedComplaint.ReportedUserID != customer.User.ID {
+		t.Fatalf("load complaint status=%d body=%s", rejectedResponse.Code, rejectedResponse.Body.String())
+	}
+	rejected := requestJSON(t, handler, http.MethodPatch, "/api/admin/complaints/"+rejectedComplaint.ID, admin.AccessToken, map[string]string{
+		"status": models.ComplaintStatusRejected, "adminNote": "Kanıt bulunamadı",
+	})
+	if rejected.Code != http.StatusOK || decodeResponse[struct {
+		Complaint models.MessageComplaint `json:"complaint"`
+	}](t, rejected).Complaint.Status != models.ComplaintStatusRejected {
+		t.Fatalf("reject complaint status=%d body=%s", rejected.Code, rejected.Body.String())
 	}
 
 	loadDetail := requestJSON(t, handler, http.MethodGet, "/api/admin/loads/"+load.ID, admin.AccessToken, nil)

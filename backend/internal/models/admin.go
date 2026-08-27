@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 const (
 	AccountStatusActive  = "active"
@@ -17,8 +20,10 @@ const (
 	ComplaintStatusOpen      = "open"
 	ComplaintStatusReviewing = "reviewing"
 	ComplaintStatusResolved  = "resolved"
-	ComplaintStatusDismissed = "dismissed"
+	ComplaintStatusRejected  = "rejected"
 )
+
+const complaintStatusDismissedLegacy = "dismissed"
 
 type DriverDocument struct {
 	ID         string     `json:"id"`
@@ -36,18 +41,48 @@ type DriverDocument struct {
 
 type MessageComplaint struct {
 	ID             string     `json:"id"`
-	MessageID      string     `json:"messageId"`
-	LoadID         string     `json:"loadId"`
-	ReporterID     string     `json:"reporterId"`
+	ReporterID     string     `json:"reporterUserId"`
 	ReportedUserID string     `json:"reportedUserId"`
+	LoadID         string     `json:"loadId"`
+	ConversationID string     `json:"conversationId"`
+	MessageID      string     `json:"messageId,omitempty"`
 	Reason         string     `json:"reason"`
-	Detail         string     `json:"detail,omitempty"`
+	Detail         string     `json:"description,omitempty"`
 	Status         string     `json:"status"`
-	ResolutionNote string     `json:"resolutionNote,omitempty"`
+	ResolutionNote string     `json:"adminNote,omitempty"`
 	CreatedAt      time.Time  `json:"createdAt"`
 	UpdatedAt      time.Time  `json:"updatedAt"`
 	ResolvedAt     *time.Time `json:"resolvedAt,omitempty"`
 	ResolvedBy     string     `json:"resolvedBy,omitempty"`
+}
+
+func (c *MessageComplaint) UnmarshalJSON(data []byte) error {
+	type complaintAlias MessageComplaint
+	value := struct {
+		*complaintAlias
+		LegacyReporterID     string `json:"reporterId"`
+		LegacyDetail         string `json:"detail"`
+		LegacyResolutionNote string `json:"resolutionNote"`
+	}{complaintAlias: (*complaintAlias)(c)}
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	if c.ReporterID == "" {
+		c.ReporterID = value.LegacyReporterID
+	}
+	if c.Detail == "" {
+		c.Detail = value.LegacyDetail
+	}
+	if c.ResolutionNote == "" {
+		c.ResolutionNote = value.LegacyResolutionNote
+	}
+	if c.ConversationID == "" {
+		c.ConversationID = c.LoadID
+	}
+	if c.Status == complaintStatusDismissedLegacy {
+		c.Status = ComplaintStatusRejected
+	}
+	return nil
 }
 
 type LoadStatusEvent struct {
@@ -87,7 +122,16 @@ func ValidVerificationStatus(status string) bool {
 
 func ValidComplaintStatus(status string) bool {
 	switch status {
-	case ComplaintStatusOpen, ComplaintStatusReviewing, ComplaintStatusResolved, ComplaintStatusDismissed:
+	case ComplaintStatusOpen, ComplaintStatusReviewing, ComplaintStatusResolved, ComplaintStatusRejected:
+		return true
+	default:
+		return false
+	}
+}
+
+func ValidComplaintReason(reason string) bool {
+	switch reason {
+	case "payment_dispute", "behavior", "damage", "no_show", "incorrect_load_info", "safety", "other":
 		return true
 	default:
 		return false

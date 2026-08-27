@@ -683,30 +683,52 @@ func (a *API) createMessageComplaint(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, "kendi mesajınız şikâyet edilemez")
 		return
 	}
-	if existing, findErr := a.store.FindComplaint(message.ID, principal.ID); findErr == nil {
-		conflict(w, "bu mesaj için zaten bir şikâyetiniz var: "+existing.ID)
+	a.createComplaint(w, r, load, message.ID, message.SenderID)
+}
+
+func (a *API) createLoadComplaint(w http.ResponseWriter, r *http.Request) {
+	load, err := a.store.GetLoad(r.PathValue("id"))
+	principal := current(r)
+	if err != nil || !a.canAccessMessageLoad(load, principal) {
+		forbidden(w)
+		return
+	}
+	reportedUserID := load.AssignedDriver
+	if principal.Role == models.RoleDriver {
+		reportedUserID = load.CustomerID
+	}
+	a.createComplaint(w, r, load, "", reportedUserID)
+}
+
+func (a *API) createComplaint(w http.ResponseWriter, r *http.Request, load models.Load, messageID, reportedUserID string) {
+	principal := current(r)
+	if existing, findErr := a.store.FindComplaint(messageID, load.ID, principal.ID); findErr == nil {
+		conflict(w, "bu kayıt için zaten bir şikâyetiniz var: "+existing.ID)
 		return
 	}
 	var request struct {
-		Reason string `json:"reason"`
-		Detail string `json:"detail"`
+		Reason      string `json:"reason"`
+		Description string `json:"description"`
+		Detail      string `json:"detail"`
 	}
 	if !decode(w, r, &request) {
 		return
 	}
-	request.Reason, request.Detail = strings.TrimSpace(request.Reason), strings.TrimSpace(request.Detail)
-	allowedReasons := map[string]bool{"harassment": true, "fraud": true, "spam": true, "inappropriate": true, "privacy": true, "other": true}
-	if !allowedReasons[request.Reason] || utf8.RuneCountInString(request.Detail) > 1000 || request.Reason == "other" && request.Detail == "" {
+	request.Reason, request.Description = strings.TrimSpace(request.Reason), strings.TrimSpace(request.Description)
+	if request.Description == "" {
+		request.Description = strings.TrimSpace(request.Detail)
+	}
+	if !models.ValidComplaintReason(request.Reason) || request.Description == "" || utf8.RuneCountInString(request.Description) > 1000 {
 		badRequest(w, "geçerli şikâyet nedeni ve en fazla 1000 karakter açıklama zorunludur")
 		return
 	}
 	now := time.Now().UTC()
 	complaint := models.MessageComplaint{
-		ID: uuid.NewString(), MessageID: message.ID, LoadID: message.LoadID, ReporterID: principal.ID,
-		ReportedUserID: message.SenderID, Reason: request.Reason, Detail: request.Detail,
+		ID: uuid.NewString(), MessageID: messageID, LoadID: load.ID, ConversationID: load.ID, ReporterID: principal.ID,
+		ReportedUserID: reportedUserID, Reason: request.Reason, Detail: request.Description,
 		Status: models.ComplaintStatusOpen, CreatedAt: now, UpdatedAt: now,
 	}
-	if err = a.store.SaveComplaint(complaint); err != nil {
+	if err := a.store.SaveComplaint(complaint); err != nil {
 		serverError(w, err)
 		return
 	}
@@ -721,6 +743,7 @@ func (a *API) complaintView(complaint models.MessageComplaint) map[string]any {
 	}
 	if load, err := a.store.GetLoad(complaint.LoadID); err == nil {
 		view["load"] = load
+		view["conversation"] = a.conversationRecord(load)
 	}
 	if reporter, err := a.store.GetUser(complaint.ReporterID); err == nil {
 		view["reporter"] = adminUserView(reporter)
@@ -773,25 +796,29 @@ func (a *API) adminUpdateComplaint(w http.ResponseWriter, r *http.Request) {
 	}
 	var request struct {
 		Status         string `json:"status"`
+		AdminNote      string `json:"adminNote"`
 		ResolutionNote string `json:"resolutionNote"`
 		RemoveMessage  bool   `json:"removeMessage"`
 	}
 	if !decode(w, r, &request) {
 		return
 	}
-	request.Status, request.ResolutionNote = strings.TrimSpace(request.Status), strings.TrimSpace(request.ResolutionNote)
-	if !models.ValidComplaintStatus(request.Status) || (request.Status == models.ComplaintStatusResolved || request.Status == models.ComplaintStatusDismissed) && request.ResolutionNote == "" {
+	request.Status, request.AdminNote = strings.TrimSpace(request.Status), strings.TrimSpace(request.AdminNote)
+	if request.AdminNote == "" {
+		request.AdminNote = strings.TrimSpace(request.ResolutionNote)
+	}
+	if !models.ValidComplaintStatus(request.Status) || (request.Status == models.ComplaintStatusResolved || request.Status == models.ComplaintStatusRejected) && request.AdminNote == "" {
 		badRequest(w, "geçerli şikâyet durumu ve kapanış notu zorunludur")
 		return
 	}
 	now := time.Now().UTC()
-	complaint.Status, complaint.ResolutionNote, complaint.UpdatedAt = request.Status, request.ResolutionNote, now
-	if request.Status == models.ComplaintStatusResolved || request.Status == models.ComplaintStatusDismissed {
+	complaint.Status, complaint.ResolutionNote, complaint.UpdatedAt = request.Status, request.AdminNote, now
+	if request.Status == models.ComplaintStatusResolved || request.Status == models.ComplaintStatusRejected {
 		complaint.ResolvedAt, complaint.ResolvedBy = &now, currentAdmin(r).Email
 	} else {
 		complaint.ResolvedAt, complaint.ResolvedBy = nil, ""
 	}
-	if request.RemoveMessage {
+	if request.RemoveMessage && complaint.MessageID != "" {
 		message, messageErr := a.store.GetMessage(complaint.MessageID)
 		if messageErr == nil && message.DeletedAt == nil {
 			if _, deleteErr := a.store.SoftDeleteMessage(complaint.LoadID, complaint.MessageID, "admin:"+currentAdmin(r).Email, now); deleteErr != nil {
@@ -804,7 +831,7 @@ func (a *API) adminUpdateComplaint(w http.ResponseWriter, r *http.Request) {
 		serverError(w, err)
 		return
 	}
-	a.adminAudit("complaint.updated", r, complaint.ID, map[string]any{"status": complaint.Status, "messageRemoved": request.RemoveMessage})
+	a.adminAudit("complaint.updated", r, complaint.ID, map[string]any{"status": complaint.Status, "adminNote": complaint.ResolutionNote, "messageRemoved": request.RemoveMessage})
 	jsonResponse(w, http.StatusOK, a.complaintView(complaint))
 }
 
