@@ -132,18 +132,26 @@ type User struct {
 }
 
 type DriverProfile struct {
-	VehicleType        string     `json:"vehicleType,omitempty"`
-	VehicleModel       string     `json:"vehicleModel,omitempty"`
-	LicensePlate       string     `json:"licensePlate,omitempty"`
-	CapacityKG         float64    `json:"capacityKg,omitempty"`
-	ServiceArea        string     `json:"serviceArea,omitempty"`
-	LicenseStatus      string     `json:"licenseStatus,omitempty"`
-	CompletedJobs      int        `json:"completedJobs"`
-	Rating             float64    `json:"rating"`
-	VerificationStatus string     `json:"verificationStatus,omitempty"`
-	VerificationNote   string     `json:"verificationNote,omitempty"`
-	VerifiedAt         *time.Time `json:"verifiedAt,omitempty"`
-	VerifiedBy         string     `json:"verifiedBy,omitempty"`
+	VehicleType             string     `json:"vehicleType,omitempty"`
+	VehicleModel            string     `json:"vehicleModel,omitempty"`
+	LicensePlate            string     `json:"licensePlate,omitempty"`
+	CapacityKG              float64    `json:"capacityKg,omitempty"`
+	ServiceArea             string     `json:"serviceArea,omitempty"`
+	LicenseStatus           string     `json:"licenseStatus,omitempty"`
+	CompletedJobs           int        `json:"completedJobs"`
+	Rating                  float64    `json:"rating"`
+	VerificationStatus      string     `json:"verificationStatus,omitempty"`
+	VerificationNote        string     `json:"verificationNote,omitempty"`
+	VerifiedAt              *time.Time `json:"verifiedAt,omitempty"`
+	VerifiedBy              string     `json:"verifiedBy,omitempty"`
+	NearbyLoadNotifications bool       `json:"nearbyLoadNotifications"`
+}
+
+type PushToken struct {
+	UserID        string    `json:"userId"`
+	ExpoPushToken string    `json:"expoPushToken"`
+	Platform      string    `json:"platform"`
+	UpdatedAt     time.Time `json:"updatedAt"`
 }
 
 type Vehicle struct {

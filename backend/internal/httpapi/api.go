@@ -30,6 +30,7 @@ import (
 type API struct {
 	store             *store.RedisStore
 	secret            []byte
+	push              PushSender
 	maps              mapsService
 	mapsKeyIssue      string
 	locationRate      *service.FixedWindowLimiter
@@ -62,6 +63,7 @@ type Options struct {
 	AdminPassword          string
 	AdminPasswordHash      string
 	AdminSecret            string
+	PushSender             PushSender
 }
 
 func New(s *store.RedisStore, secret string) *API {
@@ -79,9 +81,14 @@ func NewWithOptions(s *store.RedisStore, options Options) *API {
 	if options.MaxUploadMB <= 0 || options.MaxUploadMB > 50 {
 		options.MaxUploadMB = 10
 	}
+	pushSender := options.PushSender
+	if pushSender == nil {
+		pushSender = newExpoPushSender(s)
+	}
 	return &API{
 		store:             s,
 		secret:            []byte(options.Secret),
+		push:              pushSender,
 		maps:              service.NewGoogleMapsClient(options.GoogleMapsServerAPIKey, options.PricePerKM),
 		mapsKeyIssue:      options.MapsKeyError,
 		locationRate:      service.NewFixedWindowLimiter(60, time.Minute),
@@ -125,6 +132,8 @@ func (a *API) Routes() http.Handler {
 	mux.Handle("GET /api/me", a.auth(http.HandlerFunc(a.me)))
 	mux.Handle("PATCH /api/me", a.auth(http.HandlerFunc(a.updateMe)))
 	mux.Handle("PATCH /api/me/password", a.auth(http.HandlerFunc(a.updatePassword)))
+	mux.Handle("POST /api/push/token", a.auth(http.HandlerFunc(a.registerPushToken)))
+	mux.Handle("DELETE /api/push/token", a.auth(http.HandlerFunc(a.deletePushToken)))
 	mux.HandleFunc("GET /api/photos/{id}", a.photo)
 	mux.HandleFunc("GET /api/maps/status", a.mapStatus)
 	mux.Handle("GET /api/maps/places/autocomplete", a.auth(http.HandlerFunc(a.mapAutocomplete)))
@@ -1109,6 +1118,7 @@ func (a *API) publish(w http.ResponseWriter, r *http.Request) {
 		writeLoadStatusError(w, e)
 		return
 	}
+	a.pushNearbyLoad(l)
 	jsonResponse(w, 200, l)
 }
 func (a *API) updateStatus(w http.ResponseWriter, r *http.Request) {
@@ -1180,6 +1190,7 @@ func (a *API) updateStatus(w http.ResponseWriter, r *http.Request) {
 			a.addSystemMessage(l, statusText)
 		}
 	}
+	a.pushLoadStatus(l, p.ID)
 	jsonResponse(w, 200, l)
 }
 func (a *API) deleteLoad(w http.ResponseWriter, r *http.Request) {
@@ -1243,6 +1254,7 @@ func (a *API) createOffer(w http.ResponseWriter, r *http.Request) {
 		serverError(w, e)
 		return
 	}
+	a.sendPush(l.CustomerID, "Yeni teklif", "İlanınıza yeni bir şoför teklifi geldi.", map[string]string{"type": "offer", "loadId": l.ID, "screen": "load"})
 	jsonResponse(w, 201, o)
 }
 func (a *API) offers(w http.ResponseWriter, r *http.Request) {
@@ -1317,6 +1329,7 @@ func (a *API) acceptOffer(w http.ResponseWriter, r *http.Request) {
 	}
 	a.addOfferMessage(l, o)
 	a.addSystemMessage(l, "Teklif kabul edildi.")
+	a.sendPush(o.DriverID, "Teklifiniz kabul edildi", "İlan için teklifiniz kabul edildi.", map[string]string{"type": "driver_selected", "loadId": l.ID, "screen": "load"})
 	jsonResponse(w, 200, l)
 }
 func (a *API) updateOffer(w http.ResponseWriter, r *http.Request) {
@@ -1967,6 +1980,17 @@ func (a *API) sendMessage(w http.ResponseWriter, r *http.Request) {
 		a.updateConversationPreview(l, created)
 		if err := a.store.RecordDomainEvent("message.created", created.ID, created); err != nil {
 			log.Printf("message.created event not persisted: %v", err)
+		}
+		recipientID := l.CustomerID
+		if p.ID == l.CustomerID {
+			recipientID = l.AssignedDriver
+		}
+		if recipientID != "" && recipientID != p.ID {
+			senderName := "Yeni mesaj"
+			if sender, getErr := a.store.GetUser(p.ID); getErr == nil && strings.TrimSpace(sender.Name) != "" {
+				senderName = strings.TrimSpace(sender.Name)
+			}
+			a.sendPush(recipientID, "Yeni mesaj", senderName+": "+shortPushPreview(created), map[string]string{"type": "message", "loadId": l.ID, "conversationId": l.ID, "screen": "conversation"})
 		}
 	}
 	status := http.StatusCreated

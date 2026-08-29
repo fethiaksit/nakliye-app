@@ -7,7 +7,8 @@ import { ConfirmationModal, ToastProvider, useToast } from '../shared/ui/feedbac
 import { AppHeader, BottomNav } from '../shared/ui/navigation';
 import { ListSkeleton } from '../shared/ui/primitives';
 import { colors, control, spacing, typography } from '../shared/ui/theme';
-import { apiError, auth, conversations, loads, logApiError, maps, offers, profile, restoreSession, saveSession, subscribeSessionExpired, updateStoredUser } from './src/services/api';
+import { registerDevicePushToken, subscribeNotificationResponses, unregisterDevicePushToken } from '../shared/notifications';
+import { apiError, auth, conversations, loads, logApiError, maps, offers, profile, push, restoreSession, saveSession, subscribeSessionExpired, updateStoredUser } from './src/services/api';
 import AuthFlow from './src/components/AuthFlow';
 import ConversationCenter from './src/components/ConversationCenter';
 import { nativeGoogleMapsConfigured, nativeGoogleMapsMessage } from './src/config/maps';
@@ -47,10 +48,13 @@ function DriverApp() {
   const [accountError, setAccountError] = useState('');
   const [accountSaving, setAccountSaving] = useState(false);
   const [passwordSaving, setPasswordSaving] = useState(false);
-  const [accountForm, setAccountForm] = useState({ name: '', email: '', phone: '', vehicleType: '', vehicleModel: '', licensePlate: '', capacityKg: '', serviceArea: '', licenseStatus: '', currentPassword: '', newPassword: '' });
+  const [accountForm, setAccountForm] = useState({ name: '', email: '', phone: '', vehicleType: '', vehicleModel: '', licensePlate: '', capacityKg: '', serviceArea: '', licenseStatus: '', nearbyLoadNotifications: false, currentPassword: '', newPassword: '' });
   const [confirmation, setConfirmation] = useState(null);
   const [confirmationLoading, setConfirmationLoading] = useState(false);
   const jobsAbort = useRef(null);
+  const [notificationData, setNotificationData] = useState(null);
+  const [pendingConversationId, setPendingConversationId] = useState('');
+  const pushToken = useRef(null);
 
   useEffect(() => {
     let active = true;
@@ -75,6 +79,13 @@ function DriverApp() {
     resetDriverState();
     showToast('Oturumunuz sona erdi. Lütfen tekrar giriş yapın.', { type: 'warning' });
   }), [resetDriverState, showToast]);
+  useEffect(() => subscribeNotificationResponses(setNotificationData), []);
+  useEffect(() => {
+    if (!user) return undefined;
+    let active = true;
+    registerDevicePushToken(push).then(token => { if (active) pushToken.current = token; }).catch(error => logApiError('DRIVER PUSH REGISTER', error));
+    return () => { active = false; };
+  }, [user?.id]);
 
   const fetchJobs = useCallback(async () => {
     if (restoring || !user || user.role !== 'driver') return;
@@ -118,7 +129,7 @@ function DriverApp() {
       const { data } = await profile.get();
       const driver = data.driverProfile || {};
       setAccount(data);
-      setAccountForm(current => ({ ...current, name: data.name || '', email: data.email || '', phone: data.phone || '', vehicleType: driver.vehicleType || '', vehicleModel: driver.vehicleModel || '', licensePlate: driver.licensePlate || '', capacityKg: driver.capacityKg ? String(driver.capacityKg) : '', serviceArea: driver.serviceArea || '', licenseStatus: driver.licenseStatus || '' }));
+      setAccountForm(current => ({ ...current, name: data.name || '', email: data.email || '', phone: data.phone || '', vehicleType: driver.vehicleType || '', vehicleModel: driver.vehicleModel || '', licensePlate: driver.licensePlate || '', capacityKg: driver.capacityKg ? String(driver.capacityKg) : '', serviceArea: driver.serviceArea || '', licenseStatus: driver.licenseStatus || '', nearbyLoadNotifications: Boolean(driver.nearbyLoadNotifications) }));
     } catch (error) {
       setAccountError(apiError(error));
     } finally {
@@ -147,6 +158,20 @@ function DriverApp() {
       showToast(apiError(error), { type: 'error', title: 'İlan açılamadı' });
     }
   }, [openJob, showToast]);
+  useEffect(() => {
+    if (!user || !notificationData) return;
+    if (notificationData.screen === 'conversation') {
+      const conversationId = String(notificationData.conversationId || notificationData.loadId || '');
+      if (conversationId) {
+        setPendingConversationId(conversationId);
+        setTab('messages');
+      }
+    } else if (notificationData.screen === 'load' && notificationData.loadId) {
+      void openMessageLoad(String(notificationData.loadId));
+    }
+    setNotificationData(null);
+  }, [notificationData, openMessageLoad, user]);
+  const handleInitialConversation = useCallback(() => setPendingConversationId(''), []);
   const adjustOffer = useCallback(delta => {
     setOfferForm(current => ({ ...current, amount: String(Math.max(0, toFiniteNumber(current.amount) + delta)) }));
     setOfferErrors(current => ({ ...current, amount: '' }));
@@ -210,7 +235,7 @@ function DriverApp() {
     }
   }, [fetchJobs, fetchOffers, showToast]);
   const saveAccount = useCallback(async () => {
-    const driverProfile = { vehicleType: accountForm.vehicleType, vehicleModel: accountForm.vehicleModel, licensePlate: accountForm.licensePlate, capacityKg: toFiniteNumber(accountForm.capacityKg), serviceArea: accountForm.serviceArea, licenseStatus: accountForm.licenseStatus };
+    const driverProfile = { vehicleType: accountForm.vehicleType, vehicleModel: accountForm.vehicleModel, licensePlate: accountForm.licensePlate, capacityKg: toFiniteNumber(accountForm.capacityKg), serviceArea: accountForm.serviceArea, licenseStatus: accountForm.licenseStatus, nearbyLoadNotifications: accountForm.nearbyLoadNotifications };
     setAccountSaving(true);
     try {
       const { data } = await profile.update({ name: accountForm.name, email: accountForm.email, phone: accountForm.phone, driverProfile });
@@ -243,6 +268,8 @@ function DriverApp() {
   const performLogout = useCallback(async () => {
     setConfirmationLoading(true);
     try {
+      await unregisterDevicePushToken(push, pushToken.current).catch(error => logApiError('DRIVER PUSH UNREGISTER', error));
+      pushToken.current = null;
       await auth.logout();
     } catch (error) {
       logApiError('DRIVER LOGOUT', error);
@@ -261,7 +288,7 @@ function DriverApp() {
     : tab === 'offers'
       ? <DriverOffers loading={myOffersLoading} error={offersError} items={myOffers} onOpen={(load, offer) => { setTab('jobs'); openJob(load, offer); }} onWithdraw={offer => setConfirmation({ type: 'withdraw', target: offer })} retry={fetchOffers} />
       : tab === 'messages'
-        ? <ConversationCenter currentUser={user} api={conversations} apiError={apiError} resolveMediaUrl={resolveMediaUrl} formatMoney={formatMoney} loadStatusLabel={loadStatusLabel} onOpenLoad={openMessageLoad} reverseGeocode={maps.reverse} nativeMapsConfigured={nativeGoogleMapsConfigured} nativeMapsMessage={nativeGoogleMapsMessage} bottomInset={control.bottomNavHeight + insets.bottom} />
+        ? <ConversationCenter currentUser={user} api={conversations} apiError={apiError} resolveMediaUrl={resolveMediaUrl} formatMoney={formatMoney} loadStatusLabel={loadStatusLabel} onOpenLoad={openMessageLoad} initialConversationId={pendingConversationId} onInitialConversationHandled={handleInitialConversation} reverseGeocode={maps.reverse} nativeMapsConfigured={nativeGoogleMapsConfigured} nativeMapsMessage={nativeGoogleMapsMessage} bottomInset={control.bottomNavHeight + insets.bottom} />
         : <DriverAccount loading={accountLoading} error={accountError} account={account} form={accountForm} setForm={setAccountForm} save={saveAccount} saveLoading={accountSaving} changePassword={changePassword} passwordLoading={passwordSaving} logout={() => setConfirmation({ type: 'logout' })} retry={fetchAccount} />;
 
   const refresh = tab === 'jobs' ? fetchJobs : tab === 'offers' ? fetchOffers : tab === 'account' ? fetchAccount : undefined;

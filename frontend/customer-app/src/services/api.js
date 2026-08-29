@@ -141,6 +141,7 @@ export const conversations = {
   },
 };
 export const profile = { get: () => client.get('/api/me'), update: data => client.patch('/api/me', data), changePassword: data => client.patch('/api/me/password', data) };
+export const push = { register: (token, platform) => client.post('/api/push/token', { token, platform }), unregister: token => client.delete('/api/push/token', { data: { token } }) };
 const responseErrorMessage = data => {
   const error = data?.error;
   if (typeof error === 'string') return error;

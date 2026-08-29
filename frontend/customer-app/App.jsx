@@ -7,7 +7,8 @@ import { colors, control, spacing, typography } from '../shared/ui/theme';
 import { ConfirmationModal, ToastProvider, useToast } from '../shared/ui/feedback';
 import { AppHeader, BottomNav } from '../shared/ui/navigation';
 import { InlineNotice, ListSkeleton } from '../shared/ui/primitives';
-import { apiError, auth, checkApiHealth, conversations, loads, logApiError, maps, offers, profile, restoreSession, saveSession, subscribeSessionExpired, updateStoredUser } from './src/services/api';
+import { registerDevicePushToken, subscribeNotificationResponses, unregisterDevicePushToken } from '../shared/notifications';
+import { apiError, auth, checkApiHealth, conversations, loads, logApiError, maps, offers, profile, push, restoreSession, saveSession, subscribeSessionExpired, updateStoredUser } from './src/services/api';
 import { apiOrigin, healthUrl } from './src/config/api';
 import AuthFlow from './src/components/AuthFlow';
 import ConversationCenter from './src/components/ConversationCenter';
@@ -78,6 +79,9 @@ function CustomerApp() {
   const [accountForm, setAccountForm] = useState({ name: '', email: '', phone: '', currentPassword: '', newPassword: '' });
   const [confirmation, setConfirmation] = useState(null);
   const [confirmationLoading, setConfirmationLoading] = useState(false);
+  const [notificationData, setNotificationData] = useState(null);
+  const [pendingConversationId, setPendingConversationId] = useState('');
+  const pushToken = useRef(null);
 
   useEffect(() => {
     let active = true;
@@ -90,6 +94,13 @@ function CustomerApp() {
     setSelectedLoad(null);
     showToast('Oturumunuz sona erdi. Lütfen tekrar giriş yapın.', { type: 'warning' });
   }), [showToast]);
+  useEffect(() => subscribeNotificationResponses(setNotificationData), []);
+  useEffect(() => {
+    if (!user) return undefined;
+    let active = true;
+    registerDevicePushToken(push).then(token => { if (active) pushToken.current = token; }).catch(error => logApiError('CUSTOMER PUSH REGISTER', error));
+    return () => { active = false; };
+  }, [user?.id]);
 
   const fetchLoads = useCallback(async () => {
     setLoadsLoading(true);
@@ -208,6 +219,20 @@ function CustomerApp() {
       showToast(apiError(error), { type: 'error', title: 'İlan açılamadı' });
     }
   }, [openLoad, showToast]);
+  useEffect(() => {
+    if (!user || !notificationData) return;
+    if (notificationData.screen === 'conversation') {
+      const conversationId = String(notificationData.conversationId || notificationData.loadId || '');
+      if (conversationId) {
+        setPendingConversationId(conversationId);
+        setTab('messages');
+      }
+    } else if (notificationData.screen === 'load' && notificationData.loadId) {
+      void openMessageLoad(String(notificationData.loadId));
+    }
+    setNotificationData(null);
+  }, [notificationData, openMessageLoad, user]);
+  const handleInitialConversation = useCallback(() => setPendingConversationId(''), []);
   const performAcceptOffer = useCallback(async offer => {
     setConfirmationLoading(true);
     try {
@@ -269,6 +294,8 @@ function CustomerApp() {
   const performLogout = useCallback(async () => {
     setConfirmationLoading(true);
     try {
+      await unregisterDevicePushToken(push, pushToken.current).catch(error => logApiError('CUSTOMER PUSH UNREGISTER', error));
+      pushToken.current = null;
       await auth.logout();
     } catch (error) {
       logApiError('CUSTOMER LOGOUT', error);
@@ -289,7 +316,7 @@ function CustomerApp() {
     : tab === 'loads'
       ? <CustomerLoads loading={loadsLoading} error={loadsError} items={myLoads} selected={selectedLoad} offers={loadOffers} offersLoading={offersLoading} onOpen={openLoad} onClose={() => setSelectedLoad(null)} onAccept={offer => setConfirmation({ type: 'accept', target: offer })} onCancel={load => setConfirmation({ type: 'cancel', target: load })} retry={fetchLoads} />
       : tab === 'messages'
-        ? <ConversationCenter currentUser={user} api={conversations} apiError={apiError} resolveMediaUrl={resolveMediaUrl} formatMoney={formatMoney} loadStatusLabel={loadStatusLabel} onOpenLoad={openMessageLoad} reverseGeocode={maps.reverse} nativeMapsConfigured={nativeGoogleMapsConfigured} nativeMapsMessage={nativeGoogleMapsMessage} bottomInset={control.bottomNavHeight + insets.bottom} />
+        ? <ConversationCenter currentUser={user} api={conversations} apiError={apiError} resolveMediaUrl={resolveMediaUrl} formatMoney={formatMoney} loadStatusLabel={loadStatusLabel} onOpenLoad={openMessageLoad} initialConversationId={pendingConversationId} onInitialConversationHandled={handleInitialConversation} reverseGeocode={maps.reverse} nativeMapsConfigured={nativeGoogleMapsConfigured} nativeMapsMessage={nativeGoogleMapsMessage} bottomInset={control.bottomNavHeight + insets.bottom} />
         : <CustomerAccount loading={accountLoading} error={accountError} account={account} form={accountForm} setForm={setAccountForm} save={saveAccount} saveLoading={accountSaving} changePassword={changePassword} passwordLoading={passwordSaving} logout={() => setConfirmation({ type: 'logout' })} retry={fetchAccount} />;
 
   const refresh = tab === 'home' || tab === 'loads' ? fetchLoads : tab === 'account' ? fetchAccount : undefined;

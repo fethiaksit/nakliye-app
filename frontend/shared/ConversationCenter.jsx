@@ -112,7 +112,7 @@ function MessageContent({ item, mine, formatMoney, resolveMediaUrl, onPreviewIma
   return <Text style={[styles.textMessage, mine && { color: colors.white }]}>{item.body}</Text>;
 }
 
-export default function ConversationCenter({ currentUser, api, apiError, resolveMediaUrl, formatMoney, loadStatusLabel, onOpenLoad, reverseGeocode, nativeMapsConfigured = true, nativeMapsMessage = 'Google haritası yüklenemedi. Harita anahtarı ve uygulama yapılandırmasını kontrol edin.', bottomInset = 0 }) {
+export default function ConversationCenter({ currentUser, api, apiError, resolveMediaUrl, formatMoney, loadStatusLabel, onOpenLoad, initialConversationId, onInitialConversationHandled, reverseGeocode, nativeMapsConfigured = true, nativeMapsMessage = 'Google haritası yüklenemedi. Harita anahtarı ve uygulama yapılandırmasını kontrol edin.', bottomInset = 0 }) {
   const { showToast } = useToast();
   const [items, setItems] = useState([]);
 	const [totalUnread, setTotalUnread] = useState(0);
@@ -153,6 +153,7 @@ export default function ConversationCenter({ currentUser, api, apiError, resolve
   const chatRef = useRef(null);
   const composerInputRef = useRef(null);
   const atBottomRef = useRef(true);
+  const openedInitialConversation = useRef('');
   const selectedID = active?.id || active?.loadId;
 
   const loadConversations = useCallback(async (showSpinner = false, searchOverride = query) => {
@@ -241,6 +242,12 @@ export default function ConversationCenter({ currentUser, api, apiError, resolve
       setChatError(apiError(error));
     }
   }, [api, apiError]);
+
+  useEffect(() => {
+    if (!initialConversationId || openedInitialConversation.current === initialConversationId) return;
+    openedInitialConversation.current = initialConversationId;
+    void openConversation({ id: initialConversationId, loadId: initialConversationId }).finally(() => onInitialConversationHandled?.());
+  }, [initialConversationId, onInitialConversationHandled, openConversation]);
 
   const scrollToBottom = useCallback(() => {
     atBottomRef.current = true;
