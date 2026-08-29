@@ -40,6 +40,7 @@ function DriverApp() {
   const [offerForm, setOfferForm] = useState({ amount: '', note: '', eta: '45' });
   const [offerErrors, setOfferErrors] = useState({});
   const [offerSaving, setOfferSaving] = useState(false);
+  const [deliverySaving, setDeliverySaving] = useState(false);
   const [myOffers, setMyOffers] = useState([]);
   const [myOffersLoading, setMyOffersLoading] = useState(false);
   const [offersError, setOffersError] = useState('');
@@ -234,6 +235,20 @@ function DriverApp() {
       setConfirmationLoading(false);
     }
   }, [fetchJobs, fetchOffers, showToast]);
+  const performCompleteDelivery = useCallback(async (load, proof) => {
+    setDeliverySaving(true);
+    try {
+      await loads.completeDelivery(load.id, proof);
+      await fetchJobs();
+      await fetchOffers();
+      setSelected(null);
+      showToast('Teslimat kodu ve fotoğraf doğrulandı. İş tamamlandı.', { type: 'success' });
+    } catch (error) {
+      showToast(apiError(error), { type: 'error', title: 'Teslimat tamamlanamadı' });
+    } finally {
+      setDeliverySaving(false);
+    }
+  }, [fetchJobs, fetchOffers, showToast]);
   const saveAccount = useCallback(async () => {
     const driverProfile = { vehicleType: accountForm.vehicleType, vehicleModel: accountForm.vehicleModel, licensePlate: accountForm.licensePlate, capacityKg: toFiniteNumber(accountForm.capacityKg), serviceArea: accountForm.serviceArea, licenseStatus: accountForm.licenseStatus, nearbyLoadNotifications: accountForm.nearbyLoadNotifications };
     setAccountSaving(true);
@@ -284,7 +299,7 @@ function DriverApp() {
   if (!user) return <AuthFlow auth={auth} saveSession={saveSession} apiError={apiError} onSession={setUser} allowedRole="driver" />;
 
   const body = tab === 'jobs'
-    ? <DriverJobs loading={jobsLoading} error={jobsError} jobs={jobs} selected={selected} form={offerForm} setForm={setOfferForm} formErrors={offerErrors} setFormErrors={setOfferErrors} saving={offerSaving} onOpen={openJob} onClose={() => setSelected(null)} onAdjust={adjustOffer} onSaveOffer={saveOffer} onStatus={(load, status) => setConfirmation({ type: 'status', target: load, status })} retry={fetchJobs} onShowOffers={() => setTab('offers')} />
+    ? <DriverJobs loading={jobsLoading} error={jobsError} jobs={jobs} selected={selected} form={offerForm} setForm={setOfferForm} formErrors={offerErrors} setFormErrors={setOfferErrors} saving={offerSaving} deliverySaving={deliverySaving} onOpen={openJob} onClose={() => setSelected(null)} onAdjust={adjustOffer} onSaveOffer={saveOffer} onStatus={(load, status) => setConfirmation({ type: 'status', target: load, status })} onCompleteDelivery={performCompleteDelivery} retry={fetchJobs} onShowOffers={() => setTab('offers')} />
     : tab === 'offers'
       ? <DriverOffers loading={myOffersLoading} error={offersError} items={myOffers} onOpen={(load, offer) => { setTab('jobs'); openJob(load, offer); }} onWithdraw={offer => setConfirmation({ type: 'withdraw', target: offer })} retry={fetchOffers} />
       : tab === 'messages'

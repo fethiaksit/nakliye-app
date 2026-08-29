@@ -14,7 +14,7 @@ export async function registerDevicePushToken(api) {
   let permission = await Notifications.getPermissionsAsync();
   if (permission.status === 'undetermined') permission = await Notifications.requestPermissionsAsync();
   if (permission.status !== 'granted') return null;
-  const projectId = Constants.easConfig?.projectId || Constants.expoConfig?.extra?.eas?.projectId || process.env.EXPO_PUBLIC_EAS_PROJECT_ID;
+  const projectId = Constants.easConfig?.projectId || Constants.expoConfig?.extra?.eas?.projectId;
   const token = (await Notifications.getExpoPushTokenAsync(projectId ? { projectId } : undefined)).data;
   await api.register(token, Platform.OS);
   return token;

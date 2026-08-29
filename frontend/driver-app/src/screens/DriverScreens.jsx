@@ -1,5 +1,6 @@
-import React from 'react';
-import { Pressable, StyleSheet, Switch, Text, View } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { Image, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
 
 import { VEHICLE_TYPE_OPTIONS, cargoTypeLabel, formatListingTime, vehicleTypeLabel } from '../../../shared/loadMetadata';
 import { driverStatusAction, isOfferableLoadStatus } from '../../../shared/loadStatus';
@@ -28,6 +29,70 @@ function OperationalDetails({ load }) {
   </>;
 }
 
+function DeliveryCompletionCard({ load, saving, onComplete }) {
+  const [code, setCode] = useState('');
+  const [photo, setPhoto] = useState(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    setCode('');
+    setPhoto(null);
+    setError('');
+  }, [load.id]);
+
+  const choosePhoto = async source => {
+    setError('');
+    try {
+      const permission = source === 'camera'
+        ? await ImagePicker.requestCameraPermissionsAsync()
+        : await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        setError(source === 'camera' ? 'Kamera izni verilmedi.' : 'Galeri izni verilmedi.');
+        return;
+      }
+      const result = source === 'camera'
+        ? await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.8 })
+        : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.8 });
+      if (result.canceled) return;
+      const selectedPhoto = result.assets?.[0];
+      if (!selectedPhoto?.uri || (selectedPhoto.mimeType && !['image/jpeg', 'image/png', 'image/webp'].includes(selectedPhoto.mimeType))) {
+        setError('Yalnızca JPEG, PNG veya WEBP fotoğraf seçilebilir.');
+        return;
+      }
+      setPhoto(selectedPhoto);
+    } catch (selectionError) {
+      if (__DEV__) console.warn('[DELIVERY PHOTO] Selection failed.', { code: selectionError?.code, message: selectionError?.message });
+      setError('Fotoğraf seçilirken bir hata oluştu.');
+    }
+  };
+
+  const submit = () => {
+    const normalizedCode = code.trim();
+    if (!/^\d{4,6}$/.test(normalizedCode)) {
+      setError('Müşterinin 4–6 haneli teslimat kodunu girin.');
+      return;
+    }
+    if (!photo) {
+      setError('Teslimat fotoğrafı zorunludur.');
+      return;
+    }
+    setError('');
+    onComplete(load, { code: normalizedCode, photo });
+  };
+
+  return <SectionCard title="Teslimatı tamamla" description="Müşterinin kodunu doğrulayın ve teslimat fotoğrafını ekleyin." icon="shield-checkmark-outline">
+    <TextField label="Teslimat kodu" required value={code} onChangeText={value => { setCode(value.replace(/\D/g, '').slice(0, 6)); setError(''); }} keyboardType="number-pad" maxLength={6} placeholder="6 haneli kod" leftIcon="keypad-outline" />
+    <View style={styles.deliveryPhotoActions}>
+      <AppButton label="Galeriden seç" icon="images-outline" variant="secondary" compact fullWidth={false} style={styles.deliveryPhotoAction} onPress={() => choosePhoto('library')} />
+      <AppButton label="Fotoğraf çek" icon="camera-outline" variant="secondary" compact fullWidth={false} style={styles.deliveryPhotoAction} onPress={() => choosePhoto('camera')} />
+    </View>
+    {photo ? <View style={styles.deliveryPhotoPreviewWrap}><Image source={{ uri: photo.uri }} style={styles.deliveryPhotoPreview} /><Pressable accessibilityLabel="Teslimat fotoğrafını kaldır" style={styles.deliveryPhotoRemove} onPress={() => setPhoto(null)}><Icon name="close" size={17} color={colors.white} /></Pressable></View> : null}
+    {error ? <Text style={styles.deliveryError}>{error}</Text> : null}
+    <Text style={styles.deliveryHint}>Kod ve fotoğraf backend tarafından birlikte doğrulanır.</Text>
+    <AppButton label={saving ? 'Teslimat doğrulanıyor' : 'Teslimatı Tamamla'} icon="checkmark-done-outline" loading={saving} onPress={submit} style={styles.cardAction} />
+  </SectionCard>;
+}
+
 function DriverHero({ jobs, onShowOffers }) {
   const averagePrice = jobs.length ? jobs.reduce((total, load) => total + toFiniteNumber(load.basePriceTl || load.agreedPriceTl), 0) / jobs.length : 0;
   return <>
@@ -36,7 +101,7 @@ function DriverHero({ jobs, onShowOffers }) {
   </>;
 }
 
-export function DriverJobs({ loading, error, jobs, selected, form, setForm, formErrors, setFormErrors, saving, onOpen, onClose, onAdjust, onSaveOffer, onStatus, retry, onShowOffers }) {
+export function DriverJobs({ loading, error, jobs, selected, form, setForm, formErrors, setFormErrors, saving, deliverySaving, onOpen, onClose, onAdjust, onSaveOffer, onStatus, onCompleteDelivery, retry, onShowOffers }) {
   const setOfferField = (field, value) => {
     setForm(current => ({ ...current, [field]: value }));
     setFormErrors(current => ({ ...current, [field]: '' }));
@@ -50,7 +115,7 @@ export function DriverJobs({ loading, error, jobs, selected, form, setForm, form
     <SectionCard title="Operasyon özeti" description="Yola çıkmadan önce tüm koşulları kontrol edin." icon="clipboard-outline"><OperationalDetails load={selected} /></SectionCard>
     <DriverRouteMap load={selected} />
     <View style={styles.pricePanel}><View><Text style={styles.priceLabel}>MÜŞTERİ TAHMİNİ FİYATI</Text><Text style={styles.priceValue}>{formatMoney(selected.basePriceTl || selected.agreedPriceTl)}</Text></View><View style={styles.priceMeta}><Icon name="navigate-outline" size={17} color={colors.primary} /><Text style={styles.priceMetaText}>{toFiniteNumber(selected.estimatedKm).toFixed(1)} km · {Math.round(toFiniteNumber(selected.routeDurationSeconds) / 60)} dk</Text></View></View>
-    {statusAction ? <SectionCard title="Aktif taşıma" description="Yalnızca gerçekleşen bir sonraki operasyon adımını kaydedin." icon="shield-checkmark-outline">
+    {statusAction?.nextStatus === 'completed' ? <DeliveryCompletionCard load={selected} saving={deliverySaving} onComplete={onCompleteDelivery} /> : statusAction ? <SectionCard title="Aktif taşıma" description="Yalnızca gerçekleşen bir sonraki operasyon adımını kaydedin." icon="shield-checkmark-outline">
       <AppButton label={statusAction.label} icon={statusAction.icon} onPress={() => onStatus(selected, statusAction.nextStatus)} />
     </SectionCard> : isOfferableLoadStatus(selected.status) ? <SectionCard title="Teklifiniz" description="Fiyatı, tahmini varış süresini ve notunuzu girin." icon="pricetag-outline">
       <View style={styles.adjustRow}><AppButton label="−100 TL" variant="secondary" compact fullWidth={false} onPress={() => onAdjust(-100)} /><TextField containerStyle={styles.amountField} value={form.amount} onChangeText={value => setOfferField('amount', value)} keyboardType="decimal-pad" inputStyle={styles.amountInput} error={formErrors?.amount} /><AppButton label="+100 TL" variant="secondary" compact fullWidth={false} onPress={() => onAdjust(100)} /></View>
@@ -126,6 +191,7 @@ const styles = StyleSheet.create({
   hero: { backgroundColor: colors.ink, borderRadius: radius.xl, marginBottom: spacing.md, padding: spacing.xl }, heroIcon: { alignItems: 'center', backgroundColor: colors.primary, borderRadius: radius.md, height: 46, justifyContent: 'center', marginBottom: spacing.md, width: 46 }, heroEyebrow: { ...typography.caption, color: '#9FCBC1', letterSpacing: 1 }, heroTitle: { ...typography.display, color: colors.white, marginTop: spacing.xs }, heroText: { ...typography.body, color: '#C6D0DB', marginTop: spacing.sm }, summaryRow: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.xl },
   detail: { paddingBottom: spacing.md }, backButton: { marginBottom: spacing.sm, marginLeft: -spacing.sm }, detailTitleRow: { alignItems: 'flex-start', flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md }, detailTitleCopy: { flex: 1 }, detailTitle: { ...typography.h1, color: colors.ink }, detailCode: { ...typography.caption, color: colors.textMuted, marginTop: spacing.xxs }, firstSection: { marginTop: spacing.md }, pricePanel: { backgroundColor: colors.primarySoft, borderColor: '#C9E1DB', borderRadius: radius.lg, borderWidth: 1, marginBottom: spacing.md, marginTop: spacing.md, padding: spacing.lg }, priceLabel: { ...typography.caption, color: colors.textMuted, letterSpacing: .7 }, priceValue: { ...typography.display, color: colors.primaryDark, marginTop: spacing.xxs }, priceMeta: { alignItems: 'center', flexDirection: 'row', gap: spacing.xs, marginTop: spacing.sm }, priceMetaText: { ...typography.smallMedium, color: colors.text },
   adjustRow: { alignItems: 'flex-start', flexDirection: 'row', gap: spacing.xs, marginTop: spacing.xs }, amountField: { flex: 1, marginTop: 0 }, amountInput: { ...typography.h3, textAlign: 'center' }, cardAction: { marginTop: spacing.md },
+  deliveryPhotoActions: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm }, deliveryPhotoAction: { flex: 1 }, deliveryPhotoPreviewWrap: { alignSelf: 'flex-start', marginTop: spacing.md, position: 'relative' }, deliveryPhotoPreview: { borderRadius: radius.md, height: 150, width: 190 }, deliveryPhotoRemove: { alignItems: 'center', backgroundColor: colors.ink, borderColor: colors.surface, borderRadius: 13, borderWidth: 2, height: 26, justifyContent: 'center', position: 'absolute', right: -7, top: -7, width: 26 }, deliveryError: { ...typography.caption, color: colors.danger, marginTop: spacing.sm }, deliveryHint: { ...typography.caption, color: colors.textMuted, marginTop: spacing.sm },
   offerCard: { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.lg, borderWidth: 1, marginBottom: spacing.md, padding: spacing.lg }, offerHeader: { alignItems: 'center', flexDirection: 'row' }, offerStatusIcon: { alignItems: 'center', backgroundColor: colors.primarySoft, borderRadius: radius.sm, height: 40, justifyContent: 'center', marginRight: spacing.sm, width: 40 }, offerTitleCopy: { flex: 1, paddingRight: spacing.xs }, offerTitle: { ...typography.h3, color: colors.ink }, offerTime: { ...typography.caption, color: colors.textSecondary, marginTop: 2 }, offerDivider: { marginVertical: spacing.md }, offerPrices: { alignItems: 'flex-end', flexDirection: 'row', justifyContent: 'space-between' }, offerPrice: { ...typography.h2, color: colors.primaryDark, marginTop: 2 }, offerBase: { alignItems: 'flex-end' }, offerBaseValue: { ...typography.bodyMedium, color: colors.text, marginTop: 2 }, offerNote: { ...typography.small, backgroundColor: colors.surfaceMuted, borderRadius: radius.sm, color: colors.text, marginTop: spacing.md, padding: spacing.sm }, offerActions: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md }, offerAction: { flex: 1 },
   profileHero: { alignItems: 'center', backgroundColor: colors.ink, borderRadius: radius.lg, flexDirection: 'row', marginBottom: spacing.md, padding: spacing.lg }, profileAvatar: { alignItems: 'center', backgroundColor: colors.primary, borderRadius: 28, height: 56, justifyContent: 'center', marginRight: spacing.md, width: 56 }, profileInitials: { ...typography.h2, color: colors.white }, profileCopy: { flex: 1 }, profileName: { ...typography.h2, color: colors.white }, profileMeta: { ...typography.caption, color: '#B9C5D2', marginTop: spacing.xxs }, dangerAction: { marginBottom: spacing.xl, marginTop: spacing.sm },
   notificationRow: { alignItems: 'center', flexDirection: 'row', gap: spacing.md, marginTop: spacing.sm }, notificationCopy: { flex: 1 }, notificationTitle: { ...typography.bodyMedium, color: colors.text }, notificationText: { ...typography.caption, color: colors.textSecondary, marginTop: spacing.xxs },

@@ -9,6 +9,7 @@ const expo = {
   name: 'NakliyeGo Müşteri',
   slug: 'nakliyego-customer',
   version: '2.0.0',
+  icon: './assets/icon.png',
   orientation: 'portrait',
   userInterfaceStyle: 'automatic',
   ios: {
@@ -22,6 +23,10 @@ const expo = {
   },
   android: {
     package: 'com.nakliyego.customer',
+    adaptiveIcon: {
+      foregroundImage: './assets/icon.png',
+      backgroundColor: '#FFFFFF',
+    },
     permissions: ['ACCESS_COARSE_LOCATION', 'ACCESS_FINE_LOCATION'],
     ...(googleMapsAndroidKey ? { config: { googleMaps: { apiKey: googleMapsAndroidKey } } } : {}),
   },

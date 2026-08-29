@@ -83,6 +83,7 @@ export const loads = {
   publish: id => client.post(`/api/loads/${id}/publish`),
   remove: id => client.delete(`/api/loads/${id}`),
   status: (id, status) => client.patch(`/api/loads/${id}/status`, { status }),
+  deliveryCode: id => client.get(`/api/loads/${id}/delivery-code`),
   photos: async (id, photos) => {
     const formData = new FormData();
     photos.forEach((photo, index) => formData.append('photos', { uri: photo.uri, name: photo.fileName || `load-${Date.now()}-${index}.jpg`, type: photo.mimeType || 'image/jpeg' }));

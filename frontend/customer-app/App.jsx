@@ -48,6 +48,9 @@ const navItems = [
   { value: 'account', label: 'Hesabım', icon: 'person-outline', activeIcon: 'person' },
 ];
 
+const deliveryCodeStatuses = new Set(['driver_selected', 'driver_en_route', 'at_pickup', 'picked_up', 'en_route_to_delivery', 'delivered']);
+const emptyDeliveryCode = { value: '', loading: false, error: '' };
+
 export default function App() {
   return <SafeAreaProvider><ToastProvider><CustomerApp /></ToastProvider></SafeAreaProvider>;
 }
@@ -69,6 +72,8 @@ function CustomerApp() {
   const [loadsLoading, setLoadsLoading] = useState(false);
   const [loadsError, setLoadsError] = useState('');
   const [selectedLoad, setSelectedLoad] = useState(null);
+  const [deliveryCode, setDeliveryCode] = useState(emptyDeliveryCode);
+  const loadDetailRequest = useRef(0);
   const [loadOffers, setLoadOffers] = useState([]);
   const [offersLoading, setOffersLoading] = useState(false);
   const [account, setAccount] = useState(null);
@@ -91,7 +96,9 @@ function CustomerApp() {
   useEffect(() => subscribeSessionExpired(() => {
     setUser(null);
     setTab('home');
+    loadDetailRequest.current += 1;
     setSelectedLoad(null);
+    setDeliveryCode(emptyDeliveryCode);
     showToast('Oturumunuz sona erdi. Lütfen tekrar giriş yapın.', { type: 'warning' });
   }), [showToast]);
   useEffect(() => subscribeNotificationResponses(setNotificationData), []);
@@ -198,17 +205,28 @@ function CustomerApp() {
   }, [fetchLoads, form, pendingDraftId, photos, routeDraft, showToast]);
 
   const openLoad = useCallback(async load => {
+    const requestID = ++loadDetailRequest.current;
     setSelectedLoad(load);
     setOffersLoading(true);
-    try {
-      const { data } = await offers.list(load.id);
-      setLoadOffers(data || []);
-    } catch (error) {
-      showToast(apiError(error), { type: 'error', title: 'Teklifler alınamadı' });
+    const shouldFetchDeliveryCode = deliveryCodeStatuses.has(load.status) && !load.deliveryVerified;
+    setDeliveryCode(shouldFetchDeliveryCode ? { value: '', loading: true, error: '' } : emptyDeliveryCode);
+    const [offerResult, codeResult] = await Promise.allSettled([
+      offers.list(load.id),
+      shouldFetchDeliveryCode ? loads.deliveryCode(load.id) : Promise.resolve(null),
+    ]);
+    if (requestID !== loadDetailRequest.current) return;
+    if (offerResult.status === 'fulfilled') {
+      setLoadOffers(offerResult.value.data || []);
+    } else {
+      showToast(apiError(offerResult.reason), { type: 'error', title: 'Teklifler alınamadı' });
       setLoadOffers([]);
-    } finally {
-      setOffersLoading(false);
     }
+    if (shouldFetchDeliveryCode) {
+      setDeliveryCode(codeResult.status === 'fulfilled'
+        ? { value: String(codeResult.value.data?.deliveryCode || ''), loading: false, error: '' }
+        : { value: '', loading: false, error: apiError(codeResult.reason) });
+    }
+    setOffersLoading(false);
   }, [showToast]);
   const openMessageLoad = useCallback(async id => {
     try {
@@ -237,7 +255,9 @@ function CustomerApp() {
     setConfirmationLoading(true);
     try {
       await offers.accept(offer.id);
+      loadDetailRequest.current += 1;
       setSelectedLoad(null);
+      setDeliveryCode(emptyDeliveryCode);
       setConfirmation(null);
       await fetchLoads();
       showToast('Teklif kabul edildi; mesajlaşma açıldı.', { type: 'success', title: 'Şoför seçildi' });
@@ -251,7 +271,9 @@ function CustomerApp() {
     setConfirmationLoading(true);
     try {
       await loads.status(load.id, 'cancelled');
+      loadDetailRequest.current += 1;
       setSelectedLoad(null);
+      setDeliveryCode(emptyDeliveryCode);
       setConfirmation(null);
       await fetchLoads();
       showToast('İlan iptal edildi.', { type: 'success' });
@@ -304,7 +326,9 @@ function CustomerApp() {
       setConfirmationLoading(false);
       setUser(null);
       setTab('home');
+      loadDetailRequest.current += 1;
       setSelectedLoad(null);
+      setDeliveryCode(emptyDeliveryCode);
     }
   }, []);
 
@@ -314,7 +338,7 @@ function CustomerApp() {
   const body = tab === 'home'
     ? <CustomerHome form={form} setForm={setForm} errors={formErrors} setErrors={setFormErrors} photos={photos} setPhotos={setPhotos} routeDraft={routeDraft} onLocationsChange={handleLocationsChange} onRouteChange={handleRouteChange} saving={saving} publish={publish} loads={myLoads} onShowLoads={() => setTab('loads')} />
     : tab === 'loads'
-      ? <CustomerLoads loading={loadsLoading} error={loadsError} items={myLoads} selected={selectedLoad} offers={loadOffers} offersLoading={offersLoading} onOpen={openLoad} onClose={() => setSelectedLoad(null)} onAccept={offer => setConfirmation({ type: 'accept', target: offer })} onCancel={load => setConfirmation({ type: 'cancel', target: load })} retry={fetchLoads} />
+      ? <CustomerLoads loading={loadsLoading} error={loadsError} items={myLoads} selected={selectedLoad} offers={loadOffers} offersLoading={offersLoading} deliveryCode={deliveryCode.value} deliveryCodeLoading={deliveryCode.loading} deliveryCodeError={deliveryCode.error} onOpen={openLoad} onClose={() => { loadDetailRequest.current += 1; setSelectedLoad(null); setDeliveryCode(emptyDeliveryCode); }} onAccept={offer => setConfirmation({ type: 'accept', target: offer })} onCancel={load => setConfirmation({ type: 'cancel', target: load })} retry={fetchLoads} />
       : tab === 'messages'
         ? <ConversationCenter currentUser={user} api={conversations} apiError={apiError} resolveMediaUrl={resolveMediaUrl} formatMoney={formatMoney} loadStatusLabel={loadStatusLabel} onOpenLoad={openMessageLoad} initialConversationId={pendingConversationId} onInitialConversationHandled={handleInitialConversation} reverseGeocode={maps.reverse} nativeMapsConfigured={nativeGoogleMapsConfigured} nativeMapsMessage={nativeGoogleMapsMessage} bottomInset={control.bottomNavHeight + insets.bottom} />
         : <CustomerAccount loading={accountLoading} error={accountError} account={account} form={accountForm} setForm={setAccountForm} save={saveAccount} saveLoading={accountSaving} changePassword={changePassword} passwordLoading={passwordSaving} logout={() => setConfirmation({ type: 'logout' })} retry={fetchAccount} />;
@@ -324,7 +348,7 @@ function CustomerApp() {
     <StatusBar style="light" />
     <AppHeader title="NakliyeGo" subtitle={tab === 'home' ? 'Müşteri paneli' : tab === 'loads' ? 'İlan yönetimi' : tab === 'messages' ? 'Mesajlar' : 'Hesabım'} initials={user.name?.split(' ').map(part => part[0]).join('').slice(0, 2).toUpperCase()} topInset={insets.top} />
     {tab === 'messages' ? body : <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0}><ScrollView contentContainerStyle={[styles.content, { paddingBottom: control.bottomNavHeight + insets.bottom + spacing.xl }]} keyboardShouldPersistTaps="handled" keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'} showsVerticalScrollIndicator={false} refreshControl={refresh ? <RefreshControl refreshing={tab === 'account' ? accountLoading : loadsLoading} onRefresh={refresh} tintColor={colors.primary} /> : undefined}>{body}</ScrollView></KeyboardAvoidingView>}
-    <BottomNav items={navItems} value={tab} onChange={value => { setTab(value); if (value !== 'loads') setSelectedLoad(null); }} bottomInset={insets.bottom} />
+    <BottomNav items={navItems} value={tab} onChange={value => { setTab(value); if (value !== 'loads') { loadDetailRequest.current += 1; setSelectedLoad(null); setDeliveryCode(emptyDeliveryCode); } }} bottomInset={insets.bottom} />
     <ConfirmationModal
       visible={Boolean(confirmation)}
       title={confirmation?.type === 'accept' ? 'Teklifi kabul et' : confirmation?.type === 'cancel' ? 'İlanı iptal et' : 'Hesaptan çıkış'}

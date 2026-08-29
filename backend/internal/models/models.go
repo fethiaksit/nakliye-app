@@ -108,6 +108,11 @@ type Load struct {
 	DeliveryElevatorAvailable bool `json:"deliveryElevatorAvailable"`
 	HelperNeeded              bool `json:"helperNeeded"`
 	HelperCount               int  `json:"helperCount"`
+
+	DeliveryVerified           bool       `json:"deliveryVerified"`
+	DeliveryVerifiedAt         *time.Time `json:"deliveryVerifiedAt,omitempty"`
+	DeliveryPhotoURL           string     `json:"deliveryPhotoUrl,omitempty"`
+	DeliveryVerificationMethod string     `json:"deliveryVerificationMethod,omitempty"`
 }
 
 type User struct {

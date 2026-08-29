@@ -116,12 +116,11 @@ func TestPhaseFiveOperationalStatusFlow(t *testing.T) {
 		models.LoadStatusPickedUp,
 		models.LoadStatusEnRouteToDelivery,
 		models.LoadStatusDelivered,
-		models.LoadStatusCompleted,
 	}
 	for index, next := range chain {
 		if next == models.LoadStatusPickedUp {
 			skip := requestJSON(t, handler, http.MethodPatch, "/api/loads/"+load.ID+"/status", driver.AccessToken, map[string]string{"status": models.LoadStatusCompleted})
-			if skip.Code != http.StatusConflict {
+			if skip.Code != http.StatusBadRequest {
 				t.Fatalf("picked-up skip precondition status=%d body=%s", skip.Code, skip.Body.String())
 			}
 		}
@@ -135,16 +134,16 @@ func TestPhaseFiveOperationalStatusFlow(t *testing.T) {
 		}
 	}
 
-	completedHistory := statusHistory(t, redisStore, load.ID)
-	if len(completedHistory) != beforeUnauthorized+len(chain) {
-		t.Fatalf("completed history=%d want %d", len(completedHistory), beforeUnauthorized+len(chain))
+	deliveredHistory := statusHistory(t, redisStore, load.ID)
+	if len(deliveredHistory) != beforeUnauthorized+len(chain) {
+		t.Fatalf("delivered history=%d want %d", len(deliveredHistory), beforeUnauthorized+len(chain))
 	}
-	for index, event := range completedHistory {
+	for index, event := range deliveredHistory {
 		if event.ID == "" || event.LoadID != load.ID || event.ToStatus == "" || event.ChangedAt.IsZero() || event.ChangedByRole == "" || event.Source == "" {
 			t.Fatalf("history[%d] incomplete: %#v", index, event)
 		}
-		if index > 0 && event.ChangedAt.Before(completedHistory[index-1].ChangedAt) {
-			t.Fatalf("history not chronological at %d: %#v", index, completedHistory)
+		if index > 0 && event.ChangedAt.Before(deliveredHistory[index-1].ChangedAt) {
+			t.Fatalf("history not chronological at %d: %#v", index, deliveredHistory)
 		}
 	}
 	terminal := requestJSON(t, handler, http.MethodPatch, "/api/loads/"+load.ID+"/status", driver.AccessToken, map[string]string{"status": models.LoadStatusDelivered})
@@ -152,7 +151,7 @@ func TestPhaseFiveOperationalStatusFlow(t *testing.T) {
 		t.Fatalf("completed terminal status=%d body=%s", terminal.Code, terminal.Body.String())
 	}
 	repeatedCompleted := requestJSON(t, handler, http.MethodPatch, "/api/loads/"+load.ID+"/status", driver.AccessToken, map[string]string{"status": models.LoadStatusCompleted})
-	if repeatedCompleted.Code != http.StatusConflict || len(statusHistory(t, redisStore, load.ID)) != len(completedHistory) {
+	if repeatedCompleted.Code != http.StatusBadRequest || len(statusHistory(t, redisStore, load.ID)) != len(deliveredHistory) {
 		t.Fatalf("repeated completed status=%d history=%d", repeatedCompleted.Code, len(statusHistory(t, redisStore, load.ID)))
 	}
 }

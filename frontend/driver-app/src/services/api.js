@@ -164,6 +164,12 @@ export const loads = {
   list: getAllLoadPages,
   get: async id => { const response = await client.get(`/api/loads/${id}`); return { ...response, data: normalizeLoad(response.data) }; },
   status: (id, status) => client.patch(`/api/loads/${id}/status`, { status }),
+  completeDelivery: (id, { code, photo }) => {
+    const formData = new FormData();
+    formData.append('code', code);
+    formData.append('photo', { uri: photo.uri, name: photo.fileName || `delivery-${Date.now()}.jpg`, type: photo.mimeType || 'image/jpeg' });
+    return client.post(`/api/loads/${id}/complete-delivery`, formData, { timeout: 60000 });
+  },
 };
 export const maps = {
   reverse: async (latitude, longitude, signal) => {

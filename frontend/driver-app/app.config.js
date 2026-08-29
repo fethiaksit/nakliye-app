@@ -9,6 +9,7 @@ const expo = {
   name: 'NakliyeGo Şoför',
   slug: 'nakliyego-driver',
   version: '2.0.0',
+  icon: './assets/icon.png',
   orientation: 'portrait',
   userInterfaceStyle: 'automatic',
   ios: {
@@ -22,7 +23,11 @@ const expo = {
   },
   android: {
     package: 'com.nakliyego.driver',
-    permissions: ['ACCESS_COARSE_LOCATION', 'ACCESS_FINE_LOCATION'],
+    adaptiveIcon: {
+      foregroundImage: './assets/icon.png',
+      backgroundColor: '#FFFFFF',
+    },
+    permissions: ['ACCESS_COARSE_LOCATION', 'ACCESS_FINE_LOCATION', 'CAMERA'],
     ...(googleMapsAndroidKey ? { config: { googleMaps: { apiKey: googleMapsAndroidKey } } } : {}),
   },
   extra: { googleMapsConfigured: { ios: Boolean(googleMapsIOSKey), android: Boolean(googleMapsAndroidKey) } },
@@ -38,8 +43,8 @@ module.exports = {
     'expo-font',
     '@react-native-community/datetimepicker',
     ['expo-image-picker', {
-      photosPermission: 'Sohbette fotoğraf göndermek için galeri erişimi gerekir.',
-      cameraPermission: 'Sohbette fotoğraf çekmek için kamera erişimi gerekir.',
+      photosPermission: 'Teslimat kaydı veya sohbette fotoğraf göndermek için galeri erişimi gerekir.',
+      cameraPermission: 'Teslimat kaydı veya sohbette fotoğraf çekmek için kamera erişimi gerekir.',
     }],
     ['expo-location', {
       locationWhenInUsePermission: 'Sohbette konum paylaşmak için konum erişimi gerekir.',

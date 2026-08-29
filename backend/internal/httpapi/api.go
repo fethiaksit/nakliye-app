@@ -34,6 +34,7 @@ type API struct {
 	maps              mapsService
 	mapsKeyIssue      string
 	locationRate      *service.FixedWindowLimiter
+	deliveryCodeRate  *service.FixedWindowLimiter
 	maxUploadBytes    int64
 	adminEmail        string
 	adminPassword     string
@@ -92,6 +93,7 @@ func NewWithOptions(s *store.RedisStore, options Options) *API {
 		maps:              service.NewGoogleMapsClient(options.GoogleMapsServerAPIKey, options.PricePerKM),
 		mapsKeyIssue:      options.MapsKeyError,
 		locationRate:      service.NewFixedWindowLimiter(60, time.Minute),
+		deliveryCodeRate:  service.NewFixedWindowLimiter(10, time.Minute),
 		maxUploadBytes:    int64(options.MaxUploadMB) << 20,
 		adminEmail:        strings.ToLower(strings.TrimSpace(options.AdminEmail)),
 		adminPassword:     options.AdminPassword,
@@ -155,6 +157,8 @@ func (a *API) Routes() http.Handler {
 	mux.Handle("POST /api/loads/{id}/publish", a.auth(http.HandlerFunc(a.publish)))
 	mux.Handle("POST /api/loads/{id}/photos", a.auth(http.HandlerFunc(a.uploadLoadPhotos)))
 	mux.Handle("DELETE /api/loads/{id}/photos/{photoID}", a.auth(http.HandlerFunc(a.deleteLoadPhoto)))
+	mux.Handle("GET /api/loads/{id}/delivery-code", a.auth(http.HandlerFunc(a.deliveryCode)))
+	mux.Handle("POST /api/loads/{id}/complete-delivery", a.auth(http.HandlerFunc(a.completeDelivery)))
 	mux.Handle("POST /api/loads/{id}/offers", a.auth(http.HandlerFunc(a.createOffer)))
 	mux.Handle("GET /api/loads/{id}/offers", a.auth(http.HandlerFunc(a.offers)))
 	mux.Handle("POST /api/offers/{id}/accept", a.auth(http.HandlerFunc(a.acceptOffer)))
@@ -1137,6 +1141,10 @@ func (a *API) updateStatus(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, "geçersiz durum")
 		return
 	}
+	if req.Status == models.LoadStatusCompleted {
+		badRequest(w, "tamamlama için teslimat kodu ve fotoğraf doğrulaması zorunludur")
+		return
+	}
 	p := current(r)
 	switch p.Role {
 	case models.RoleCustomer:
@@ -1323,7 +1331,12 @@ func (a *API) acceptOffer(w http.ResponseWriter, r *http.Request) {
 	}
 	conversation := a.conversationRecord(l)
 	event := newLoadStatusEvent(l.ID, from, l.Status, p.ID, p.Role, models.LoadStatusSourceOfferAcceptance, "Teklif kabul edildi", l.UpdatedAt)
-	if e = a.store.AcceptOffer(l, o, allOffers, conversation, event); e != nil {
+	deliveryVerification, e := a.newDeliveryVerification(l)
+	if e != nil {
+		serverError(w, e)
+		return
+	}
+	if e = a.store.AcceptOffer(l, o, allOffers, conversation, event, deliveryVerification); e != nil {
 		writeLoadStatusError(w, e)
 		return
 	}

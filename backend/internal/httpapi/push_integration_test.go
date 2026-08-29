@@ -136,7 +136,11 @@ func TestPushCriticalFlow(t *testing.T) {
 			t.Fatalf("unexpected status push=%#v", events)
 		}
 	}
-	completed := requestJSON(t, handler, http.MethodPatch, "/api/loads/"+load.ID+"/status", driver.AccessToken, map[string]string{"status": models.LoadStatusCompleted})
+	deliveryCode, codeResponse := deliveryCodeForTest(t, handler, load.ID, customer.AccessToken)
+	if codeResponse.Code != http.StatusOK {
+		t.Fatalf("delivery code status=%d body=%s", codeResponse.Code, codeResponse.Body.String())
+	}
+	completed := requestDeliveryCompletion(t, handler, load.ID, driver.AccessToken, deliveryCode, true)
 	if completed.Code != http.StatusOK {
 		t.Fatalf("complete status=%d body=%s", completed.Code, completed.Body.String())
 	}

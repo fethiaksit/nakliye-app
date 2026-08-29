@@ -342,10 +342,11 @@ func (s *RedisStore) FindOfferByLoadDriver(loadID, driverID string) (models.Offe
 	}
 	return models.Offer{}, redis.Nil
 }
-func (s *RedisStore) AcceptOffer(load models.Load, accepted models.Offer, allOffers []models.Offer, conversation models.Conversation, event models.LoadStatusEvent) error {
+func (s *RedisStore) AcceptOffer(load models.Load, accepted models.Offer, allOffers []models.Offer, conversation models.Conversation, event models.LoadStatusEvent, delivery models.DeliveryVerification) error {
 	event = normalizeLoadStatusEvent(event)
 	expected := models.CanonicalLoadStatus(event.FromStatus)
 	if load.ID == "" || accepted.ID == "" || event.LoadID != load.ID || load.Status != event.ToStatus || event.ChangedByUserID == "" || event.ChangedByRole == "" || event.Source == "" || event.ChangedAt.IsZero() ||
+		delivery.LoadID != load.ID || delivery.CustomerID != load.CustomerID || delivery.DriverID != load.AssignedDriver || delivery.CodeHash == "" || delivery.CodeCiphertext == "" || delivery.CreatedAt.IsZero() ||
 		!models.CanTransition(expected, load.Status) {
 		return ErrInvalidLoadStatusTransition
 	}
@@ -361,7 +362,12 @@ func (s *RedisStore) AcceptOffer(load models.Load, accepted models.Offer, allOff
 	if err != nil {
 		return err
 	}
-	watchKeys := []string{"load:" + load.ID, "load-status-event:" + event.ID}
+	deliveryBytes, err := json.Marshal(delivery)
+	if err != nil {
+		return err
+	}
+	deliveryKey := "load-delivery-verification:" + load.ID
+	watchKeys := []string{"load:" + load.ID, "load-status-event:" + event.ID, deliveryKey}
 	for _, offer := range allOffers {
 		watchKeys = append(watchKeys, "offer:"+offer.ID)
 	}
@@ -392,6 +398,11 @@ func (s *RedisStore) AcceptOffer(load models.Load, accepted models.Offer, allOff
 		if storedAccepted.Status != "pending" {
 			return ErrLoadStatusConflict
 		}
+		if exists, existsErr := tx.Exists(s.ctx, deliveryKey).Result(); existsErr != nil {
+			return existsErr
+		} else if exists != 0 {
+			return ErrLoadStatusConflict
+		}
 
 		offerBodies := make(map[string][]byte, len(allOffers))
 		for _, listedOffer := range allOffers {
@@ -417,6 +428,7 @@ func (s *RedisStore) AcceptOffer(load models.Load, accepted models.Offer, allOff
 
 		_, txErr := tx.TxPipelined(s.ctx, func(pipe redis.Pipeliner) error {
 			pipe.Set(s.ctx, "load:"+load.ID, loadBytes, 0)
+			pipe.Set(s.ctx, deliveryKey, deliveryBytes, 0)
 			// A load can have only one assigned driver. Persisting the
 			// conversation under the load ID preserves that invariant.
 			pipe.Set(s.ctx, "conversation:"+conversation.ID, conversationBytes, 0)

@@ -644,6 +644,10 @@ func (a *API) adminLoadStatus(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, "farklı ve geçerli durum ile işlem notu zorunludur")
 		return
 	}
+	if request.Status == models.LoadStatusCompleted {
+		badRequest(w, "admin teslimat override akışı bu fazda etkin değildir")
+		return
+	}
 	from := load.Status
 	if request.Status == models.LoadStatusDriverSelected && load.AssignedDriver == "" {
 		badRequest(w, "şoför atanmadan şoför seçildi durumuna geçilemez")
