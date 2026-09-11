@@ -30,7 +30,15 @@ const expo = {
     permissions: ['ACCESS_COARSE_LOCATION', 'ACCESS_FINE_LOCATION'],
     ...(googleMapsAndroidKey ? { config: { googleMaps: { apiKey: googleMapsAndroidKey } } } : {}),
   },
-  extra: { googleMapsConfigured: { ios: Boolean(googleMapsIOSKey), android: Boolean(googleMapsAndroidKey) } },
+  extra: {
+    googleMapsConfigured: {
+      ios: Boolean(googleMapsIOSKey),
+      android: Boolean(googleMapsAndroidKey),
+    },
+    eas: {
+      projectId: '8b52d4da-e7d6-4bf0-a44a-60cc1c103cde',
+    },
+  },
 };
 
 module.exports = {

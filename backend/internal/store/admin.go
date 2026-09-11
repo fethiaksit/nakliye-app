@@ -135,7 +135,10 @@ func (s *RedisStore) SaveComplaint(complaint models.MessageComplaint) error {
 	pipe := s.client.TxPipeline()
 	pipe.Set(s.ctx, "complaint:"+complaint.ID, body, 0)
 	pipe.ZAdd(s.ctx, "complaints", redis.Z{Score: float64(complaint.CreatedAt.UnixMilli()), Member: complaint.ID})
-	pipe.SAdd(s.ctx, "complaints:load:"+complaint.LoadID, complaint.ID)
+	pipe.SAdd(s.ctx, "complaints:reporter:"+complaint.ReporterID, complaint.ID)
+	if complaint.LoadID != "" {
+		pipe.SAdd(s.ctx, "complaints:load:"+complaint.LoadID, complaint.ID)
+	}
 	if complaint.MessageID != "" {
 		pipe.SAdd(s.ctx, "complaints:message:"+complaint.MessageID, complaint.ID)
 	}
@@ -165,6 +168,20 @@ func (s *RedisStore) ListComplaints() ([]models.MessageComplaint, error) {
 		}
 	}
 	return complaints, nil
+}
+
+func (s *RedisStore) ListComplaintsByReporter(reporterID string) ([]models.MessageComplaint, error) {
+	complaints, err := s.ListComplaints()
+	if err != nil {
+		return nil, err
+	}
+	owned := make([]models.MessageComplaint, 0)
+	for _, complaint := range complaints {
+		if complaint.ReporterID == reporterID {
+			owned = append(owned, complaint)
+		}
+	}
+	return owned, nil
 }
 
 func (s *RedisStore) FindComplaint(messageID, loadID, reporterID string) (models.MessageComplaint, error) {

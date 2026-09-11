@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { CARGO_TYPE_OPTIONS, LOAD_TIMING_OPTIONS, VEHICLE_TYPE_OPTIONS, cargoTypeLabel, formatListingTime, vehicleTypeLabel } from '../../../shared/loadMetadata';
@@ -132,7 +132,12 @@ function OperationalDetails({ load }) {
   </>;
 }
 
-export function CustomerLoads({ loading, error, items, selected, offers, offersLoading, deliveryCode, deliveryCodeLoading, deliveryCodeError, onOpen, onClose, onAccept, onCancel, retry }) {
+export function CustomerLoads({ loading, error, items, selected, offers, offersLoading, deliveryCode, deliveryCodeLoading, deliveryCodeError, walletInfo, walletSaving, onApplyWallet, isCorporate, isFavorite, favoriteSaving, onToggleFavorite, onRepeat, onOpen, onClose, onAccept, onCancel, retry }) {
+	const [walletAmount, setWalletAmount] = useState('');
+	useEffect(() => {
+	  setWalletAmount(walletInfo?.maxUsableCents > 0 ? String(walletInfo.maxUsableCents / 100) : '');
+	}, [selected?.id, walletInfo?.maxUsableCents]);
+	const requestedWalletCents = Math.round(toFiniteNumber(walletAmount) * 100);
   if (selected) return <View style={styles.detail}>
     <AppButton label="İlanlarıma dön" icon="arrow-back" variant="ghost" compact fullWidth={false} onPress={onClose} style={styles.backButton} />
     <View style={styles.detailTitleRow}><View style={styles.detailTitleCopy}><Text style={styles.detailTitle}>{selected.title || 'Başlıksız ilan'}</Text><Text style={styles.detailCode}>İlan #{String(selected.id || '').slice(-8).toUpperCase()}</Text></View><StatusBadge status={selected.status} label={loadStatusLabel(selected.status)} /></View>
@@ -146,7 +151,18 @@ export function CustomerLoads({ loading, error, items, selected, offers, offersL
       <DetailRow icon="shield-checkmark-outline" label="Doğrulama" value="Teslimat kodu ve fotoğraf" />
       <PhotoStrip photos={selected.deliveryPhotoUrl ? [selected.deliveryPhotoUrl] : []} />
     </SectionCard> : null}
-    <View style={styles.pricePanel}><Text style={styles.priceLabel}>İLAN FİYATI</Text><Text style={styles.priceValue}>{formatMoney(selected.agreedPriceTl || selected.basePriceTl)}</Text></View>
+    <View style={styles.pricePanel}><Text style={styles.priceLabel}>İLAN FİYATI</Text><Text style={styles.priceValue}>{formatMoney(selected.agreedPriceTl || selected.pricing?.finalPrice || selected.basePriceTl)}</Text>{selected.pricing ? <><Text style={styles.priceBreakdown}>Başlangıç + yol: {formatMoney(selected.pricing.basePrice)}</Text>{selected.pricing.loadExtra > 0 ? <Text style={styles.priceBreakdown}>Yük farkı: +{formatMoney(selected.pricing.loadExtra)}</Text> : null}{selected.pricing.waitingFee > 0 ? <Text style={styles.priceBreakdown}>Bekleme: +{formatMoney(selected.pricing.waitingFee)}</Text> : null}</> : null}</View>
+	{isCorporate && walletInfo ? <SectionCard title="Kurumsal cüzdan" description="Kredi kullanımı şoförün anlaşılan taşıma tutarını değiştirmez." icon="wallet-outline">
+	  <DetailRow icon="wallet-outline" label="Kullanılabilir bakiye" value={formatMoney(Number(walletInfo.wallet?.balanceCents || 0) / 100)} />
+	  <DetailRow icon="pricetag-outline" label="Kesinleşen nakliye tutarı" value={formatMoney(Number(walletInfo.agreedAmountCents || 0) / 100)} />
+	  {walletInfo.allocation ? <>
+		<DetailRow icon="remove-circle-outline" label="Kullanılan kredi" value={formatMoney(Number(walletInfo.usedCents || 0) / 100)} />
+		<DetailRow icon="cash-outline" label="Kalan müşteri tutarı" value={formatMoney(Number(walletInfo.customerPayableCents || 0) / 100)} />
+	  </> : selected.status === 'driver_selected' && walletInfo.maxUsableCents > 0 ? <>
+		<TextField label="Kullanılacak kredi" value={walletAmount} onChangeText={setWalletAmount} keyboardType="decimal-pad" leftIcon="wallet-outline" helper={`En fazla ${formatMoney(walletInfo.maxUsableCents / 100)} kullanabilirsiniz.`} />
+		<AppButton label="Cüzdan Kredisini Kullan" icon="checkmark-circle-outline" loading={walletSaving} disabled={requestedWalletCents <= 0 || requestedWalletCents > walletInfo.maxUsableCents} onPress={() => onApplyWallet(requestedWalletCents)} style={styles.cardAction} />
+	  </> : <Text style={styles.walletMessage}>{selected.status === 'driver_selected' ? 'Kullanılabilir cüzdan bakiyesi bulunmuyor.' : 'Cüzdan kredisi yalnız teklif kabul edildikten ve taşıma başlamadan önce uygulanabilir.'}</Text>}
+	</SectionCard> : null}
     <PageHeading title="Gelen teklifler" subtitle="Fiyat, süre ve şoför notlarını karşılaştırın." />
     {offersLoading ? <ListSkeleton count={2} /> : !offers.length ? <ScreenState compact title="Henüz teklif yok" message="Şoför teklifleri geldiğinde burada görüntülenecek." /> : offers.map(item => {
       const offer = item.offer || item;
@@ -160,32 +176,13 @@ export function CustomerLoads({ loading, error, items, selected, offers, offersL
         {offer.status === 'pending' ? <AppButton label="Teklifi kabul et" icon="checkmark-circle-outline" onPress={() => onAccept(offer)} style={styles.cardAction} /> : null}
       </View>;
     })}
-    {['draft', 'published', 'open', 'offers_received'].includes(selected.status) ? <AppButton label="İlanı iptal et" icon="close-circle-outline" variant="outlineDanger" onPress={() => onCancel(selected)} style={styles.dangerAction} /> : null}
+	{isCorporate && selected.status === 'completed' && selected.assignedDriverId ? <AppButton label={isFavorite ? 'Favoriden Çıkar' : 'Favorilere Ekle'} icon={isFavorite ? 'heart-dislike-outline' : 'heart-outline'} variant="secondary" loading={favoriteSaving} onPress={() => onToggleFavorite(selected.assignedDriverId)} style={styles.cardAction} /> : null}
+	{isCorporate && ['completed', 'cancelled'].includes(selected.status) ? <AppButton label="Tekrar İlan Ver" icon="copy-outline" variant="outline" onPress={() => onRepeat(selected)} style={styles.cardAction} /> : null}
+	{!['completed', 'cancelled'].includes(selected.status) ? <AppButton label="İlanı iptal et" icon="close-circle-outline" variant="outlineDanger" onPress={() => onCancel(selected)} style={styles.dangerAction} /> : null}
   </View>;
   return <>
     <PageHeading eyebrow="Talepleriniz" title="İlanlarım" subtitle="İlan durumlarını ve şoför tekliflerini takip edin." />
     {loading && !items.length ? <ListSkeleton count={3} /> : error ? <ScreenState type="error" title="İlanlar yüklenemedi" message={error} onRetry={retry} /> : !items.length ? <ScreenState title="Henüz ilanınız yok" message="Ana sayfadan yeni nakliye talebi oluşturabilirsiniz." /> : items.map(load => <ListingCard key={load.id} load={load} onPress={() => onOpen(load)} statusLabel={loadStatusLabel} formatMoney={formatMoney} resolveMediaUrl={resolveMediaUrl} />)}
-  </>;
-}
-
-export function CustomerAccount({ loading, error, account, form, setForm, save, saveLoading, changePassword, passwordLoading, logout, retry }) {
-  if (loading && !account) return <ListSkeleton count={3} />;
-  if (error || !account) return <ScreenState type="error" title="Hesap yüklenemedi" message={error || 'Profil bulunamadı.'} onRetry={retry} />;
-  return <>
-    <PageHeading eyebrow="Hesap" title="Profil ve güvenlik" subtitle="İletişim bilgilerinizi ve şifrenizi yönetin." />
-    <View style={styles.profileHero}><View style={styles.profileAvatar}><Text style={styles.profileInitials}>{account.name?.split(' ').map(part => part[0]).join('').slice(0, 2).toUpperCase() || '?'}</Text></View><View style={styles.profileCopy}><Text style={styles.profileName}>{account.name}</Text><Text style={styles.profileMeta}>Müşteri hesabı · {new Date(account.createdAt).toLocaleDateString('tr-TR')}</Text></View></View>
-    <SectionCard title="Profil bilgileri" description="Teklif ve taşıma iletişiminde kullanılır." icon="person-outline">
-      <TextField label="Ad soyad" required value={form.name} onChangeText={value => setForm(current => ({ ...current, name: value }))} leftIcon="person-outline" autoCapitalize="words" />
-      <TextField label="E-posta" required value={form.email} onChangeText={value => setForm(current => ({ ...current, email: value }))} leftIcon="mail-outline" keyboardType="email-address" autoCapitalize="none" />
-      <TextField label="Telefon" required value={form.phone} onChangeText={value => setForm(current => ({ ...current, phone: value }))} leftIcon="call-outline" keyboardType="phone-pad" />
-      <AppButton label="Bilgileri kaydet" icon="save-outline" loading={saveLoading} onPress={save} style={styles.cardAction} />
-    </SectionCard>
-    <SectionCard title="Şifre değiştir" description="En az 8 karakterli güçlü bir şifre kullanın." icon="lock-closed-outline">
-      <TextField label="Mevcut şifre" required value={form.currentPassword} onChangeText={value => setForm(current => ({ ...current, currentPassword: value }))} leftIcon="key-outline" secureTextEntry autoCapitalize="none" />
-      <TextField label="Yeni şifre" required value={form.newPassword} onChangeText={value => setForm(current => ({ ...current, newPassword: value }))} leftIcon="shield-checkmark-outline" secureTextEntry autoCapitalize="none" helper="En az 8 karakter" />
-      <AppButton label="Şifreyi değiştir" variant="secondary" icon="refresh-outline" loading={passwordLoading} onPress={changePassword} style={styles.cardAction} />
-    </SectionCard>
-    <AppButton label="Hesaptan çıkış yap" icon="log-out-outline" variant="outlineDanger" onPress={logout} style={styles.dangerAction} />
   </>;
 }
 
@@ -194,6 +191,6 @@ const styles = StyleSheet.create({
   summaryRow: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.xl }, fieldRow: { flexDirection: 'row', gap: spacing.sm }, flexField: { flex: 1 }, publishButton: { marginTop: spacing.xs }, publishHint: { ...typography.caption, color: colors.textMuted, marginBottom: spacing.lg, marginTop: spacing.xs, textAlign: 'center' }, inlineError: { alignItems: 'center', flexDirection: 'row', gap: spacing.xs, marginTop: spacing.sm }, inlineErrorText: { ...typography.caption, color: colors.danger, flex: 1 },
   detail: { paddingBottom: spacing.md }, backButton: { marginBottom: spacing.sm, marginLeft: -spacing.sm }, detailTitleRow: { alignItems: 'flex-start', flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md }, detailTitleCopy: { flex: 1 }, detailTitle: { ...typography.h1, color: colors.ink }, detailCode: { ...typography.caption, color: colors.textMuted, marginTop: spacing.xxs }, photoStrip: { gap: spacing.sm, paddingBottom: spacing.md }, detailPhoto: { borderRadius: radius.md, height: 128, width: 160 }, routeMeta: { borderTopColor: colors.border, borderTopWidth: StyleSheet.hairlineWidth, flexDirection: 'row', gap: spacing.lg, marginTop: spacing.sm, paddingTop: spacing.sm }, routeMetaItem: { alignItems: 'center', flexDirection: 'row', gap: spacing.xxs }, routeMetaText: { ...typography.smallMedium, color: colors.text },
   deliveryCodeValue: { ...typography.display, color: colors.primaryDark, letterSpacing: 8, paddingVertical: spacing.sm, textAlign: 'center' }, deliveryCodeMessage: { ...typography.body, color: colors.textSecondary, paddingVertical: spacing.sm }, deliveryCodeError: { ...typography.small, color: colors.danger, paddingVertical: spacing.sm },
-  pricePanel: { backgroundColor: colors.primarySoft, borderColor: '#C9E1DB', borderRadius: radius.lg, borderWidth: 1, marginBottom: spacing.xl, padding: spacing.lg }, priceLabel: { ...typography.caption, color: colors.textMuted, letterSpacing: .7 }, priceValue: { ...typography.display, color: colors.primaryDark, marginTop: spacing.xxs }, offerCard: { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.lg, borderWidth: 1, marginBottom: spacing.md, padding: spacing.lg }, offerHeader: { alignItems: 'center', flexDirection: 'row' }, driverAvatar: { alignItems: 'center', backgroundColor: colors.primarySoft, borderRadius: 21, height: 42, justifyContent: 'center', marginRight: spacing.sm, width: 42 }, offerCopy: { flex: 1 }, offerName: { ...typography.h3, color: colors.ink }, offerEta: { ...typography.caption, color: colors.textSecondary, marginTop: 2 }, offerNote: { ...typography.small, backgroundColor: colors.surfaceMuted, borderRadius: radius.sm, color: colors.text, marginTop: spacing.md, padding: spacing.sm }, offerDivider: { marginVertical: spacing.md }, offerPriceRow: { alignItems: 'flex-end', flexDirection: 'row', justifyContent: 'space-between' }, offerPrice: { ...typography.h2, color: colors.primaryDark, marginTop: 2 }, offerDifference: { ...typography.caption, color: colors.textSecondary }, cardAction: { marginTop: spacing.md }, dangerAction: { marginBottom: spacing.xl, marginTop: spacing.sm },
-  profileHero: { alignItems: 'center', backgroundColor: colors.ink, borderRadius: radius.lg, flexDirection: 'row', marginBottom: spacing.md, padding: spacing.lg }, profileAvatar: { alignItems: 'center', backgroundColor: colors.primary, borderRadius: 28, height: 56, justifyContent: 'center', marginRight: spacing.md, width: 56 }, profileInitials: { ...typography.h2, color: colors.white }, profileCopy: { flex: 1 }, profileName: { ...typography.h2, color: colors.white }, profileMeta: { ...typography.caption, color: '#B9C5D2', marginTop: spacing.xxs },
+	walletMessage: { ...typography.small, color: colors.textSecondary, lineHeight: 20, marginTop: spacing.sm },
+  pricePanel: { backgroundColor: colors.primarySoft, borderColor: '#C9E1DB', borderRadius: radius.lg, borderWidth: 1, marginBottom: spacing.xl, padding: spacing.lg }, priceLabel: { ...typography.caption, color: colors.textMuted, letterSpacing: .7 }, priceValue: { ...typography.display, color: colors.primaryDark, marginTop: spacing.xxs }, priceBreakdown: { ...typography.caption, color: colors.textSecondary, marginTop: spacing.xs }, offerCard: { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.lg, borderWidth: 1, marginBottom: spacing.md, padding: spacing.lg }, offerHeader: { alignItems: 'center', flexDirection: 'row' }, driverAvatar: { alignItems: 'center', backgroundColor: colors.primarySoft, borderRadius: 21, height: 42, justifyContent: 'center', marginRight: spacing.sm, width: 42 }, offerCopy: { flex: 1 }, offerName: { ...typography.h3, color: colors.ink }, offerEta: { ...typography.caption, color: colors.textSecondary, marginTop: 2 }, offerNote: { ...typography.small, backgroundColor: colors.surfaceMuted, borderRadius: radius.sm, color: colors.text, marginTop: spacing.md, padding: spacing.sm }, offerDivider: { marginVertical: spacing.md }, offerPriceRow: { alignItems: 'flex-end', flexDirection: 'row', justifyContent: 'space-between' }, offerPrice: { ...typography.h2, color: colors.primaryDark, marginTop: 2 }, offerDifference: { ...typography.caption, color: colors.textSecondary }, cardAction: { marginTop: spacing.md }, dangerAction: { marginBottom: spacing.xl, marginTop: spacing.sm },
 });

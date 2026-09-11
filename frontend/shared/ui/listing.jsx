@@ -29,7 +29,7 @@ export function ListingCard({ load, onPress, statusLabel, formatMoney, resolveMe
     <View style={styles.cardTop}><StatusBadge status={load.status} label={statusLabel(load.status)} /><Text style={styles.time}>{formatListingTime(load)}</Text></View>
     <View style={styles.titleRow}><View style={styles.titleCopy}><Text style={styles.title} numberOfLines={2}>{load.title || 'Başlıksız ilan'}</Text><Text style={styles.category}>{cargoTypeLabel(load.cargoType)} · {vehicleTypeLabel(load.vehicleType)}</Text></View>{imageURI ? <Image source={{ uri: imageURI }} style={styles.thumbnail} /> : <View style={styles.thumbnailFallback}><Icon name="cube-outline" size={24} color={colors.primary} /></View>}</View>
     <RouteTimeline compact pickup={load.pickup?.address} delivery={load.delivery?.address} />
-    <View style={styles.metaRow}><Meta icon="navigate-outline" label={`${Number(load.estimatedKm || 0).toFixed(1)} km`} /><Meta icon="scale-outline" label={`${Number(load.dimensions?.weightKg || 0)} kg`} />{Number(load.offerCount || 0) ? <Meta icon="pricetags-outline" label={`${load.offerCount} teklif`} /> : null}<Text style={styles.price}>{formatMoney(load.lastOfferTl || load.basePriceTl || load.agreedPriceTl)}</Text></View>
+    <View style={styles.metaRow}><Meta icon="navigate-outline" label={`${Number(load.estimatedKm || 0).toFixed(1)} km`} /><Meta icon="scale-outline" label={`${Number(load.dimensions?.weightKg || 0)} kg`} />{Number(load.offerCount || 0) ? <Meta icon="pricetags-outline" label={`${load.offerCount} teklif`} /> : null}<Text style={styles.price}>{formatMoney(load.lastOfferTl || load.agreedPriceTl || load.pricing?.recommendedPrice || load.basePriceTl)}</Text></View>
     {footer}
   </Pressable>;
 }

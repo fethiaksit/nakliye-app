@@ -28,7 +28,7 @@ func newAdminTestAPI(t *testing.T) http.Handler {
 		t.Fatal(err)
 	}
 	api := NewWithOptions(redisStore, Options{
-		Secret: integrationTestSecret, PricePerKM: 200, MaxUploadMB: 1,
+		Secret: integrationTestSecret, PricePerKM: 50, MaxUploadMB: 1,
 		AdminEmail: adminTestEmail, AdminPassword: adminTestPassword, AdminSecret: adminTestSecret,
 	})
 	api.maps = stubMaps{}

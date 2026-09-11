@@ -1,6 +1,8 @@
 .env
 .env.local
 .env.*.local
+*.jks
+*.keystore
 .DS_Store
 ._*
 node_modules/

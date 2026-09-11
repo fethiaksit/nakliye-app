@@ -54,7 +54,7 @@ func TestGoogleMapsClientNormalizesGoogleResponses(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewGoogleMapsClientWithURLs("test-server-key", 200, server.URL, server.URL, server.URL, server.Client())
+	client := NewGoogleMapsClientWithURLs("test-server-key", 50, server.URL, server.URL, server.URL, server.Client())
 	bias := models.Coordinate{Latitude: 38.4622, Longitude: 27.2174}
 	items, err := client.Autocomplete(context.Background(), "Bornova İzmir", "session-1", &bias)
 	if err != nil || len(items) != 1 || items[0].PlaceID != "place-1" {
@@ -72,7 +72,7 @@ func TestGoogleMapsClientNormalizesGoogleResponses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if route.DistanceMeters != 18420 || route.DurationSeconds != 1920 || route.EstimatedPriceTL != 3684 || route.RouteProvider != "google" || len(route.RouteCoordinates) != 3 {
+	if route.DistanceMeters != 18420 || route.DurationSeconds != 1920 || route.EstimatedPriceTL != 2421 || route.RouteProvider != "google" || len(route.RouteCoordinates) != 3 {
 		t.Fatalf("unexpected normalized route: %#v", route)
 	}
 }

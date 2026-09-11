@@ -54,7 +54,7 @@ func TestPushCriticalFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	sender := &fakePushSender{}
-	api := NewWithOptions(redisStore, Options{Secret: integrationTestSecret, PricePerKM: 200, MaxUploadMB: 1, PushSender: sender})
+	api := NewWithOptions(redisStore, Options{Secret: integrationTestSecret, PricePerKM: 50, MaxUploadMB: 1, PushSender: sender})
 	api.maps = stubMaps{}
 	handler := api.Routes()
 	customer := registerTestUser(t, handler, "pushcustomer", models.RoleCustomer)

@@ -66,30 +66,31 @@ type Dimensions struct {
 }
 
 type Load struct {
-	ID                   string       `json:"id"`
-	CustomerID           string       `json:"customerId"`
-	Title                string       `json:"title"`
-	Description          string       `json:"description"`
-	PhotoURLs            []string     `json:"photoUrls"`
-	Dimensions           Dimensions   `json:"dimensions"`
-	Pickup               Location     `json:"pickup"`
-	Delivery             Location     `json:"delivery"`
-	RouteDistanceMeters  int          `json:"routeDistanceMeters"`
-	RouteDurationSeconds int          `json:"routeDurationSeconds"`
-	PricePerKM           float64      `json:"pricePerKm"`
-	RouteEncodedPolyline string       `json:"routeEncodedPolyline,omitempty"`
-	RouteProvider        string       `json:"routeProvider,omitempty"`
-	RouteCoordinates     []Coordinate `json:"routeCoordinates,omitempty"`
-	EstimatedKM          float64      `json:"estimatedKm"`
-	BasePriceTL          float64      `json:"basePriceTl"`
-	AgreedPriceTL        float64      `json:"agreedPriceTl"`
-	OfferCount           int          `json:"offerCount"`
-	LastOfferTL          float64      `json:"lastOfferTl,omitempty"`
-	Status               string       `json:"status"`
-	AssignedDriver       string       `json:"assignedDriverId,omitempty"`
-	CreatedAt            time.Time    `json:"createdAt"`
-	UpdatedAt            time.Time    `json:"updatedAt"`
-	DeletedAt            *time.Time   `json:"deletedAt,omitempty"`
+	ID                   string           `json:"id"`
+	CustomerID           string           `json:"customerId"`
+	Title                string           `json:"title"`
+	Description          string           `json:"description"`
+	PhotoURLs            []string         `json:"photoUrls"`
+	Dimensions           Dimensions       `json:"dimensions"`
+	Pickup               Location         `json:"pickup"`
+	Delivery             Location         `json:"delivery"`
+	RouteDistanceMeters  int              `json:"routeDistanceMeters"`
+	RouteDurationSeconds int              `json:"routeDurationSeconds"`
+	PricePerKM           float64          `json:"pricePerKm"`
+	RouteEncodedPolyline string           `json:"routeEncodedPolyline,omitempty"`
+	RouteProvider        string           `json:"routeProvider,omitempty"`
+	RouteCoordinates     []Coordinate     `json:"routeCoordinates,omitempty"`
+	EstimatedKM          float64          `json:"estimatedKm"`
+	BasePriceTL          float64          `json:"basePriceTl"`
+	AgreedPriceTL        float64          `json:"agreedPriceTl"`
+	Pricing              *PricingSnapshot `json:"pricing,omitempty"`
+	OfferCount           int              `json:"offerCount"`
+	LastOfferTL          float64          `json:"lastOfferTl,omitempty"`
+	Status               string           `json:"status"`
+	AssignedDriver       string           `json:"assignedDriverId,omitempty"`
+	CreatedAt            time.Time        `json:"createdAt"`
+	UpdatedAt            time.Time        `json:"updatedAt"`
+	DeletedAt            *time.Time       `json:"deletedAt,omitempty"`
 
 	// Structured listing attributes. Scheduling is stored as one UTC instant;
 	// presentation clients render it in the user's local time zone.
@@ -115,12 +116,35 @@ type Load struct {
 	DeliveryVerificationMethod string     `json:"deliveryVerificationMethod,omitempty"`
 }
 
+// PricingSnapshot records the server-side inputs and result used when a load
+// was priced. It is optional so older Redis load records remain compatible.
+type PricingSnapshot struct {
+	DistanceKM        float64 `json:"distanceKm"`
+	BaseDriverFee     float64 `json:"baseDriverFee"`
+	PricePerKM        float64 `json:"pricePerKm"`
+	DistanceFee       float64 `json:"distanceFee"`
+	BasePrice         float64 `json:"basePrice"`
+	LoadLevel         string  `json:"loadLevel"`
+	LoadMultiplier    float64 `json:"loadMultiplier"`
+	LoadExtra         float64 `json:"loadExtra"`
+	WaitingMinutes    int     `json:"waitingMinutes"`
+	WaitingFee        float64 `json:"waitingFee"`
+	NightMultiplier   float64 `json:"nightMultiplier"`
+	UrgentMultiplier  float64 `json:"urgentMultiplier"`
+	HolidayMultiplier float64 `json:"holidayMultiplier"`
+	WeekendMultiplier float64 `json:"weekendMultiplier"`
+	FinalPrice        float64 `json:"finalPrice"`
+	RecommendedPrice  float64 `json:"recommendedPrice"`
+	Currency          string  `json:"currency"`
+}
+
 type User struct {
 	ID            string        `json:"id"`
 	Name          string        `json:"name"`
 	Email         string        `json:"email"`
 	Phone         string        `json:"phone"`
 	Role          string        `json:"role"`
+	AccountType   string        `json:"accountType,omitempty"`
 	DriverProfile DriverProfile `json:"driverProfile,omitempty"`
 	// User is never returned directly by the HTTP handlers; keeping this field
 	// serializable is required for the Redis persistence layer to authenticate

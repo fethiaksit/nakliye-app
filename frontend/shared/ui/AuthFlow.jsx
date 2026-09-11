@@ -3,7 +3,7 @@ import { Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleS
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import Icon from './Icon';
-import { AppButton, InlineNotice, TextField } from './primitives';
+import { AppButton, InlineNotice, SegmentedControl, TextField } from './primitives';
 import { colors, radius, shadows, spacing, typography } from './theme';
 
 const normalizePhone = value => { const digits = String(value || '').replace(/\D/g, '').replace(/^0/, ''); return digits.startsWith('90') ? `+${digits.slice(0, 12)}` : `+90${digits.slice(0, 10)}`; };
@@ -20,7 +20,7 @@ function Checkbox({ checked, onPress, label, error }) {
 
 export default function AuthFlow({ auth, saveSession, apiError, onSession, connectionCheck, allowedRole }) {
   const [mode, setMode] = useState('login');
-  const [form, setForm] = useState({ name: '', phone: '', email: '', password: '', confirm: '', role: allowedRole || 'customer' });
+  const [form, setForm] = useState({ name: '', phone: '', email: '', password: '', confirm: '', role: allowedRole || 'customer', accountType: 'individual', companyName: '' });
   const [errors, setErrors] = useState({}); const [terms, setTerms] = useState(false); const [remember, setRemember] = useState(true); const [busy, setBusy] = useState(false); const [serverError, setServerError] = useState(''); const [resetSent, setResetSent] = useState(false);
   const busyRef = useRef(false); const phoneRef = useRef(null); const passwordRef = useRef(null); const confirmRef = useRef(null); const emailRef = useRef(null);
   const set = (key, value) => { setForm(old => ({ ...old, [key]: value })); setErrors(old => ({ ...old, [key]: '' })); setServerError(''); };
@@ -30,6 +30,7 @@ export default function AuthFlow({ auth, saveSession, apiError, onSession, conne
     if (mode === 'reset') { if (!/^\S+@\S+\.\S+$/.test(form.email)) next.email = 'Geçerli bir e-posta adresi girin.'; }
     else {
       if (mode === 'register' && !form.name.trim()) next.name = 'Ad soyad zorunludur.';
+	  if (mode === 'register' && allowedRole === 'customer' && form.accountType === 'corporate' && !form.companyName.trim()) next.companyName = 'Firma adı zorunludur.';
       if (!isPhone(form.phone)) next.phone = 'Geçerli bir +90 5xx xxx xx xx numarası girin.';
       if (mode === 'register' && !/^\S+@\S+\.\S+$/.test(form.email)) next.email = 'Geçerli bir e-posta adresi girin.';
       if (!form.password) next.password = 'Şifre zorunludur.';
@@ -44,7 +45,10 @@ export default function AuthFlow({ auth, saveSession, apiError, onSession, conne
     busyRef.current = true; setBusy(true); setServerError('');
     try {
       if (mode === 'reset') { await auth.reset({ email: form.email.trim().toLowerCase() }); setResetSent(true); return; }
-      const payload = mode === 'login' ? { phone: normalizePhone(form.phone), password: form.password } : { name: form.name.trim(), phone: normalizePhone(form.phone), email: form.email.trim().toLowerCase(), password: form.password, role: allowedRole || form.role };
+      const payload = mode === 'login' ? { phone: normalizePhone(form.phone), password: form.password } : {
+        name: form.name.trim(), phone: normalizePhone(form.phone), email: form.email.trim().toLowerCase(), password: form.password, role: allowedRole || form.role,
+        ...(allowedRole === 'customer' ? { accountType: form.accountType, companyName: form.accountType === 'corporate' ? form.companyName.trim() : '' } : {}),
+      };
       const { data } = mode === 'login' ? await auth.login(payload) : await auth.register(payload);
       if (allowedRole && data.user.role !== allowedRole) throw new Error(allowedRole === 'customer' ? 'Bu hesap Şoför uygulamasında kullanılmalıdır.' : 'Bu hesap Müşteri uygulamasında kullanılmalıdır.');
       await saveSession(data, remember); onSession(data.user);
@@ -57,6 +61,10 @@ export default function AuthFlow({ auth, saveSession, apiError, onSession, conne
     <View style={styles.hero}><View style={styles.logo}><Icon name={allowedRole === 'driver' ? 'car-sport' : 'cube'} size={30} color={colors.white} /></View><Text style={styles.brand}>NakliyeGo</Text><View style={styles.roleBadge}><Text style={styles.roleBadgeText}>{roleLabel} uygulaması</Text></View><Text style={styles.heroTitle}>{heading}</Text><Text style={styles.heroText}>{mode === 'register' ? 'Temel bilgilerinizi girerek birkaç adımda başlayın.' : mode === 'reset' ? 'Kayıtlı e-posta adresinize sıfırlama talimatı gönderelim.' : 'İlanlar, teklifler ve mesajlar tek bir güvenli akışta.'}</Text></View>
     <View style={styles.panel}>
       {mode === 'register' ? <>
+		{allowedRole === 'customer' ? <>
+		  <SegmentedControl label="Hesap türü" options={[{ value: 'individual', label: 'Bireysel', icon: 'person-outline' }, { value: 'corporate', label: 'Kurumsal', icon: 'business-outline' }]} value={form.accountType} onChange={value => set('accountType', value)} />
+		  {form.accountType === 'corporate' ? <TextField required label="Firma adı" value={form.companyName} onChangeText={value => set('companyName', value)} error={errors.companyName} leftIcon="business-outline" autoCapitalize="words" /> : null}
+		</> : null}
         <TextField required label="Ad soyad" value={form.name} onChangeText={value => set('name', value)} error={errors.name} leftIcon="person-outline" autoCapitalize="words" returnKeyType="next" onSubmitEditing={() => phoneRef.current?.focus()} />
         <TextField required label="Telefon" value={form.phone} onChangeText={value => set('phone', value)} error={errors.phone} helper="Türkiye cep telefonu numaranızı girin." leftIcon="call-outline" keyboardType="phone-pad" inputRef={phoneRef} returnKeyType="next" onSubmitEditing={() => emailRef.current?.focus()} />
         <TextField required label="E-posta" value={form.email} onChangeText={value => set('email', value)} error={errors.email} leftIcon="mail-outline" keyboardType="email-address" autoCapitalize="none" autoCorrect={false} inputRef={emailRef} returnKeyType="next" onSubmitEditing={() => passwordRef.current?.focus()} />

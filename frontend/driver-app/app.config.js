@@ -30,7 +30,15 @@ const expo = {
     permissions: ['ACCESS_COARSE_LOCATION', 'ACCESS_FINE_LOCATION', 'CAMERA'],
     ...(googleMapsAndroidKey ? { config: { googleMaps: { apiKey: googleMapsAndroidKey } } } : {}),
   },
-  extra: { googleMapsConfigured: { ios: Boolean(googleMapsIOSKey), android: Boolean(googleMapsAndroidKey) } },
+  extra: {
+    googleMapsConfigured: {
+      ios: Boolean(googleMapsIOSKey),
+      android: Boolean(googleMapsAndroidKey),
+    },
+    eas: {
+      projectId: 'c95ee8d8-eb16-470f-b3c0-eabe2dce574d',
+    },
+  },
 };
 
 module.exports = {
@@ -43,7 +51,7 @@ module.exports = {
     'expo-font',
     '@react-native-community/datetimepicker',
     ['expo-image-picker', {
-      photosPermission: 'Teslimat kaydı veya sohbette fotoğraf göndermek için galeri erişimi gerekir.',
+      photosPermission: 'Araç, teslimat veya sohbet fotoğrafı eklemek için galeri erişimi gerekir.',
       cameraPermission: 'Teslimat kaydı veya sohbette fotoğraf çekmek için kamera erişimi gerekir.',
     }],
     ['expo-location', {

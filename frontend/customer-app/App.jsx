@@ -8,15 +8,17 @@ import { ConfirmationModal, ToastProvider, useToast } from '../shared/ui/feedbac
 import { AppHeader, BottomNav } from '../shared/ui/navigation';
 import { InlineNotice, ListSkeleton } from '../shared/ui/primitives';
 import { registerDevicePushToken, subscribeNotificationResponses, unregisterDevicePushToken } from '../shared/notifications';
-import { apiError, auth, checkApiHealth, conversations, loads, logApiError, maps, offers, profile, push, restoreSession, saveSession, subscribeSessionExpired, updateStoredUser } from './src/services/api';
+import { apiError, auth, checkApiHealth, conversations, corporate, loads, logApiError, maps, offers, profile, push, restoreSession, saveSession, subscribeSessionExpired, updateStoredUser } from './src/services/api';
 import { apiOrigin, healthUrl } from './src/config/api';
 import AuthFlow from './src/components/AuthFlow';
 import ConversationCenter from './src/components/ConversationCenter';
 import { nativeGoogleMapsConfigured, nativeGoogleMapsMessage } from './src/config/maps';
-import { CustomerAccount, CustomerHome, CustomerLoads } from './src/screens/CustomerScreens';
+import { CustomerHome, CustomerLoads } from './src/screens/CustomerScreens';
+import CustomerAccountScreens from './src/screens/CustomerAccountScreens';
 import { formatMoney, loadStatusLabel, resolveMediaUrl } from './src/utils/presentation';
 
 const { number, scheduledAtISO, validateLoadFormFields } = require('./src/utils/loadForm.cjs');
+const { buildRepeatDraft } = require('./src/utils/repeatLoad.cjs');
 
 const initialLoadForm = () => ({
   title: '', description: '', urgencyType: 'immediate', scheduledDate: '', scheduledTime: '',
@@ -76,12 +78,17 @@ function CustomerApp() {
   const loadDetailRequest = useRef(0);
   const [loadOffers, setLoadOffers] = useState([]);
   const [offersLoading, setOffersLoading] = useState(false);
+	const [selectedLoadWallet, setSelectedLoadWallet] = useState(null);
+	const [walletSaving, setWalletSaving] = useState(false);
+	const [favoriteDriverIds, setFavoriteDriverIds] = useState(new Set());
+	const [favoriteSaving, setFavoriteSaving] = useState(false);
   const [account, setAccount] = useState(null);
+  const [accountPage, setAccountPage] = useState('home');
   const [accountLoading, setAccountLoading] = useState(false);
   const [accountError, setAccountError] = useState('');
   const [accountSaving, setAccountSaving] = useState(false);
   const [passwordSaving, setPasswordSaving] = useState(false);
-  const [accountForm, setAccountForm] = useState({ name: '', email: '', phone: '', currentPassword: '', newPassword: '' });
+  const [accountForm, setAccountForm] = useState({ name: '', email: '', phone: '', currentPassword: '', newPassword: '', newPasswordConfirm: '' });
   const [confirmation, setConfirmation] = useState(null);
   const [confirmationLoading, setConfirmationLoading] = useState(false);
   const [notificationData, setNotificationData] = useState(null);
@@ -96,8 +103,10 @@ function CustomerApp() {
   useEffect(() => subscribeSessionExpired(() => {
     setUser(null);
     setTab('home');
+    setAccountPage('home');
     loadDetailRequest.current += 1;
     setSelectedLoad(null);
+	setSelectedLoadWallet(null);
     setDeliveryCode(emptyDeliveryCode);
     showToast('Oturumunuz sona erdi. Lütfen tekrar giriş yapın.', { type: 'warning' });
   }), [showToast]);
@@ -210,9 +219,12 @@ function CustomerApp() {
     setOffersLoading(true);
     const shouldFetchDeliveryCode = deliveryCodeStatuses.has(load.status) && !load.deliveryVerified;
     setDeliveryCode(shouldFetchDeliveryCode ? { value: '', loading: true, error: '' } : emptyDeliveryCode);
-    const [offerResult, codeResult] = await Promise.allSettled([
+	const corporateAccount = user?.accountType === 'corporate';
+    const [offerResult, codeResult, walletResult, favoriteResult] = await Promise.allSettled([
       offers.list(load.id),
       shouldFetchDeliveryCode ? loads.deliveryCode(load.id) : Promise.resolve(null),
+	  corporateAccount ? corporate.loadWallet(load.id) : Promise.resolve(null),
+	  corporateAccount && load.assignedDriverId ? corporate.favorites() : Promise.resolve(null),
     ]);
     if (requestID !== loadDetailRequest.current) return;
     if (offerResult.status === 'fulfilled') {
@@ -226,8 +238,10 @@ function CustomerApp() {
         ? { value: String(codeResult.value.data?.deliveryCode || ''), loading: false, error: '' }
         : { value: '', loading: false, error: apiError(codeResult.reason) });
     }
+	setSelectedLoadWallet(walletResult.status === 'fulfilled' ? walletResult.value?.data || null : null);
+	if (favoriteResult.status === 'fulfilled' && favoriteResult.value) setFavoriteDriverIds(new Set((favoriteResult.value.data?.items || []).map(item => item.driver?.id).filter(Boolean)));
     setOffersLoading(false);
-  }, [showToast]);
+  }, [showToast, user?.accountType]);
   const openMessageLoad = useCallback(async id => {
     try {
       const { data } = await loads.get(id);
@@ -257,6 +271,7 @@ function CustomerApp() {
       await offers.accept(offer.id);
       loadDetailRequest.current += 1;
       setSelectedLoad(null);
+	  setSelectedLoadWallet(null);
       setDeliveryCode(emptyDeliveryCode);
       setConfirmation(null);
       await fetchLoads();
@@ -273,6 +288,7 @@ function CustomerApp() {
       await loads.status(load.id, 'cancelled');
       loadDetailRequest.current += 1;
       setSelectedLoad(null);
+	  setSelectedLoadWallet(null);
       setDeliveryCode(emptyDeliveryCode);
       setConfirmation(null);
       await fetchLoads();
@@ -291,21 +307,24 @@ function CustomerApp() {
       setUser(data);
       await updateStoredUser(data);
       showToast('Profil bilgileriniz kaydedildi.', { type: 'success', title: 'Hesap güncellendi' });
+      return true;
     } catch (error) {
       showToast(apiError(error), { type: 'error', title: 'Hesap güncellenemedi' });
+      return false;
     } finally {
       setAccountSaving(false);
     }
   }, [accountForm, showToast]);
   const changePassword = useCallback(async () => {
-    if (!accountForm.currentPassword || accountForm.newPassword.length < 8) {
-      showToast('Mevcut şifrenizi ve en az 8 karakterlik yeni şifrenizi girin.', { type: 'error', title: 'Şifre bilgisi eksik' });
+    if (!accountForm.currentPassword || accountForm.newPassword.length < 8 || accountForm.newPassword !== accountForm.newPasswordConfirm) {
+      showToast('Mevcut şifrenizi, eşleşen ve en az 8 karakterlik yeni şifrenizi girin.', { type: 'error', title: 'Şifre bilgisi eksik' });
       return;
     }
     setPasswordSaving(true);
     try {
       await profile.changePassword({ currentPassword: accountForm.currentPassword, newPassword: accountForm.newPassword });
-      setAccountForm(current => ({ ...current, currentPassword: '', newPassword: '' }));
+      setAccountForm(current => ({ ...current, currentPassword: '', newPassword: '', newPasswordConfirm: '' }));
+      setAccountPage('home');
       showToast('Yeni şifreniz kaydedildi.', { type: 'success', title: 'Şifre değiştirildi' });
     } catch (error) {
       showToast(apiError(error), { type: 'error', title: 'Şifre değiştirilemedi' });
@@ -326,11 +345,51 @@ function CustomerApp() {
       setConfirmationLoading(false);
       setUser(null);
       setTab('home');
+      setAccountPage('home');
       loadDetailRequest.current += 1;
       setSelectedLoad(null);
+	  setSelectedLoadWallet(null);
       setDeliveryCode(emptyDeliveryCode);
     }
   }, []);
+
+  const openAccountLoad = useCallback(async load => {
+    setAccountPage('home');
+    setTab('loads');
+    await openLoad(load);
+  }, [openLoad]);
+  const registerPushAfterPermission = useCallback(async () => {
+    const token = await registerDevicePushToken(push);
+    if (token) pushToken.current = token;
+  }, []);
+
+	const applyWalletCredit = useCallback(async amountCents => {
+	  if (!selectedLoad?.id || amountCents <= 0) return;
+	  setWalletSaving(true);
+	  try {
+		const { data } = await corporate.applyWallet(selectedLoad.id, amountCents);
+		setSelectedLoadWallet(data);
+		showToast(`${formatMoney(amountCents / 100)} kurumsal kredi uygulandı.`, { type: 'success', title: 'Cüzdan kullanıldı' });
+	  } catch (error) { showToast(apiError(error), { type: 'error', title: 'Cüzdan kullanılamadı' }); }
+	  finally { setWalletSaving(false); }
+	}, [selectedLoad?.id, showToast]);
+	const toggleFavoriteDriver = useCallback(async driverId => {
+	  if (!driverId) return;
+	  setFavoriteSaving(true);
+	  try {
+		if (favoriteDriverIds.has(driverId)) await corporate.removeFavorite(driverId); else await corporate.addFavorite(driverId);
+		setFavoriteDriverIds(current => { const next = new Set(current); if (next.has(driverId)) next.delete(driverId); else next.add(driverId); return next; });
+		showToast(favoriteDriverIds.has(driverId) ? 'Şoför favorilerden çıkarıldı.' : 'Şoför favorilere eklendi.', { type: 'success' });
+	  } catch (error) { showToast(apiError(error), { type: 'error', title: 'Favori güncellenemedi' }); }
+	  finally { setFavoriteSaving(false); }
+	}, [favoriteDriverIds, showToast]);
+	const repeatLoad = useCallback(load => {
+	  const draft = buildRepeatDraft(load);
+	  setForm(draft.form);
+	  setRouteDraft(draft.routeDraft);
+	  setPhotos([]); setPendingDraftId(null); setSelectedLoad(null); setSelectedLoadWallet(null); setTab('home'); setFormErrors({});
+	  showToast('Eski nakliye bilgileri yeni ilan formuna kopyalandı. Tarih ve rotayı doğrulayarak yayınlayın.', { type: 'success', title: 'Yeni ilan hazır' });
+	}, [showToast]);
 
   if (restoring) return <View style={styles.center}><ListSkeleton count={2} /><Text style={styles.centerText}>Oturum güvenli biçimde yükleniyor…</Text></View>;
   if (!user) return <AuthFlow auth={auth} saveSession={saveSession} apiError={apiError} onSession={setUser} allowedRole="customer" connectionCheck={<ConnectionCheck />} />;
@@ -338,17 +397,18 @@ function CustomerApp() {
   const body = tab === 'home'
     ? <CustomerHome form={form} setForm={setForm} errors={formErrors} setErrors={setFormErrors} photos={photos} setPhotos={setPhotos} routeDraft={routeDraft} onLocationsChange={handleLocationsChange} onRouteChange={handleRouteChange} saving={saving} publish={publish} loads={myLoads} onShowLoads={() => setTab('loads')} />
     : tab === 'loads'
-      ? <CustomerLoads loading={loadsLoading} error={loadsError} items={myLoads} selected={selectedLoad} offers={loadOffers} offersLoading={offersLoading} deliveryCode={deliveryCode.value} deliveryCodeLoading={deliveryCode.loading} deliveryCodeError={deliveryCode.error} onOpen={openLoad} onClose={() => { loadDetailRequest.current += 1; setSelectedLoad(null); setDeliveryCode(emptyDeliveryCode); }} onAccept={offer => setConfirmation({ type: 'accept', target: offer })} onCancel={load => setConfirmation({ type: 'cancel', target: load })} retry={fetchLoads} />
+      ? <CustomerLoads loading={loadsLoading} error={loadsError} items={myLoads} selected={selectedLoad} offers={loadOffers} offersLoading={offersLoading} deliveryCode={deliveryCode.value} deliveryCodeLoading={deliveryCode.loading} deliveryCodeError={deliveryCode.error} walletInfo={selectedLoadWallet} walletSaving={walletSaving} onApplyWallet={applyWalletCredit} isCorporate={user?.accountType === 'corporate'} isFavorite={favoriteDriverIds.has(selectedLoad?.assignedDriverId)} favoriteSaving={favoriteSaving} onToggleFavorite={toggleFavoriteDriver} onRepeat={repeatLoad} onOpen={openLoad} onClose={() => { loadDetailRequest.current += 1; setSelectedLoad(null); setSelectedLoadWallet(null); setDeliveryCode(emptyDeliveryCode); }} onAccept={offer => setConfirmation({ type: 'accept', target: offer })} onCancel={load => setConfirmation({ type: 'cancel', target: load })} retry={fetchLoads} />
       : tab === 'messages'
         ? <ConversationCenter currentUser={user} api={conversations} apiError={apiError} resolveMediaUrl={resolveMediaUrl} formatMoney={formatMoney} loadStatusLabel={loadStatusLabel} onOpenLoad={openMessageLoad} initialConversationId={pendingConversationId} onInitialConversationHandled={handleInitialConversation} reverseGeocode={maps.reverse} nativeMapsConfigured={nativeGoogleMapsConfigured} nativeMapsMessage={nativeGoogleMapsMessage} bottomInset={control.bottomNavHeight + insets.bottom} />
-        : <CustomerAccount loading={accountLoading} error={accountError} account={account} form={accountForm} setForm={setAccountForm} save={saveAccount} saveLoading={accountSaving} changePassword={changePassword} passwordLoading={passwordSaving} logout={() => setConfirmation({ type: 'logout' })} retry={fetchAccount} />;
+        : <CustomerAccountScreens page={accountPage} onPageChange={setAccountPage} loading={accountLoading} error={accountError} account={account} form={accountForm} setForm={setAccountForm} save={saveAccount} saveLoading={accountSaving} changePassword={changePassword} passwordLoading={passwordSaving} logout={() => setConfirmation({ type: 'logout' })} retry={fetchAccount} onOpenLoad={openAccountLoad} onPermissionGranted={registerPushAfterPermission} />;
 
-  const refresh = tab === 'home' || tab === 'loads' ? fetchLoads : tab === 'account' ? fetchAccount : undefined;
+  const refresh = tab === 'home' || tab === 'loads' ? fetchLoads : tab === 'account' && accountPage === 'home' ? fetchAccount : undefined;
+  const showBottomNav = tab !== 'account' || accountPage === 'home';
   return <View style={styles.screen}>
     <StatusBar style="light" />
     <AppHeader title="NakliyeGo" subtitle={tab === 'home' ? 'Müşteri paneli' : tab === 'loads' ? 'İlan yönetimi' : tab === 'messages' ? 'Mesajlar' : 'Hesabım'} initials={user.name?.split(' ').map(part => part[0]).join('').slice(0, 2).toUpperCase()} topInset={insets.top} />
-    {tab === 'messages' ? body : <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0}><ScrollView contentContainerStyle={[styles.content, { paddingBottom: control.bottomNavHeight + insets.bottom + spacing.xl }]} keyboardShouldPersistTaps="handled" keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'} showsVerticalScrollIndicator={false} refreshControl={refresh ? <RefreshControl refreshing={tab === 'account' ? accountLoading : loadsLoading} onRefresh={refresh} tintColor={colors.primary} /> : undefined}>{body}</ScrollView></KeyboardAvoidingView>}
-    <BottomNav items={navItems} value={tab} onChange={value => { setTab(value); if (value !== 'loads') { loadDetailRequest.current += 1; setSelectedLoad(null); setDeliveryCode(emptyDeliveryCode); } }} bottomInset={insets.bottom} />
+    {tab === 'messages' ? body : <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0}><ScrollView contentContainerStyle={[styles.content, { paddingBottom: (showBottomNav ? control.bottomNavHeight + insets.bottom : insets.bottom) + spacing.xl }]} keyboardShouldPersistTaps="handled" keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'} showsVerticalScrollIndicator={false} refreshControl={refresh ? <RefreshControl refreshing={tab === 'account' ? accountLoading : loadsLoading} onRefresh={refresh} tintColor={colors.primary} /> : undefined}>{body}</ScrollView></KeyboardAvoidingView>}
+    {showBottomNav ? <BottomNav items={navItems} value={tab} onChange={value => { setTab(value); setAccountPage('home'); if (value !== 'loads') { loadDetailRequest.current += 1; setSelectedLoad(null); setSelectedLoadWallet(null); setDeliveryCode(emptyDeliveryCode); } }} bottomInset={insets.bottom} /> : null}
     <ConfirmationModal
       visible={Boolean(confirmation)}
       title={confirmation?.type === 'accept' ? 'Teklifi kabul et' : confirmation?.type === 'cancel' ? 'İlanı iptal et' : 'Hesaptan çıkış'}

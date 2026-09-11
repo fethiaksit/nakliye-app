@@ -20,6 +20,7 @@ import (
 	"nakliye-api/internal/store"
 	"net"
 	"net/http"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -29,6 +30,7 @@ import (
 
 type API struct {
 	store             *store.RedisStore
+	pricing           service.PricingConfig
 	secret            []byte
 	push              PushSender
 	maps              mapsService
@@ -58,13 +60,16 @@ type Options struct {
 	Secret                 string
 	GoogleMapsServerAPIKey string
 	MapsKeyError           string
-	PricePerKM             float64
-	MaxUploadMB            int
-	AdminEmail             string
-	AdminPassword          string
-	AdminPasswordHash      string
-	AdminSecret            string
-	PushSender             PushSender
+	Pricing                service.PricingConfig
+	// PricePerKM is retained for source compatibility with older test and
+	// integration callers. Active pricing uses Pricing and its 50 TL/km default.
+	PricePerKM        float64
+	MaxUploadMB       int
+	AdminEmail        string
+	AdminPassword     string
+	AdminPasswordHash string
+	AdminSecret       string
+	PushSender        PushSender
 }
 
 func New(s *store.RedisStore, secret string) *API {
@@ -76,8 +81,12 @@ func New(s *store.RedisStore, secret string) *API {
 }
 
 func NewWithOptions(s *store.RedisStore, options Options) *API {
-	if options.PricePerKM <= 0 {
-		options.PricePerKM = service.DefaultPricePerKM
+	pricing := options.Pricing
+	if pricing.BaseDriverFee <= 0 && pricing.PricePerKM <= 0 {
+		pricing = service.DefaultPricingConfig()
+	}
+	if pricing.PricePerKM <= 0 {
+		pricing.PricePerKM = service.DefaultPricePerKM
 	}
 	if options.MaxUploadMB <= 0 || options.MaxUploadMB > 50 {
 		options.MaxUploadMB = 10
@@ -88,9 +97,10 @@ func NewWithOptions(s *store.RedisStore, options Options) *API {
 	}
 	return &API{
 		store:             s,
+		pricing:           pricing,
 		secret:            []byte(options.Secret),
 		push:              pushSender,
-		maps:              service.NewGoogleMapsClient(options.GoogleMapsServerAPIKey, options.PricePerKM),
+		maps:              service.NewGoogleMapsClientWithPricing(options.GoogleMapsServerAPIKey, pricing),
 		mapsKeyIssue:      options.MapsKeyError,
 		locationRate:      service.NewFixedWindowLimiter(60, time.Minute),
 		deliveryCodeRate:  service.NewFixedWindowLimiter(10, time.Minute),
@@ -134,6 +144,15 @@ func (a *API) Routes() http.Handler {
 	mux.Handle("GET /api/me", a.auth(http.HandlerFunc(a.me)))
 	mux.Handle("PATCH /api/me", a.auth(http.HandlerFunc(a.updateMe)))
 	mux.Handle("PATCH /api/me/password", a.auth(http.HandlerFunc(a.updatePassword)))
+	mux.Handle("GET /api/corporate/company", a.auth(http.HandlerFunc(a.corporateCompany)))
+	mux.Handle("PATCH /api/corporate/company", a.auth(http.HandlerFunc(a.updateCorporateCompany)))
+	mux.Handle("GET /api/corporate/dashboard", a.auth(http.HandlerFunc(a.corporateDashboard)))
+	mux.Handle("GET /api/corporate/wallet", a.auth(http.HandlerFunc(a.corporateWallet)))
+	mux.Handle("GET /api/corporate/loads/{id}/wallet", a.auth(http.HandlerFunc(a.corporateLoadWallet)))
+	mux.Handle("POST /api/corporate/loads/{id}/wallet", a.auth(http.HandlerFunc(a.applyCorporateWallet)))
+	mux.Handle("GET /api/corporate/favorite-drivers", a.auth(http.HandlerFunc(a.favoriteDrivers)))
+	mux.Handle("POST /api/corporate/favorite-drivers", a.auth(http.HandlerFunc(a.addFavoriteDriver)))
+	mux.Handle("DELETE /api/corporate/favorite-drivers/{id}", a.auth(http.HandlerFunc(a.removeFavoriteDriver)))
 	mux.Handle("POST /api/push/token", a.auth(http.HandlerFunc(a.registerPushToken)))
 	mux.Handle("DELETE /api/push/token", a.auth(http.HandlerFunc(a.deletePushToken)))
 	mux.HandleFunc("GET /api/photos/{id}", a.photo)
@@ -176,6 +195,9 @@ func (a *API) Routes() http.Handler {
 	mux.Handle("DELETE /api/messages/{id}", a.auth(http.HandlerFunc(a.deleteMessage)))
 	mux.Handle("POST /api/messages/{id}/complaints", a.auth(http.HandlerFunc(a.createMessageComplaint)))
 	mux.Handle("POST /api/loads/{id}/complaints", a.auth(http.HandlerFunc(a.createLoadComplaint)))
+	mux.Handle("GET /api/complaints/mine", a.auth(http.HandlerFunc(a.myComplaints)))
+	mux.Handle("GET /api/complaints/{id}", a.auth(http.HandlerFunc(a.myComplaint)))
+	mux.Handle("POST /api/complaints", a.auth(http.HandlerFunc(a.createSupportRequest)))
 	mux.Handle("GET /api/listings", a.auth(http.HandlerFunc(a.loads)))
 	mux.Handle("POST /api/listings", a.auth(http.HandlerFunc(a.createLoad)))
 	mux.Handle("GET /api/listings/{id}", a.auth(http.HandlerFunc(a.load)))
@@ -192,6 +214,8 @@ func (a *API) Routes() http.Handler {
 	mux.Handle("PATCH /api/driver/vehicles/{id}", a.auth(http.HandlerFunc(a.updateVehicle)))
 	mux.Handle("DELETE /api/driver/vehicles/{id}", a.auth(http.HandlerFunc(a.deleteVehicle)))
 	mux.Handle("PATCH /api/driver/vehicles/{id}/activate", a.auth(http.HandlerFunc(a.activateVehicle)))
+	mux.Handle("GET /api/driver/documents", a.auth(http.HandlerFunc(a.listDriverDocuments)))
+	mux.Handle("GET /api/driver/documents/{id}", a.auth(http.HandlerFunc(a.driverDocument)))
 	return requestID(logging(cors(mux)))
 }
 func (a *API) health(w http.ResponseWriter, r *http.Request) {
@@ -202,17 +226,27 @@ func (a *API) health(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "ok", "service": "nakliye-api", "storage": "redis"})
 }
 func (a *API) register(w http.ResponseWriter, r *http.Request) {
-	var req struct{ Name, Email, Phone, Password, Role string }
+	var req struct{ Name, Email, Phone, Password, Role, AccountType, CompanyName string }
 	if !decode(w, r, &req) {
 		return
 	}
 	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
 	req.Phone = normalizePhone(req.Phone)
+	if req.Role == models.RoleCustomer && strings.TrimSpace(req.AccountType) == "" {
+		req.AccountType = models.AccountTypeIndividual
+	}
 	// Public registration intentionally permits only the two mobile roles.
-	// Corporate and admin are valid system roles but must be provisioned by a
-	// trusted administrative workflow, never by this public endpoint.
+	// A corporate customer remains a customer role and uses the same auth flow.
 	if strings.TrimSpace(req.Name) == "" || !strings.Contains(req.Email, "@") || !validTurkishPhone(req.Phone) || len(req.Password) < 8 || (req.Role != models.RoleCustomer && req.Role != models.RoleDriver) {
 		badRequest(w, "ad, geçerli e-posta ve telefon, en az 8 karakter şifre ve rol zorunludur")
+		return
+	}
+	if req.Role == models.RoleCustomer && !models.ValidCustomerAccountType(req.AccountType) || req.Role == models.RoleDriver && req.AccountType != "" {
+		badRequest(w, "geçerli hesap türü zorunludur")
+		return
+	}
+	if req.AccountType == models.AccountTypeCorporate && strings.TrimSpace(req.CompanyName) == "" {
+		badRequest(w, "kurumsal hesap için firma adı zorunludur")
 		return
 	}
 	if _, e := a.store.GetUserByEmail(req.Email); e == nil {
@@ -228,16 +262,28 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 		serverError(w, err)
 		return
 	}
-	u := models.User{ID: uuid.NewString(), Name: strings.TrimSpace(req.Name), Email: req.Email, Phone: req.Phone, Role: req.Role, PasswordHash: hash, AccountStatus: models.AccountStatusActive, CreatedAt: time.Now().UTC()}
+	now := time.Now().UTC()
+	u := models.User{ID: uuid.NewString(), Name: strings.TrimSpace(req.Name), Email: req.Email, Phone: req.Phone, Role: req.Role, AccountType: req.AccountType, PasswordHash: hash, AccountStatus: models.AccountStatusActive, CreatedAt: now}
 	if u.Role == models.RoleDriver {
 		u.DriverProfile.VerificationStatus = models.VerificationPending
 		u.DriverProfile.LicenseStatus = models.VerificationPending
 	}
-	if e := a.store.CreateUser(u); errors.Is(e, store.ErrUserExists) {
+	var createErr error
+	if u.Role == models.RoleCustomer && models.CustomerAccountType(u) == models.AccountTypeCorporate {
+		company := models.Company{
+			ID: uuid.NewString(), OwnerCustomerID: u.ID, Name: strings.TrimSpace(req.CompanyName), AuthorizedPerson: u.Name,
+			Phone: u.Phone, Email: u.Email, CreatedAt: now, UpdatedAt: now,
+		}
+		wallet := models.CorporateWallet{ID: uuid.NewString(), CompanyID: company.ID, CreatedAt: now, UpdatedAt: now}
+		createErr = a.store.CreateCorporateAccount(u, company, wallet)
+	} else {
+		createErr = a.store.CreateUser(u)
+	}
+	if errors.Is(createErr, store.ErrUserExists) {
 		conflict(w, "e-posta veya telefon numarası zaten kayıtlı")
 		return
-	} else if e != nil {
-		serverError(w, e)
+	} else if createErr != nil {
+		serverError(w, createErr)
 		return
 	}
 	a.session(w, u)
@@ -364,10 +410,10 @@ func (a *API) updateMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Name          string               `json:"name"`
-		Email         string               `json:"email"`
-		Phone         string               `json:"phone"`
-		DriverProfile models.DriverProfile `json:"driverProfile"`
+		Name          string                `json:"name"`
+		Email         string                `json:"email"`
+		Phone         string                `json:"phone"`
+		DriverProfile *models.DriverProfile `json:"driverProfile"`
 	}
 	if !decode(w, r, &req) {
 		return
@@ -394,14 +440,19 @@ func (a *API) updateMe(w http.ResponseWriter, r *http.Request) {
 		conflict(w, "bu telefon numarası zaten kayıtlı")
 		return
 	}
-	if principal.Role == models.RoleDriver {
+	if principal.Role == models.RoleDriver && req.DriverProfile != nil {
 		if req.DriverProfile.CapacityKG < 0 || req.DriverProfile.Rating < 0 || req.DriverProfile.Rating > 5 {
 			badRequest(w, "şoför profil bilgileri geçersiz")
 			return
 		}
-		updated.DriverProfile = req.DriverProfile
+		updated.DriverProfile = *req.DriverProfile
 		updated.DriverProfile.CompletedJobs = user.DriverProfile.CompletedJobs
 		updated.DriverProfile.Rating = user.DriverProfile.Rating
+		updated.DriverProfile.LicenseStatus = user.DriverProfile.LicenseStatus
+		updated.DriverProfile.VerificationStatus = user.DriverProfile.VerificationStatus
+		updated.DriverProfile.VerificationNote = user.DriverProfile.VerificationNote
+		updated.DriverProfile.VerifiedAt = user.DriverProfile.VerifiedAt
+		updated.DriverProfile.VerifiedBy = user.DriverProfile.VerifiedBy
 	}
 	if err = a.store.UpdateUser(user, updated); err != nil {
 		serverError(w, err)
@@ -650,6 +701,7 @@ func (a *API) calculateRoute(w http.ResponseWriter, r *http.Request) {
 		writeRouteError(w, err, "routes")
 		return
 	}
+	route = a.normalizeRoutePricing(route)
 	jsonResponse(w, http.StatusOK, route)
 }
 
@@ -835,7 +887,16 @@ type mapRouteResponse struct {
 	EncodedPolyline string  `json:"encoded_polyline"`
 }
 
-func mapRoute(route service.RouteResult) mapRouteResponse {
+func (a *API) normalizeRoutePricing(route service.RouteResult) service.RouteResult {
+	route.PricePerKM = a.pricing.PricePerKM
+	if price, err := service.CalculateBasePrice(a.pricing, route.DistanceKM); err == nil {
+		route.EstimatedPriceTL = price
+	}
+	return route
+}
+
+func (a *API) mapRoute(route service.RouteResult) mapRouteResponse {
+	route = a.normalizeRoutePricing(route)
 	return mapRouteResponse{
 		DistanceMeters: route.DistanceMeters, DistanceKM: route.DistanceKM,
 		DurationSeconds: route.DurationSeconds, DurationMinutes: route.DurationMinutes,
@@ -863,7 +924,7 @@ func (a *API) mapCalculateRoute(w http.ResponseWriter, r *http.Request) {
 		writeRouteError(w, err, "routes")
 		return
 	}
-	jsonResponse(w, http.StatusOK, map[string]any{"data": mapRoute(route)})
+	jsonResponse(w, http.StatusOK, map[string]any{"data": a.mapRoute(route)})
 }
 
 type loadRequest struct {
@@ -884,6 +945,7 @@ type loadRequest struct {
 	DeliveryElevatorAvailable bool               `json:"deliveryElevatorAvailable"`
 	HelperNeeded              bool               `json:"helperNeeded"`
 	HelperCount               int                `json:"helperCount"`
+	WaitingMinutes            int                `json:"waitingMinutes"`
 }
 
 func normalizeLoadRequest(req *loadRequest) {
@@ -949,6 +1011,9 @@ func validLoad(req loadRequest, now time.Time) error {
 	if req.HelperNeeded && (req.HelperCount < 1 || req.HelperCount > models.MaxHelperCount) {
 		return fmt.Errorf("yardımcı personel sayısı 1 ile %d arasında olmalıdır", models.MaxHelperCount)
 	}
+	if req.WaitingMinutes < 0 {
+		return errors.New("bekleme süresi negatif olamaz")
+	}
 	return nil
 }
 
@@ -1003,6 +1068,25 @@ func (a *API) newLoad(ctx context.Context, customerID string, req loadRequest, s
 		return models.Load{}, e
 	}
 	now := time.Now().UTC()
+	loadLevel, e := service.DetermineLoadLevelWithConfig(a.pricing, service.LoadFeatures{
+		Dimensions: req.Dimensions, CargoType: req.CargoType,
+		PickupFloor: req.PickupFloor, DeliveryFloor: req.DeliveryFloor,
+		PickupElevatorAvailable: req.PickupElevatorAvailable, DeliveryElevatorAvailable: req.DeliveryElevatorAvailable,
+		HelperNeeded: req.HelperNeeded,
+	})
+	if e != nil {
+		return models.Load{}, e
+	}
+	pricing, e := service.CalculateEstimatedPrice(a.pricing, service.PricingInput{
+		DistanceKM: route.DistanceKM, LoadLevel: loadLevel, WaitingMinutes: req.WaitingMinutes,
+		RequestedStartAt: req.ScheduledAt, UrgencyType: req.UrgencyType, Now: now,
+	})
+	if e != nil {
+		return models.Load{}, e
+	}
+	if a.pricingLogEnabled() {
+		log.Printf("[PRICING] distance_km=%.2f base_driver_fee=%.2f price_per_km=%.2f distance_fee=%.2f base_price=%.2f load_level=%s load_multiplier=%.2f waiting_fee=%.2f final_price=%.2f", pricing.DistanceKM, pricing.BaseDriverFee, pricing.PricePerKM, pricing.DistanceFee, pricing.BasePrice, pricing.LoadLevel, pricing.LoadMultiplier, pricing.WaitingFee, pricing.FinalPrice)
+	}
 	// Build the load with all extended fields from the request.
 	load := models.Load{
 		ID:                        uuid.NewString(),
@@ -1015,13 +1099,14 @@ func (a *API) newLoad(ctx context.Context, customerID string, req loadRequest, s
 		Delivery:                  normalizeLocation(req.Delivery),
 		RouteDistanceMeters:       route.DistanceMeters,
 		RouteDurationSeconds:      route.DurationSeconds,
-		PricePerKM:                route.PricePerKM,
+		PricePerKM:                pricing.PricePerKM,
 		RouteEncodedPolyline:      route.EncodedPolyline,
 		RouteProvider:             route.RouteProvider,
 		RouteCoordinates:          route.RouteCoordinates,
-		EstimatedKM:               route.DistanceKM,
-		BasePriceTL:               route.EstimatedPriceTL,
-		AgreedPriceTL:             route.EstimatedPriceTL,
+		EstimatedKM:               pricing.DistanceKM,
+		BasePriceTL:               pricing.FinalPrice,
+		AgreedPriceTL:             pricing.FinalPrice,
+		Pricing:                   pricingSnapshot(pricing),
 		Status:                    status,
 		CreatedAt:                 now,
 		UpdatedAt:                 now,
@@ -1038,6 +1123,24 @@ func (a *API) newLoad(ctx context.Context, customerID string, req loadRequest, s
 		HelperCount:               req.HelperCount,
 	}
 	return load, nil
+}
+
+func pricingSnapshot(breakdown service.PricingBreakdown) *models.PricingSnapshot {
+	return &models.PricingSnapshot{
+		DistanceKM: breakdown.DistanceKM, BaseDriverFee: breakdown.BaseDriverFee,
+		PricePerKM: breakdown.PricePerKM, DistanceFee: breakdown.DistanceFee,
+		BasePrice: breakdown.BasePrice, LoadLevel: string(breakdown.LoadLevel),
+		LoadMultiplier: breakdown.LoadMultiplier, LoadExtra: breakdown.LoadExtra,
+		WaitingMinutes: breakdown.WaitingMinutes, WaitingFee: breakdown.WaitingFee,
+		NightMultiplier: breakdown.NightMultiplier, UrgentMultiplier: breakdown.UrgentMultiplier,
+		HolidayMultiplier: breakdown.HolidayMultiplier, WeekendMultiplier: breakdown.WeekendMultiplier,
+		FinalPrice: breakdown.FinalPrice, RecommendedPrice: breakdown.RecommendedPrice,
+		Currency: breakdown.Currency,
+	}
+}
+
+func (a *API) pricingLogEnabled() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("APP_ENV")), "development") || strings.EqualFold(strings.TrimSpace(os.Getenv("APP_ENV")), "test")
 }
 func (a *API) getOwnedLoad(w http.ResponseWriter, r *http.Request) (models.Load, bool) {
 	l, e := a.store.GetLoad(r.PathValue("id"))
@@ -1177,8 +1280,31 @@ func (a *API) updateStatus(w http.ResponseWriter, r *http.Request) {
 		source = models.LoadStatusSourceDriverApp
 	}
 	event := newLoadStatusEvent(l.ID, from, l.Status, p.ID, p.Role, source, "Durum mobil akıştan güncellendi", l.UpdatedAt)
-	if e := a.store.TransitionLoadStatus(from, l, event); e != nil {
-		writeLoadStatusError(w, e)
+	var transitionErr error
+	if l.Status == models.LoadStatusCancelled {
+		company, companyErr := a.companyForCorporateCustomer(l.CustomerID)
+		if companyErr != nil {
+			serverError(w, companyErr)
+			return
+		}
+		reversal := models.WalletTransaction{
+			ID: uuid.NewString(), LoadID: l.ID, Type: models.WalletTransactionReversal,
+			Description: "İptal edilen nakliye kredi iadesi", PickupAddress: l.Pickup.Address, DeliveryAddress: l.Delivery.Address,
+			ActorID: p.ID, ActorRole: p.Role, CreatedAt: l.UpdatedAt,
+		}
+		if company != nil {
+			reversal.CompanyID = company.ID
+		}
+		_, transitionErr = a.store.TransitionLoadStatusAndReverseWallet(from, l, event, company, reversal)
+	} else {
+		transitionErr = a.store.TransitionLoadStatus(from, l, event)
+	}
+	if transitionErr != nil {
+		if isWalletError(transitionErr) {
+			writeWalletError(w, transitionErr)
+		} else {
+			writeLoadStatusError(w, transitionErr)
+		}
 		return
 	}
 	if l.AssignedDriver != "" {
@@ -1652,6 +1778,36 @@ func (a *API) activateVehicle(w http.ResponseWriter, r *http.Request) {
 	}
 	updated, _ := a.store.GetVehicle(vehicleID)
 	jsonResponse(w, http.StatusOK, updated)
+}
+func (a *API) listDriverDocuments(w http.ResponseWriter, r *http.Request) {
+	p := current(r)
+	if p.Role != models.RoleDriver {
+		forbidden(w)
+		return
+	}
+	documents, err := a.store.ListDriverDocuments(p.ID)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]any{"items": documents})
+}
+func (a *API) driverDocument(w http.ResponseWriter, r *http.Request) {
+	p := current(r)
+	if p.Role != models.RoleDriver {
+		forbidden(w)
+		return
+	}
+	document, err := a.store.GetDriverDocument(r.PathValue("id"))
+	if err != nil {
+		notFound(w)
+		return
+	}
+	if document.DriverID != p.ID {
+		forbidden(w)
+		return
+	}
+	jsonResponse(w, http.StatusOK, document)
 }
 func (a *API) messages(w http.ResponseWriter, r *http.Request) {
 	l, ok := a.getMessageLoad(w, r)
@@ -2313,6 +2469,8 @@ func publicUser(u models.User) map[string]any {
 	}
 	if u.Role == models.RoleDriver {
 		user["driverProfile"] = u.DriverProfile
+	} else if u.Role == models.RoleCustomer {
+		user["accountType"] = models.CustomerAccountType(u)
 	}
 	return user
 }

@@ -37,7 +37,7 @@ func (stubMaps) Reverse(_ context.Context, coordinate models.Coordinate) (servic
 func (stubMaps) Calculate(_ context.Context, pickup, dropoff models.Coordinate) (service.RouteResult, error) {
 	return service.RouteResult{
 		DistanceMeters: 18000, DistanceKM: 18, DurationSeconds: 1800, DurationMinutes: 30,
-		PricePerKM: 200, EstimatedPriceTL: 3600, Currency: "TRY", EncodedPolyline: "encoded",
+		PricePerKM: 50, EstimatedPriceTL: 2400, Currency: "TRY", EncodedPolyline: "encoded",
 		RouteProvider: "test", RouteCoordinates: []models.Coordinate{pickup, dropoff},
 	}, nil
 }
@@ -58,7 +58,7 @@ func newFlowTestAPI(t *testing.T) (http.Handler, *store.RedisStore) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	api := NewWithOptions(redisStore, Options{Secret: integrationTestSecret, PricePerKM: 200, MaxUploadMB: 1})
+	api := NewWithOptions(redisStore, Options{Secret: integrationTestSecret, PricePerKM: 50, MaxUploadMB: 1})
 	api.maps = stubMaps{}
 	return api.Routes(), redisStore
 }
@@ -286,7 +286,7 @@ func TestPhaseZeroCoreFlow(t *testing.T) {
 
 	// A fresh handler over the same Redis store simulates an API restart: data
 	// and tokens remain valid because no flow state is held in process memory.
-	restartedAPI := NewWithOptions(redisStore, Options{Secret: integrationTestSecret, PricePerKM: 200, MaxUploadMB: 1})
+	restartedAPI := NewWithOptions(redisStore, Options{Secret: integrationTestSecret, PricePerKM: 50, MaxUploadMB: 1})
 	restartedAPI.maps = stubMaps{}
 	restartedMessages := requestJSON(t, restartedAPI.Routes(), http.MethodGet, "/api/conversations/"+createdLoads[0].ID+"/messages", driver.AccessToken, nil)
 	if restartedMessages.Code != http.StatusOK {

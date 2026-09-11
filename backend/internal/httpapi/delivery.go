@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"nakliye-api/internal/models"
 )
 
@@ -210,10 +211,28 @@ func (a *API) completeDelivery(w http.ResponseWriter, r *http.Request) {
 	verification.VerifiedByUserID, verification.VerifiedByRole = principal.ID, principal.Role
 	verification.VerificationMethod, verification.PhotoURL = models.DeliveryVerificationMethodCodePhoto, photoURL
 	event := newLoadStatusEvent(load.ID, from, load.Status, principal.ID, principal.Role, models.LoadStatusSourceDriverApp, "Teslimat kodu ve fotoğraf doğrulandı", now)
-	if err = a.store.CompleteDelivery(from, load, event, verification); err != nil {
+	var rewardTemplate *models.WalletTransaction
+	company, companyErr := a.companyForCorporateCustomer(load.CustomerID)
+	if companyErr != nil {
+		cleanupPhoto()
+		serverError(w, companyErr)
+		return
+	}
+	if company != nil {
+		rewardTemplate = &models.WalletTransaction{
+			ID: uuid.NewString(), CompanyID: company.ID, LoadID: load.ID, Type: models.WalletTransactionShipmentReward,
+			Description: "Tamamlanan nakliyeden %10 kurumsal kredi", PickupAddress: load.Pickup.Address, DeliveryAddress: load.Delivery.Address,
+			ActorID: "system", ActorRole: "system", CreatedAt: now,
+		}
+	}
+	reward, err := a.store.CompleteDeliveryWithReward(from, load, event, verification, rewardTemplate)
+	if err != nil {
 		cleanupPhoto()
 		writeLoadStatusError(w, err)
 		return
+	}
+	if reward != nil {
+		_ = a.store.RecordDomainEvent("wallet.shipment_reward", load.ID, reward)
 	}
 	if err = a.store.SaveConversation(a.conversationRecord(load)); err != nil {
 		log.Printf("conversation update after verified delivery: %v", err)

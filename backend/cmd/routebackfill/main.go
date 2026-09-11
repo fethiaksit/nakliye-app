@@ -33,7 +33,7 @@ func main() {
 	if err = redisStore.Ping(); err != nil {
 		log.Fatalf("Redis'e bağlanılamadı: %v", err)
 	}
-	maps := service.NewGoogleMapsClient(cfg.GoogleMapsServerAPIKey, cfg.PricePerKM)
+	maps := service.NewGoogleMapsClientWithPricing(cfg.GoogleMapsServerAPIKey, cfg.Pricing)
 	offset := 0
 	updated := 0
 	for {
@@ -54,13 +54,19 @@ func main() {
 			}
 			load.RouteDistanceMeters = route.DistanceMeters
 			load.RouteDurationSeconds = route.DurationSeconds
-			load.PricePerKM = route.PricePerKM
+			if load.PricePerKM == 0 {
+				load.PricePerKM = route.PricePerKM
+			}
 			load.RouteEncodedPolyline = route.EncodedPolyline
 			load.RouteProvider = route.RouteProvider
 			load.RouteCoordinates = route.RouteCoordinates
 			load.EstimatedKM = route.DistanceKM
-			load.BasePriceTL = route.EstimatedPriceTL
-			if load.AgreedPriceTL == 0 || load.Status == "draft" || load.Status == "published" || load.Status == "open" || load.Status == "offers_received" {
+			if load.BasePriceTL == 0 {
+				load.BasePriceTL = route.EstimatedPriceTL
+			}
+			// Never rewrite a historical agreed price. Only records without a
+			// recorded price can receive the new route estimate during backfill.
+			if load.AgreedPriceTL == 0 {
 				load.AgreedPriceTL = route.EstimatedPriceTL
 			}
 			load.UpdatedAt = time.Now().UTC()

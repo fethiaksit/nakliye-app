@@ -23,6 +23,11 @@ const (
 	ComplaintStatusRejected  = "rejected"
 )
 
+const (
+	SupportTypeComplaint = "complaint"
+	SupportTypeFeedback  = "feedback"
+)
+
 const complaintStatusDismissedLegacy = "dismissed"
 
 type DriverDocument struct {
@@ -41,6 +46,8 @@ type DriverDocument struct {
 
 type MessageComplaint struct {
 	ID             string     `json:"id"`
+	Type           string     `json:"type,omitempty"`
+	Subject        string     `json:"subject,omitempty"`
 	ReporterID     string     `json:"reporterUserId"`
 	ReportedUserID string     `json:"reportedUserId"`
 	LoadID         string     `json:"loadId"`
@@ -81,6 +88,9 @@ func (c *MessageComplaint) UnmarshalJSON(data []byte) error {
 	}
 	if c.Status == complaintStatusDismissedLegacy {
 		c.Status = ComplaintStatusRejected
+	}
+	if c.Type == "" {
+		c.Type = "complaint"
 	}
 	return nil
 }
@@ -127,6 +137,10 @@ func ValidComplaintStatus(status string) bool {
 	default:
 		return false
 	}
+}
+
+func ValidSupportType(value string) bool {
+	return value == SupportTypeComplaint || value == SupportTypeFeedback
 }
 
 func ValidComplaintReason(reason string) bool {

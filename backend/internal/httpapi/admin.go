@@ -350,6 +350,14 @@ func (a *API) adminUser(w http.ResponseWriter, r *http.Request) {
 	if user.Role == models.RoleDriver {
 		view["vehicles"], _ = a.store.ListVehicles(user.ID)
 		view["documents"], _ = a.store.ListDriverDocuments(user.ID)
+	} else if models.CustomerAccountType(user) == models.AccountTypeCorporate {
+		if company, companyErr := a.store.GetCompanyByUser(user.ID); companyErr == nil {
+			view["company"] = company
+			if wallet, walletErr := a.store.GetCorporateWallet(company.ID); walletErr == nil {
+				view["wallet"] = wallet
+				view["walletTransactions"], _ = a.store.ListWalletTransactions(wallet.ID)
+			}
+		}
 	}
 	jsonResponse(w, http.StatusOK, view)
 }
@@ -659,8 +667,31 @@ func (a *API) adminLoadStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	load.Status, load.UpdatedAt = request.Status, time.Now().UTC()
 	event := newLoadStatusEvent(load.ID, from, load.Status, currentAdmin(r).Email, models.RoleAdmin, models.LoadStatusSourceAdmin, request.Note, load.UpdatedAt)
-	if err = a.store.TransitionLoadStatus(from, load, event); err != nil {
-		writeLoadStatusError(w, err)
+	var transitionErr error
+	if load.Status == models.LoadStatusCancelled {
+		company, companyErr := a.companyForCorporateCustomer(load.CustomerID)
+		if companyErr != nil {
+			serverError(w, companyErr)
+			return
+		}
+		reversal := models.WalletTransaction{
+			ID: uuid.NewString(), LoadID: load.ID, Type: models.WalletTransactionReversal,
+			Description: "Yönetim iptali kredi iadesi: " + request.Note, PickupAddress: load.Pickup.Address, DeliveryAddress: load.Delivery.Address,
+			ActorID: currentAdmin(r).Email, ActorRole: models.RoleAdmin, CreatedAt: load.UpdatedAt,
+		}
+		if company != nil {
+			reversal.CompanyID = company.ID
+		}
+		_, transitionErr = a.store.TransitionLoadStatusAndReverseWallet(from, load, event, company, reversal)
+	} else {
+		transitionErr = a.store.TransitionLoadStatus(from, load, event)
+	}
+	if transitionErr != nil {
+		if isWalletError(transitionErr) {
+			writeWalletError(w, transitionErr)
+		} else {
+			writeLoadStatusError(w, transitionErr)
+		}
 		return
 	}
 	if load.AssignedDriver != "" {
@@ -728,9 +759,12 @@ func (a *API) createComplaint(w http.ResponseWriter, r *http.Request, load model
 	}
 	now := time.Now().UTC()
 	complaint := models.MessageComplaint{
-		ID: uuid.NewString(), MessageID: messageID, LoadID: load.ID, ConversationID: load.ID, ReporterID: principal.ID,
+		ID: uuid.NewString(), Type: models.SupportTypeComplaint, Subject: "Nakliye şikâyeti", MessageID: messageID, LoadID: load.ID, ConversationID: load.ID, ReporterID: principal.ID,
 		ReportedUserID: reportedUserID, Reason: request.Reason, Detail: request.Description,
 		Status: models.ComplaintStatusOpen, CreatedAt: now, UpdatedAt: now,
+	}
+	if messageID != "" {
+		complaint.Subject = "Mesaj şikâyeti"
 	}
 	if err := a.store.SaveComplaint(complaint); err != nil {
 		serverError(w, err)
@@ -738,6 +772,136 @@ func (a *API) createComplaint(w http.ResponseWriter, r *http.Request, load model
 	}
 	_ = a.store.RecordDomainEvent("complaint.created", complaint.ID, complaint)
 	jsonResponse(w, http.StatusCreated, complaint)
+}
+
+func complaintSubject(complaint models.MessageComplaint) string {
+	if strings.TrimSpace(complaint.Subject) != "" {
+		return complaint.Subject
+	}
+	if complaint.MessageID != "" {
+		return "Mesaj şikâyeti"
+	}
+	if complaint.Type == models.SupportTypeFeedback {
+		return "Öneri / geri bildirim"
+	}
+	return "Nakliye şikâyeti"
+}
+
+func (a *API) userComplaintView(complaint models.MessageComplaint, principal principal) map[string]any {
+	complaintType := complaint.Type
+	if complaintType == "" {
+		complaintType = models.SupportTypeComplaint
+	}
+	view := map[string]any{"complaint": map[string]any{
+		"id": complaint.ID, "type": complaintType, "subject": complaintSubject(complaint),
+		"loadId": complaint.LoadID, "messageId": complaint.MessageID, "reason": complaint.Reason,
+		"description": complaint.Detail, "status": complaint.Status, "createdAt": complaint.CreatedAt,
+		"updatedAt": complaint.UpdatedAt, "resolvedAt": complaint.ResolvedAt,
+	}}
+	if complaint.LoadID != "" {
+		if load, err := a.store.GetLoad(complaint.LoadID); err == nil && a.canAccessMessageLoad(load, principal) {
+			view["load"] = load
+		}
+	}
+	return view
+}
+
+func (a *API) myComplaints(w http.ResponseWriter, r *http.Request) {
+	principal := current(r)
+	complaints, err := a.store.ListComplaintsByReporter(principal.ID)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	items := make([]map[string]any, 0, len(complaints))
+	for _, complaint := range complaints {
+		items = append(items, a.userComplaintView(complaint, principal))
+	}
+	jsonResponse(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (a *API) myComplaint(w http.ResponseWriter, r *http.Request) {
+	complaint, err := a.store.GetComplaint(r.PathValue("id"))
+	if err != nil {
+		notFound(w)
+		return
+	}
+	principal := current(r)
+	if complaint.ReporterID != principal.ID {
+		forbidden(w)
+		return
+	}
+	jsonResponse(w, http.StatusOK, a.userComplaintView(complaint, principal))
+}
+
+func (a *API) createSupportRequest(w http.ResponseWriter, r *http.Request) {
+	principal := current(r)
+	var request struct {
+		Type        string `json:"type"`
+		Subject     string `json:"subject"`
+		Reason      string `json:"reason"`
+		Description string `json:"description"`
+		LoadID      string `json:"loadId"`
+	}
+	if !decode(w, r, &request) {
+		return
+	}
+	request.Type = strings.TrimSpace(request.Type)
+	request.Subject = strings.TrimSpace(request.Subject)
+	request.Reason = strings.TrimSpace(request.Reason)
+	request.Description = strings.TrimSpace(request.Description)
+	request.LoadID = strings.TrimSpace(request.LoadID)
+	if !models.ValidSupportType(request.Type) || request.Subject == "" || utf8.RuneCountInString(request.Subject) > 120 || request.Description == "" || utf8.RuneCountInString(request.Description) > 1000 {
+		badRequest(w, "bildirim türü, en fazla 120 karakter konu ve en fazla 1000 karakter açıklama zorunludur")
+		return
+	}
+	if request.Type == models.SupportTypeComplaint && !models.ValidComplaintReason(request.Reason) {
+		badRequest(w, "geçerli şikâyet nedeni zorunludur")
+		return
+	}
+	if request.Type == models.SupportTypeFeedback {
+		request.Reason = "other"
+	}
+
+	var load models.Load
+	var reportedUserID string
+	if request.LoadID != "" {
+		var err error
+		load, err = a.store.GetLoad(request.LoadID)
+		if err != nil || !a.canAccessMessageLoad(load, principal) {
+			forbidden(w)
+			return
+		}
+		reportedUserID = load.AssignedDriver
+		if principal.Role == models.RoleDriver {
+			reportedUserID = load.CustomerID
+		}
+		if request.Type == models.SupportTypeComplaint {
+			owned, _ := a.store.ListComplaintsByReporter(principal.ID)
+			for _, existing := range owned {
+				if existing.Type == models.SupportTypeComplaint && existing.LoadID == load.ID && existing.MessageID == "" && existing.Status != models.ComplaintStatusRejected {
+					conflict(w, "bu nakliye için zaten açık bir şikâyetiniz var: "+existing.ID)
+					return
+				}
+			}
+		}
+	}
+
+	now := time.Now().UTC()
+	complaint := models.MessageComplaint{
+		ID: uuid.NewString(), Type: request.Type, Subject: request.Subject, ReporterID: principal.ID,
+		ReportedUserID: reportedUserID, LoadID: request.LoadID, Reason: request.Reason, Detail: request.Description,
+		Status: models.ComplaintStatusOpen, CreatedAt: now, UpdatedAt: now,
+	}
+	if load.ID != "" {
+		complaint.ConversationID = load.ID
+	}
+	if err := a.store.SaveComplaint(complaint); err != nil {
+		serverError(w, err)
+		return
+	}
+	_ = a.store.RecordDomainEvent("complaint.created", complaint.ID, complaint)
+	jsonResponse(w, http.StatusCreated, a.userComplaintView(complaint, principal))
 }
 
 func (a *API) complaintView(complaint models.MessageComplaint) map[string]any {

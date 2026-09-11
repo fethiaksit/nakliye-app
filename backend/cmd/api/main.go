@@ -42,7 +42,7 @@ func main() {
 		Secret:                 cfg.JWTSecret,
 		GoogleMapsServerAPIKey: cfg.GoogleMapsServerAPIKey,
 		MapsKeyError:           cfg.MapsKeyError,
-		PricePerKM:             cfg.PricePerKM,
+		Pricing:                cfg.Pricing,
 		MaxUploadMB:            cfg.MaxUploadMB,
 		AdminEmail:             cfg.AdminEmail,
 		AdminPassword:          cfg.AdminPassword,

@@ -16,12 +16,15 @@ type Config struct {
 	Environment                        string
 	GoogleMapsServerAPIKey             string
 	MapsKeyError                       string
-	PricePerKM                         float64
-	MaxUploadMB                        int
-	AdminEmail                         string
-	AdminPassword                      string
-	AdminPasswordHash                  string
-	AdminJWTSecret                     string
+	Pricing                            service.PricingConfig
+	// PricePerKM remains available for older command callers; Pricing is the
+	// canonical source used by the API.
+	PricePerKM        float64
+	MaxUploadMB       int
+	AdminEmail        string
+	AdminPassword     string
+	AdminPasswordHash string
+	AdminJWTSecret    string
 }
 
 func Load() Config {
@@ -39,10 +42,15 @@ func Load() Config {
 		port = "8080"
 	}
 	secret := strings.TrimSpace(os.Getenv("JWT_SECRET"))
-	pricePerKM := DefaultPricePerKM
+	pricing := service.DefaultPricingConfig()
+	if rawBase := strings.TrimSpace(os.Getenv("BASE_DRIVER_FEE")); rawBase != "" {
+		if parsed, err := strconv.ParseFloat(rawBase, 64); err == nil && parsed > 0 {
+			pricing.BaseDriverFee = parsed
+		}
+	}
 	if rawPrice := strings.TrimSpace(os.Getenv("PRICE_PER_KM")); rawPrice != "" {
 		if parsed, err := strconv.ParseFloat(rawPrice, 64); err == nil && parsed > 0 {
-			pricePerKM = parsed
+			pricing.PricePerKM = parsed
 		}
 	}
 	lanHost := os.Getenv("LAN_HOST")
@@ -64,7 +72,8 @@ func Load() Config {
 		LANHost:                lanHost,
 		GoogleMapsServerAPIKey: serverMapsKey,
 		MapsKeyError:           mapsKeyError,
-		PricePerKM:             pricePerKM,
+		Pricing:                pricing,
+		PricePerKM:             pricing.PricePerKM,
 		MaxUploadMB:            maxUploadMB,
 		Environment:            environment,
 		AdminEmail:             strings.ToLower(strings.TrimSpace(os.Getenv("ADMIN_EMAIL"))),

@@ -354,8 +354,31 @@ components:
             id: { type: string, format: uuid }
             customerId: { type: string, format: uuid }
             status: { $ref: '#/components/schemas/LoadStatus' }
+            pricing:
+              $ref: '#/components/schemas/PricingSnapshot'
             createdAt: { type: string, format: date-time }
             updatedAt: { type: string, format: date-time }
+    PricingSnapshot:
+      type: object
+      description: Server-calculated price snapshot kept with the listing for auditability.
+      properties:
+        distanceKm: { type: number }
+        baseDriverFee: { type: number }
+        pricePerKm: { type: number }
+        distanceFee: { type: number }
+        basePrice: { type: number }
+        loadLevel: { type: string, enum: [NORMAL, MEDIUM, HARD, VERY_HARD] }
+        loadMultiplier: { type: number }
+        loadExtra: { type: number }
+        waitingMinutes: { type: integer, minimum: 0 }
+        waitingFee: { type: number, minimum: 0 }
+        nightMultiplier: { type: number }
+        urgentMultiplier: { type: number }
+        holidayMultiplier: { type: number }
+        weekendMultiplier: { type: number }
+        finalPrice: { type: number }
+        recommendedPrice: { type: number }
+        currency: { type: string, example: TRY }
     LoadStatus:
       type: string
       enum: [draft, published, driver_selected, driver_en_route, at_pickup, picked_up, en_route_to_delivery, delivered, completed, cancelled]

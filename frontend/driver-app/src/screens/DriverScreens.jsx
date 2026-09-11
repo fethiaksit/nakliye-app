@@ -1,11 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { Image, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
+import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 
-import { VEHICLE_TYPE_OPTIONS, cargoTypeLabel, formatListingTime, vehicleTypeLabel } from '../../../shared/loadMetadata';
+import { cargoTypeLabel, formatListingTime, vehicleTypeLabel } from '../../../shared/loadMetadata';
 import { driverStatusAction, isOfferableLoadStatus } from '../../../shared/loadStatus';
 import Icon from '../../../shared/ui/Icon';
-import SearchableSelect from '../../../shared/ui/SearchableSelect';
 import { DetailRow, ListingCard, RouteTimeline, StatusBadge, SummaryCard } from '../../../shared/ui/listing';
 import { PageHeading } from '../../../shared/ui/navigation';
 import { AppButton, Divider, ListSkeleton, ScreenState, SectionCard, TextField } from '../../../shared/ui/primitives';
@@ -13,7 +12,6 @@ import { colors, radius, spacing, typography } from '../../../shared/ui/theme';
 import DriverRouteMap from '../components/DriverRouteMap';
 import LoadPhotoGallery from '../components/LoadPhotoGallery';
 import { formatMoney, loadStatusLabel, resolveMediaUrl, toFiniteNumber } from '../utils/presentation';
-import { vehicles } from '../services/api';
 
 function OperationalDetails({ load }) {
   const dimensions = load.dimensions || {};
@@ -114,7 +112,7 @@ export function DriverJobs({ loading, error, jobs, selected, form, setForm, form
     <SectionCard title="Rota" icon="navigate-outline" style={styles.firstSection}><RouteTimeline pickup={selected.pickup?.address} delivery={selected.delivery?.address} /></SectionCard>
     <SectionCard title="Operasyon özeti" description="Yola çıkmadan önce tüm koşulları kontrol edin." icon="clipboard-outline"><OperationalDetails load={selected} /></SectionCard>
     <DriverRouteMap load={selected} />
-    <View style={styles.pricePanel}><View><Text style={styles.priceLabel}>MÜŞTERİ TAHMİNİ FİYATI</Text><Text style={styles.priceValue}>{formatMoney(selected.basePriceTl || selected.agreedPriceTl)}</Text></View><View style={styles.priceMeta}><Icon name="navigate-outline" size={17} color={colors.primary} /><Text style={styles.priceMetaText}>{toFiniteNumber(selected.estimatedKm).toFixed(1)} km · {Math.round(toFiniteNumber(selected.routeDurationSeconds) / 60)} dk</Text></View></View>
+    <View style={styles.pricePanel}><View><Text style={styles.priceLabel}>MÜŞTERİ TAHMİNİ FİYATI</Text><Text style={styles.priceValue}>{formatMoney(selected.pricing?.recommendedPrice || selected.basePriceTl || selected.agreedPriceTl)}</Text></View>{selected.pricing?.loadExtra > 0 ? <Text style={styles.priceMetaText}>Yük farkı: +{formatMoney(selected.pricing.loadExtra)}</Text> : null}<View style={styles.priceMeta}><Icon name="navigate-outline" size={17} color={colors.primary} /><Text style={styles.priceMetaText}>{toFiniteNumber(selected.estimatedKm).toFixed(1)} km · {Math.round(toFiniteNumber(selected.routeDurationSeconds) / 60)} dk</Text></View></View>
     {statusAction?.nextStatus === 'completed' ? <DeliveryCompletionCard load={selected} saving={deliverySaving} onComplete={onCompleteDelivery} /> : statusAction ? <SectionCard title="Aktif taşıma" description="Yalnızca gerçekleşen bir sonraki operasyon adımını kaydedin." icon="shield-checkmark-outline">
       <AppButton label={statusAction.label} icon={statusAction.icon} onPress={() => onStatus(selected, statusAction.nextStatus)} />
     </SectionCard> : isOfferableLoadStatus(selected.status) ? <SectionCard title="Teklifiniz" description="Fiyatı, tahmini varış süresini ve notunuzu girin." icon="pricetag-outline">
@@ -150,40 +148,11 @@ export function DriverOffers({ loading, error, items, onOpen, onWithdraw, retry 
         <View style={styles.offerHeader}><View style={styles.offerStatusIcon}><Icon name={status.icon} size={20} color={status.tone === 'danger' ? colors.danger : status.tone === 'success' ? colors.success : colors.primary} /></View><View style={styles.offerTitleCopy}><Text style={styles.offerTitle}>{load.title || 'Başlıksız ilan'}</Text><Text style={styles.offerTime}>{formatListingTime(load)}</Text></View><StatusBadge status={offer.status === 'accepted' ? 'completed' : offer.status === 'rejected' ? 'cancelled' : 'offers_received'} label={status.label} /></View>
         <RouteTimeline compact pickup={load.pickup?.address} delivery={load.delivery?.address} />
         <Divider style={styles.offerDivider} />
-        <View style={styles.offerPrices}><View><Text style={styles.priceLabel}>TEKLİFİNİZ</Text><Text style={styles.offerPrice}>{formatMoney(offer.amountTl)}</Text></View><View style={styles.offerBase}><Text style={styles.priceLabel}>MÜŞTERİ FİYATI</Text><Text style={styles.offerBaseValue}>{formatMoney(load.basePriceTl || load.agreedPriceTl)}</Text></View></View>
+        <View style={styles.offerPrices}><View><Text style={styles.priceLabel}>TEKLİFİNİZ</Text><Text style={styles.offerPrice}>{formatMoney(offer.amountTl)}</Text></View><View style={styles.offerBase}><Text style={styles.priceLabel}>MÜŞTERİ FİYATI</Text><Text style={styles.offerBaseValue}>{formatMoney(load.pricing?.recommendedPrice || load.basePriceTl || load.agreedPriceTl)}</Text></View></View>
         {offer.note ? <Text style={styles.offerNote}>{offer.note}</Text> : null}
         {offer.status === 'pending' ? <View style={styles.offerActions}><AppButton label="Düzenle" icon="create-outline" variant="secondary" compact fullWidth={false} style={styles.offerAction} onPress={() => onOpen(load, offer)} /><AppButton label="Geri çek" icon="trash-outline" variant="outlineDanger" compact fullWidth={false} style={styles.offerAction} onPress={() => onWithdraw(offer)} /></View> : null}
       </View>;
     })}
-  </>;
-}
-
-export function DriverAccount({ loading, error, account, form, setForm, save, saveLoading, changePassword, passwordLoading, logout, retry }) {
-  if (loading && !account) return <ListSkeleton count={3} />;
-  if (error || !account) return <ScreenState type="error" title="Hesap yüklenemedi" message={error || 'Profil bulunamadı.'} onRetry={retry} />;
-  return <>
-    <PageHeading eyebrow="Şoför hesabı" title="Profil, araç ve güvenlik" subtitle="Müşterilere doğru bilgilerin gösterilmesi için profilinizi güncel tutun." />
-    <View style={styles.profileHero}><View style={styles.profileAvatar}><Text style={styles.profileInitials}>{account.name?.split(' ').map(part => part[0]).join('').slice(0, 2).toUpperCase() || '?'}</Text></View><View style={styles.profileCopy}><Text style={styles.profileName}>{account.name}</Text><Text style={styles.profileMeta}>Şoför hesabı · {new Date(account.createdAt).toLocaleDateString('tr-TR')}</Text></View></View>
-    <SectionCard title="Profil bilgileri" icon="person-outline">
-      <TextField label="Ad soyad" required value={form.name} onChangeText={value => setForm(current => ({ ...current, name: value }))} leftIcon="person-outline" autoCapitalize="words" />
-      <TextField label="E-posta" required value={form.email} onChangeText={value => setForm(current => ({ ...current, email: value }))} leftIcon="mail-outline" keyboardType="email-address" autoCapitalize="none" />
-      <TextField label="Telefon" required value={form.phone} onChangeText={value => setForm(current => ({ ...current, phone: value }))} leftIcon="call-outline" keyboardType="phone-pad" />
-    </SectionCard>
-    <SectionCard title="Araç ve hizmet" description="İlan eşleştirmesinde kullanılan bilgiler." icon="car-sport-outline">
-      <SearchableSelect label="Araç tipi" required value={form.vehicleType} options={VEHICLE_TYPE_OPTIONS.filter(option => option.value !== 'farketmez')} onChange={value => setForm(current => ({ ...current, vehicleType: value }))} searchPlaceholder="Araç türünde ara" />
-      <TextField label="Marka / model" required value={form.vehicleModel} onChangeText={value => setForm(current => ({ ...current, vehicleModel: value }))} leftIcon="car-outline" autoCapitalize="words" />
-      <TextField label="Plaka" required value={form.licensePlate} onChangeText={value => setForm(current => ({ ...current, licensePlate: value.toLocaleUpperCase('tr-TR') }))} leftIcon="card-outline" autoCapitalize="characters" />
-      <TextField label="Taşıma kapasitesi" required value={form.capacityKg} onChangeText={value => setForm(current => ({ ...current, capacityKg: value }))} keyboardType="decimal-pad" placeholder="kg" leftIcon="scale-outline" />
-      <TextField label="Hizmet bölgesi" required value={form.serviceArea} onChangeText={value => setForm(current => ({ ...current, serviceArea: value }))} placeholder="Örn. İstanbul ve çevresi" leftIcon="map-outline" />
-      <View style={styles.notificationRow}><View style={styles.notificationCopy}><Text style={styles.notificationTitle}>Yakındaki yeni ilan bildirimleri</Text><Text style={styles.notificationText}>Size uygun yeni ilan yayınlandığında bildirim alın.</Text></View><Switch value={form.nearbyLoadNotifications} onValueChange={value => setForm(current => ({ ...current, nearbyLoadNotifications: value }))} trackColor={{ false: colors.border, true: colors.primarySoft }} thumbColor={form.nearbyLoadNotifications ? colors.primary : colors.textMuted} /></View>
-      <AppButton label="Bilgileri kaydet" icon="save-outline" loading={saveLoading} onPress={save} style={styles.cardAction} />
-    </SectionCard>
-    <SectionCard title="Şifre değiştir" description="En az 8 karakterli güçlü bir şifre kullanın." icon="lock-closed-outline">
-      <TextField label="Mevcut şifre" required value={form.currentPassword} onChangeText={value => setForm(current => ({ ...current, currentPassword: value }))} leftIcon="key-outline" secureTextEntry autoCapitalize="none" />
-      <TextField label="Yeni şifre" required value={form.newPassword} onChangeText={value => setForm(current => ({ ...current, newPassword: value }))} leftIcon="shield-checkmark-outline" secureTextEntry autoCapitalize="none" helper="En az 8 karakter" />
-      <AppButton label="Şifreyi değiştir" variant="secondary" icon="refresh-outline" loading={passwordLoading} onPress={changePassword} style={styles.cardAction} />
-    </SectionCard>
-    <AppButton label="Hesaptan çıkış yap" icon="log-out-outline" variant="outlineDanger" onPress={logout} style={styles.dangerAction} />
   </>;
 }
 
@@ -193,6 +162,4 @@ const styles = StyleSheet.create({
   adjustRow: { alignItems: 'flex-start', flexDirection: 'row', gap: spacing.xs, marginTop: spacing.xs }, amountField: { flex: 1, marginTop: 0 }, amountInput: { ...typography.h3, textAlign: 'center' }, cardAction: { marginTop: spacing.md },
   deliveryPhotoActions: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm }, deliveryPhotoAction: { flex: 1 }, deliveryPhotoPreviewWrap: { alignSelf: 'flex-start', marginTop: spacing.md, position: 'relative' }, deliveryPhotoPreview: { borderRadius: radius.md, height: 150, width: 190 }, deliveryPhotoRemove: { alignItems: 'center', backgroundColor: colors.ink, borderColor: colors.surface, borderRadius: 13, borderWidth: 2, height: 26, justifyContent: 'center', position: 'absolute', right: -7, top: -7, width: 26 }, deliveryError: { ...typography.caption, color: colors.danger, marginTop: spacing.sm }, deliveryHint: { ...typography.caption, color: colors.textMuted, marginTop: spacing.sm },
   offerCard: { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.lg, borderWidth: 1, marginBottom: spacing.md, padding: spacing.lg }, offerHeader: { alignItems: 'center', flexDirection: 'row' }, offerStatusIcon: { alignItems: 'center', backgroundColor: colors.primarySoft, borderRadius: radius.sm, height: 40, justifyContent: 'center', marginRight: spacing.sm, width: 40 }, offerTitleCopy: { flex: 1, paddingRight: spacing.xs }, offerTitle: { ...typography.h3, color: colors.ink }, offerTime: { ...typography.caption, color: colors.textSecondary, marginTop: 2 }, offerDivider: { marginVertical: spacing.md }, offerPrices: { alignItems: 'flex-end', flexDirection: 'row', justifyContent: 'space-between' }, offerPrice: { ...typography.h2, color: colors.primaryDark, marginTop: 2 }, offerBase: { alignItems: 'flex-end' }, offerBaseValue: { ...typography.bodyMedium, color: colors.text, marginTop: 2 }, offerNote: { ...typography.small, backgroundColor: colors.surfaceMuted, borderRadius: radius.sm, color: colors.text, marginTop: spacing.md, padding: spacing.sm }, offerActions: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md }, offerAction: { flex: 1 },
-  profileHero: { alignItems: 'center', backgroundColor: colors.ink, borderRadius: radius.lg, flexDirection: 'row', marginBottom: spacing.md, padding: spacing.lg }, profileAvatar: { alignItems: 'center', backgroundColor: colors.primary, borderRadius: 28, height: 56, justifyContent: 'center', marginRight: spacing.md, width: 56 }, profileInitials: { ...typography.h2, color: colors.white }, profileCopy: { flex: 1 }, profileName: { ...typography.h2, color: colors.white }, profileMeta: { ...typography.caption, color: '#B9C5D2', marginTop: spacing.xxs }, dangerAction: { marginBottom: spacing.xl, marginTop: spacing.sm },
-  notificationRow: { alignItems: 'center', flexDirection: 'row', gap: spacing.md, marginTop: spacing.sm }, notificationCopy: { flex: 1 }, notificationTitle: { ...typography.bodyMedium, color: colors.text }, notificationText: { ...typography.caption, color: colors.textSecondary, marginTop: spacing.xxs },
 });

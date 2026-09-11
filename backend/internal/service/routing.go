@@ -130,9 +130,18 @@ type GoogleMapsClient struct {
 }
 
 func NewGoogleMapsClient(apiKey string, pricePerKM float64) *GoogleMapsClient {
+	pricing := DefaultPricingConfig()
+	if pricePerKM > 0 {
+		pricing.PricePerKM = pricePerKM
+	}
+	return NewGoogleMapsClientWithPricing(apiKey, pricing)
+}
+
+func NewGoogleMapsClientWithPricing(apiKey string, pricing PricingConfig) *GoogleMapsClient {
+	pricing = normalizedPricingConfig(pricing)
 	return NewGoogleMapsClientWithURLs(
 		apiKey,
-		pricePerKM,
+		pricing.PricePerKM,
 		"https://places.googleapis.com",
 		"https://maps.googleapis.com",
 		"https://routes.googleapis.com",
@@ -461,12 +470,15 @@ func (c *GoogleMapsClient) Calculate(ctx context.Context, pickup, dropoff models
 		return RouteResult{}, ErrRouteNotFound
 	}
 	result := RouteResult{
-		DistanceMeters:   route.DistanceMeters,
-		DistanceKM:       math.Round(float64(route.DistanceMeters)/10) / 100,
-		DurationSeconds:  durationSeconds,
-		DurationMinutes:  math.Round(float64(durationSeconds)/6) / 10,
-		PricePerKM:       c.pricePerKM,
-		EstimatedPriceTL: Price(route.DistanceMeters, c.pricePerKM),
+		DistanceMeters:  route.DistanceMeters,
+		DistanceKM:      math.Round(float64(route.DistanceMeters)/10) / 100,
+		DurationSeconds: durationSeconds,
+		DurationMinutes: math.Round(float64(durationSeconds)/6) / 10,
+		PricePerKM:      c.pricePerKM,
+		EstimatedPriceTL: func() float64 {
+			price, _ := CalculateBasePrice(PricingConfig{PricePerKM: c.pricePerKM}, float64(route.DistanceMeters)/1000)
+			return price
+		}(),
 		Currency:         "TRY",
 		EncodedPolyline:  route.Polyline.EncodedPolyline,
 		RouteProvider:    "google",

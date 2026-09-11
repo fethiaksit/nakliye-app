@@ -18,11 +18,6 @@ public class AppDelegate: ExpoAppDelegate {
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
   ) -> Bool {
-// @generated begin react-native-maps-init - expo prebuild (DO NOT MODIFY) sync-0d4be76bb49a243a3db569cb9ed332f8fb16aaeb
-#if canImport(GoogleMaps)
-GMSServices.provideAPIKey("AIzaSyCa48dOcNpHG5KTOvOb2iBy707uxWO9UuI")
-#endif
-// @generated end react-native-maps-init
     let delegate = ReactNativeDelegate()
     let factory = ExpoReactNativeFactory(delegate: delegate)
     delegate.dependencyProvider = RCTAppDependencyProvider()
@@ -39,6 +34,11 @@ GMSServices.provideAPIKey("AIzaSyCa48dOcNpHG5KTOvOb2iBy707uxWO9UuI")
       launchOptions: launchOptions)
 #endif
 
+// @generated begin react-native-maps-init - expo prebuild (DO NOT MODIFY) sync-93ff679256d1fa74b05c2120d6690188cf99a3f7
+#if canImport(GoogleMaps)
+GMSServices.provideAPIKey("AIzaSyCa48dOcNpHG5KTOvOb2iBy707uxWO9UuI")
+#endif
+// @generated end react-native-maps-init
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 

@@ -12,7 +12,8 @@ import { apiError, auth, conversations, loads, logApiError, maps, offers, profil
 import AuthFlow from './src/components/AuthFlow';
 import ConversationCenter from './src/components/ConversationCenter';
 import { nativeGoogleMapsConfigured, nativeGoogleMapsMessage } from './src/config/maps';
-import { DriverAccount, DriverJobs, DriverOffers } from './src/screens/DriverScreens';
+import { DriverJobs, DriverOffers } from './src/screens/DriverScreens';
+import DriverAccountScreens from './src/screens/DriverAccountScreens';
 import { driverStatusAction, formatMoney, loadStatusLabel, resolveMediaUrl, toFiniteNumber } from './src/utils/presentation';
 
 const navItems = [
@@ -45,11 +46,13 @@ function DriverApp() {
   const [myOffersLoading, setMyOffersLoading] = useState(false);
   const [offersError, setOffersError] = useState('');
   const [account, setAccount] = useState(null);
+  const [accountPage, setAccountPage] = useState('home');
   const [accountLoading, setAccountLoading] = useState(false);
   const [accountError, setAccountError] = useState('');
   const [accountSaving, setAccountSaving] = useState(false);
+  const [notificationSaving, setNotificationSaving] = useState(false);
   const [passwordSaving, setPasswordSaving] = useState(false);
-  const [accountForm, setAccountForm] = useState({ name: '', email: '', phone: '', vehicleType: '', vehicleModel: '', licensePlate: '', capacityKg: '', serviceArea: '', licenseStatus: '', nearbyLoadNotifications: false, currentPassword: '', newPassword: '' });
+  const [accountForm, setAccountForm] = useState({ name: '', email: '', phone: '', vehicleType: '', vehicleModel: '', licensePlate: '', capacityKg: '', serviceArea: '', licenseStatus: '', nearbyLoadNotifications: false, currentPassword: '', newPassword: '', newPasswordConfirm: '' });
   const [confirmation, setConfirmation] = useState(null);
   const [confirmationLoading, setConfirmationLoading] = useState(false);
   const jobsAbort = useRef(null);
@@ -73,6 +76,7 @@ function DriverApp() {
     setOffersError('');
     setAccount(null);
     setAccountError('');
+    setAccountPage('home');
     setTab('jobs');
     setUser(null);
   }, []);
@@ -250,29 +254,31 @@ function DriverApp() {
     }
   }, [fetchJobs, fetchOffers, showToast]);
   const saveAccount = useCallback(async () => {
-    const driverProfile = { vehicleType: accountForm.vehicleType, vehicleModel: accountForm.vehicleModel, licensePlate: accountForm.licensePlate, capacityKg: toFiniteNumber(accountForm.capacityKg), serviceArea: accountForm.serviceArea, licenseStatus: accountForm.licenseStatus, nearbyLoadNotifications: accountForm.nearbyLoadNotifications };
     setAccountSaving(true);
     try {
-      const { data } = await profile.update({ name: accountForm.name, email: accountForm.email, phone: accountForm.phone, driverProfile });
+      const { data } = await profile.update({ name: accountForm.name, email: accountForm.email, phone: accountForm.phone });
       setAccount(data);
       setUser(data);
       await updateStoredUser(data);
-      showToast('Profil ve araç bilgileriniz kaydedildi.', { type: 'success', title: 'Hesap güncellendi' });
+      showToast('Profil bilgileriniz kaydedildi.', { type: 'success', title: 'Hesap güncellendi' });
+      return true;
     } catch (error) {
       showToast(apiError(error), { type: 'error', title: 'Hesap güncellenemedi' });
+      return false;
     } finally {
       setAccountSaving(false);
     }
   }, [accountForm, showToast]);
   const changePassword = useCallback(async () => {
-    if (!accountForm.currentPassword || accountForm.newPassword.length < 8) {
-      showToast('Mevcut şifrenizi ve en az 8 karakterlik yeni şifrenizi girin.', { type: 'error', title: 'Şifre bilgisi eksik' });
+    if (!accountForm.currentPassword || accountForm.newPassword.length < 8 || accountForm.newPassword !== accountForm.newPasswordConfirm) {
+      showToast('Mevcut şifrenizi, eşleşen ve en az 8 karakterlik yeni şifrenizi girin.', { type: 'error', title: 'Şifre bilgisi eksik' });
       return;
     }
     setPasswordSaving(true);
     try {
       await profile.changePassword({ currentPassword: accountForm.currentPassword, newPassword: accountForm.newPassword });
-      setAccountForm(current => ({ ...current, currentPassword: '', newPassword: '' }));
+      setAccountForm(current => ({ ...current, currentPassword: '', newPassword: '', newPasswordConfirm: '' }));
+      setAccountPage('home');
       showToast('Yeni şifreniz kaydedildi.', { type: 'success', title: 'Şifre değiştirildi' });
     } catch (error) {
       showToast(apiError(error), { type: 'error', title: 'Şifre değiştirilemedi' });
@@ -280,6 +286,22 @@ function DriverApp() {
       setPasswordSaving(false);
     }
   }, [accountForm, showToast]);
+  const updateNearbyNotifications = useCallback(async value => {
+    if (!account) return;
+    setNotificationSaving(true);
+    try {
+      const { data } = await profile.update({ driverProfile: { ...(account.driverProfile || {}), nearbyLoadNotifications: value } });
+      setAccount(data);
+      setUser(data);
+      setAccountForm(current => ({ ...current, nearbyLoadNotifications: value }));
+      await updateStoredUser(data);
+      showToast('Bildirim tercihiniz kaydedildi.', { type: 'success' });
+    } catch (error) {
+      showToast(apiError(error), { type: 'error', title: 'Bildirim ayarı kaydedilemedi' });
+    } finally {
+      setNotificationSaving(false);
+    }
+  }, [account, showToast]);
   const performLogout = useCallback(async () => {
     setConfirmationLoading(true);
     try {
@@ -295,6 +317,16 @@ function DriverApp() {
     }
   }, [resetDriverState]);
 
+  const openAccountLoad = useCallback(load => {
+    setAccountPage('home');
+    setTab('jobs');
+    openJob(load);
+  }, [openJob]);
+  const registerPushAfterPermission = useCallback(async () => {
+    const token = await registerDevicePushToken(push);
+    if (token) pushToken.current = token;
+  }, []);
+
   if (restoring) return <View style={styles.center}><ListSkeleton count={2} /><Text style={styles.centerText}>Oturum güvenli biçimde yükleniyor…</Text></View>;
   if (!user) return <AuthFlow auth={auth} saveSession={saveSession} apiError={apiError} onSession={setUser} allowedRole="driver" />;
 
@@ -304,15 +336,16 @@ function DriverApp() {
       ? <DriverOffers loading={myOffersLoading} error={offersError} items={myOffers} onOpen={(load, offer) => { setTab('jobs'); openJob(load, offer); }} onWithdraw={offer => setConfirmation({ type: 'withdraw', target: offer })} retry={fetchOffers} />
       : tab === 'messages'
         ? <ConversationCenter currentUser={user} api={conversations} apiError={apiError} resolveMediaUrl={resolveMediaUrl} formatMoney={formatMoney} loadStatusLabel={loadStatusLabel} onOpenLoad={openMessageLoad} initialConversationId={pendingConversationId} onInitialConversationHandled={handleInitialConversation} reverseGeocode={maps.reverse} nativeMapsConfigured={nativeGoogleMapsConfigured} nativeMapsMessage={nativeGoogleMapsMessage} bottomInset={control.bottomNavHeight + insets.bottom} />
-        : <DriverAccount loading={accountLoading} error={accountError} account={account} form={accountForm} setForm={setAccountForm} save={saveAccount} saveLoading={accountSaving} changePassword={changePassword} passwordLoading={passwordSaving} logout={() => setConfirmation({ type: 'logout' })} retry={fetchAccount} />;
+        : <DriverAccountScreens page={accountPage} onPageChange={setAccountPage} loading={accountLoading} error={accountError} account={account} form={accountForm} setForm={setAccountForm} save={saveAccount} saveLoading={accountSaving} changePassword={changePassword} passwordLoading={passwordSaving} logout={() => setConfirmation({ type: 'logout' })} retry={fetchAccount} onOpenLoad={openAccountLoad} onPermissionGranted={registerPushAfterPermission} notificationSaving={notificationSaving} onNotificationChange={updateNearbyNotifications} />;
 
-  const refresh = tab === 'jobs' ? fetchJobs : tab === 'offers' ? fetchOffers : tab === 'account' ? fetchAccount : undefined;
+  const refresh = tab === 'jobs' ? fetchJobs : tab === 'offers' ? fetchOffers : tab === 'account' && accountPage === 'home' ? fetchAccount : undefined;
+  const showBottomNav = tab !== 'account' || accountPage === 'home';
   const confirmationAction = confirmation?.type === 'status' ? driverStatusAction(confirmation.target?.status) : null;
   return <View style={styles.screen}>
     <StatusBar style="light" />
     <AppHeader title="NakliyeGo" subtitle={tab === 'jobs' ? 'Şoför paneli' : tab === 'offers' ? 'Teklif yönetimi' : tab === 'messages' ? 'Mesajlar' : 'Hesabım'} initials={user.name?.split(' ').map(part => part[0]).join('').slice(0, 2).toUpperCase()} topInset={insets.top} />
-    {tab === 'messages' ? body : <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}><ScrollView contentContainerStyle={[styles.content, { paddingBottom: control.bottomNavHeight + insets.bottom + spacing.xl }]} keyboardShouldPersistTaps="handled" keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'} showsVerticalScrollIndicator={false} refreshControl={refresh ? <RefreshControl refreshing={tab === 'jobs' ? jobsLoading : tab === 'offers' ? myOffersLoading : accountLoading} onRefresh={refresh} tintColor={colors.primary} /> : undefined}>{body}</ScrollView></KeyboardAvoidingView>}
-    <BottomNav items={navItems} value={tab} onChange={value => { setTab(value); if (value !== 'jobs') setSelected(null); }} bottomInset={insets.bottom} />
+    {tab === 'messages' ? body : <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}><ScrollView contentContainerStyle={[styles.content, { paddingBottom: (showBottomNav ? control.bottomNavHeight + insets.bottom : insets.bottom) + spacing.xl }]} keyboardShouldPersistTaps="handled" keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'} showsVerticalScrollIndicator={false} refreshControl={refresh ? <RefreshControl refreshing={tab === 'jobs' ? jobsLoading : tab === 'offers' ? myOffersLoading : accountLoading} onRefresh={refresh} tintColor={colors.primary} /> : undefined}>{body}</ScrollView></KeyboardAvoidingView>}
+    {showBottomNav ? <BottomNav items={navItems} value={tab} onChange={value => { setTab(value); setAccountPage('home'); if (value !== 'jobs') setSelected(null); }} bottomInset={insets.bottom} /> : null}
     <ConfirmationModal
       visible={Boolean(confirmation)}
       title={confirmation?.type === 'withdraw' ? 'Teklifi geri çek' : confirmationAction?.title || 'Hesaptan çıkış'}

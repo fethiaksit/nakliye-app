@@ -136,6 +136,13 @@ code { font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; color: #667069
 .timeline b, .timeline small { display: block; font-size: 10px; }.timeline small { color: var(--muted); margin-top: 4px; }.timeline p { margin: 5px 0 0; color: #667069; font-size: 9px; }
 blockquote, .reported-message { margin: 0; padding: 13px; background: #f7f9f7; border-left: 3px solid #a8bdad; border-radius: 5px; font-size: 11px; line-height: 1.55; }
 .reported-message small, .reported-message time { color: var(--muted); font-size: 9px; }.reported-message p { margin: 8px 0; }
+.wallet-ledger { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.wallet-ledger > div { align-items: center; border-bottom: 1px solid var(--line); display: flex; gap: 16px; justify-content: space-between; padding: 12px 14px; }
+.wallet-ledger > div:last-child { border-bottom: 0; }
+.wallet-ledger span { display: grid; gap: 3px; }
+.wallet-ledger small { color: var(--muted); line-height: 1.45; }
+.wallet-ledger strong.positive { color: var(--success); }
+.wallet-ledger strong.negative { color: var(--warning); }
 .check { display: flex; grid-template-columns: auto 1fr; gap: 8px; align-items: center; margin: 8px 0; font-size: 10px; }
 .check input { width: auto; }
 .login-shell { min-height: 100vh; display: grid; grid-template-columns: minmax(440px, 1.15fr) minmax(420px, .85fr); background: white; }

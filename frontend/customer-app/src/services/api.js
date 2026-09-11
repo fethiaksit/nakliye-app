@@ -142,6 +142,22 @@ export const conversations = {
   },
 };
 export const profile = { get: () => client.get('/api/me'), update: data => client.patch('/api/me', data), changePassword: data => client.patch('/api/me/password', data) };
+export const support = {
+  list: () => client.get('/api/complaints/mine'),
+  get: id => client.get(`/api/complaints/${id}`),
+  create: data => client.post('/api/complaints', data),
+};
+export const corporate = {
+  dashboard: () => client.get('/api/corporate/dashboard'),
+  company: () => client.get('/api/corporate/company'),
+  updateCompany: data => client.patch('/api/corporate/company', data),
+  wallet: () => client.get('/api/corporate/wallet'),
+  loadWallet: id => client.get(`/api/corporate/loads/${id}/wallet`),
+  applyWallet: (id, amountCents) => client.post(`/api/corporate/loads/${id}/wallet`, { amountCents }),
+  favorites: () => client.get('/api/corporate/favorite-drivers'),
+  addFavorite: driverId => client.post('/api/corporate/favorite-drivers', { driverId }),
+  removeFavorite: driverId => client.delete(`/api/corporate/favorite-drivers/${driverId}`),
+};
 export const push = { register: (token, platform) => client.post('/api/push/token', { token, platform }), unregister: token => client.delete('/api/push/token', { data: { token } }) };
 const responseErrorMessage = data => {
   const error = data?.error;

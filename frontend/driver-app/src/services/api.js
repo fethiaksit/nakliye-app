@@ -203,13 +203,29 @@ export const profile = {
   update: data => client.patch('/api/me', data),
   changePassword: data => client.patch('/api/me/password', data),
 };
+export const support = {
+  list: () => client.get('/api/complaints/mine'),
+  get: id => client.get(`/api/complaints/${id}`),
+  create: data => client.post('/api/complaints', data),
+};
 export const push = { register: (token, platform) => client.post('/api/push/token', { token, platform }), unregister: token => client.delete('/api/push/token', { data: { token } }) };
+export const documents = {
+  list: () => client.get('/api/driver/documents'),
+  get: id => client.get(`/api/driver/documents/${id}`),
+};
 export const vehicles = {
   list: () => client.get('/api/driver/vehicles'),
   create: data => client.post('/api/driver/vehicles', data),
   update: (id, data) => client.patch(`/api/driver/vehicles/${id}`, data),
   delete: id => client.delete(`/api/driver/vehicles/${id}`),
   activate: id => client.patch(`/api/driver/vehicles/${id}/activate`),
+};
+export const media = {
+  photo: photo => {
+    const formData = new FormData();
+    formData.append('photo', { uri: photo.uri, name: photo.fileName || `vehicle-${Date.now()}.jpg`, type: photo.mimeType || 'image/jpeg' });
+    return client.post('/api/photos', formData, { timeout: 60000 });
+  },
 };
 
 export const apiError = error => {
