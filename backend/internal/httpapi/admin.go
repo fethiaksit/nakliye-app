@@ -407,6 +407,68 @@ func (a *API) adminUserStatus(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, adminUserView(user))
 }
 
+func (a *API) adminCorporateApplications(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPatch {
+		user, err := a.store.GetUser(r.PathValue("id"))
+		if err != nil {
+			notFound(w)
+			return
+		}
+		if models.CustomerAccountType(user) != models.AccountTypeCorporate {
+			forbidden(w)
+			return
+		}
+		var req struct{ Status, RejectionReason string }
+		if !decode(w, r, &req) {
+			return
+		}
+		if req.Status != models.CorporateStatusApproved && req.Status != models.CorporateStatusRejected {
+			badRequest(w, "geçerli kurumsal başvuru durumu zorunludur")
+			return
+		}
+		previous := user
+		user.CorporateStatus = req.Status
+		user.CorporateRejectionReason = strings.TrimSpace(req.RejectionReason)
+		if req.Status == models.CorporateStatusApproved {
+			now := time.Now().UTC()
+			user.CorporateApprovedAt = &now
+			user.CorporateApprovedBy = currentAdmin(r).Email
+			user.CorporateRejectionReason = ""
+		} else {
+			user.CorporateApprovedAt = nil
+			user.CorporateApprovedBy = ""
+			if user.CorporateRejectionReason == "" {
+				badRequest(w, "red gerekçesi zorunludur")
+				return
+			}
+		}
+		if err = a.store.UpdateUser(previous, user); err != nil {
+			serverError(w, err)
+			return
+		}
+		a.adminAudit("corporate.application_"+req.Status, r, user.ID, map[string]any{"reason": user.CorporateRejectionReason})
+		jsonResponse(w, http.StatusOK, adminUserView(user))
+		return
+	}
+	users, err := a.store.ListAllUsers()
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	items := make([]map[string]any, 0)
+	for _, user := range users {
+		if models.CustomerAccountType(user) != models.AccountTypeCorporate {
+			continue
+		}
+		view := adminUserView(user)
+		if company, e := a.store.GetCompanyByUser(user.ID); e == nil {
+			view["company"] = company
+		}
+		items = append(items, view)
+	}
+	jsonResponse(w, http.StatusOK, map[string]any{"items": items})
+}
+
 func (a *API) adminDrivers(w http.ResponseWriter, r *http.Request) {
 	users, err := a.store.ListAllUsers()
 	if err != nil {

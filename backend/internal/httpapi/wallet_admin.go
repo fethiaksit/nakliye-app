@@ -47,6 +47,10 @@ func (a *API) walletCompanyForAdmin(w http.ResponseWriter, r *http.Request) (mod
 		forbidden(w)
 		return models.Company{}, false
 	}
+	if user.CorporateStatus != "" && user.CorporateStatus != models.CorporateStatusApproved {
+		forbidden(w)
+		return models.Company{}, false
+	}
 	company, err := a.store.GetCompanyByUser(user.ID)
 	if err != nil {
 		serverError(w, err)
@@ -78,6 +82,9 @@ func (a *API) adminWalletList(w http.ResponseWriter, r *http.Request) {
 	items := make([]map[string]any, 0)
 	for _, u := range users {
 		if models.CustomerAccountType(u) != models.AccountTypeCorporate {
+			continue
+		}
+		if u.CorporateStatus != "" && u.CorporateStatus != models.CorporateStatusApproved {
 			continue
 		}
 		company, e := a.store.GetCompanyByUser(u.ID)

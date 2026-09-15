@@ -139,13 +139,17 @@ type PricingSnapshot struct {
 }
 
 type User struct {
-	ID            string        `json:"id"`
-	Name          string        `json:"name"`
-	Email         string        `json:"email"`
-	Phone         string        `json:"phone"`
-	Role          string        `json:"role"`
-	AccountType   string        `json:"accountType,omitempty"`
-	DriverProfile DriverProfile `json:"driverProfile,omitempty"`
+	ID                       string        `json:"id"`
+	Name                     string        `json:"name"`
+	Email                    string        `json:"email"`
+	Phone                    string        `json:"phone"`
+	Role                     string        `json:"role"`
+	AccountType              string        `json:"accountType,omitempty"`
+	CorporateStatus          string        `json:"corporateStatus,omitempty"`
+	CorporateApprovedAt      *time.Time    `json:"approvedAt,omitempty"`
+	CorporateApprovedBy      string        `json:"approvedBy,omitempty"`
+	CorporateRejectionReason string        `json:"rejectionReason,omitempty"`
+	DriverProfile            DriverProfile `json:"driverProfile,omitempty"`
 	// User is never returned directly by the HTTP handlers; keeping this field
 	// serializable is required for the Redis persistence layer to authenticate
 	// a user after registration.

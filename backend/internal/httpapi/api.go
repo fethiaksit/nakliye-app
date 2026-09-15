@@ -141,6 +141,8 @@ func (a *API) Routes() http.Handler {
 	mux.Handle("PATCH /api/admin/complaints/{id}", a.adminAuth(http.HandlerFunc(a.adminUpdateComplaint)))
 	mux.Handle("GET /api/admin/activity", a.adminAuth(http.HandlerFunc(a.adminActivity)))
 	mux.Handle("GET /api/admin/stats", a.adminAuth(http.HandlerFunc(a.adminStats)))
+	mux.Handle("GET /api/admin/corporate-applications", a.adminAuth(http.HandlerFunc(a.adminCorporateApplications)))
+	mux.Handle("PATCH /api/admin/corporate-applications/{id}", a.adminAuth(http.HandlerFunc(a.adminCorporateApplications)))
 	mux.Handle("GET /api/admin/corporate-wallets/settings", a.adminAuth(http.HandlerFunc(a.adminWalletSettings)))
 	mux.Handle("PUT /api/admin/corporate-wallets/settings", a.adminAuth(http.HandlerFunc(a.adminWalletSettings)))
 	mux.Handle("GET /api/admin/corporate-wallets", a.adminAuth(http.HandlerFunc(a.adminWalletList)))
@@ -270,6 +272,9 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now().UTC()
 	u := models.User{ID: uuid.NewString(), Name: strings.TrimSpace(req.Name), Email: req.Email, Phone: req.Phone, Role: req.Role, AccountType: req.AccountType, PasswordHash: hash, AccountStatus: models.AccountStatusActive, CreatedAt: now}
+	if models.CustomerAccountType(u) == models.AccountTypeCorporate {
+		u.CorporateStatus = models.CorporateStatusPending
+	}
 	if u.Role == models.RoleDriver {
 		u.DriverProfile.VerificationStatus = models.VerificationPending
 		u.DriverProfile.LicenseStatus = models.VerificationPending
@@ -2477,6 +2482,9 @@ func publicUser(u models.User) map[string]any {
 		user["driverProfile"] = u.DriverProfile
 	} else if u.Role == models.RoleCustomer {
 		user["accountType"] = models.CustomerAccountType(u)
+		if models.CustomerAccountType(u) == models.AccountTypeCorporate {
+			user["corporateStatus"] = u.CorporateStatus
+		}
 	}
 	return user
 }

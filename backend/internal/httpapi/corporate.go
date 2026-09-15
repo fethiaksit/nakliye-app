@@ -27,6 +27,10 @@ func (a *API) corporateContext(w http.ResponseWriter, r *http.Request) (models.U
 		forbidden(w)
 		return models.User{}, models.Company{}, false
 	}
+	if user.CorporateStatus != "" && user.CorporateStatus != models.CorporateStatusApproved {
+		forbidden(w)
+		return models.User{}, models.Company{}, false
+	}
 	company, err := a.store.GetCompanyByUser(user.ID)
 	if err != nil || company.OwnerCustomerID != user.ID {
 		forbidden(w)

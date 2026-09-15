@@ -7,6 +7,25 @@ import (
 	"testing"
 )
 
+func TestCorporateApprovalGatesWallet(t *testing.T) {
+	h := newAdminTestAPI(t)
+	pending := requestJSON(t, h, http.MethodPost, "/api/auth/register", "", map[string]any{"name": "Bekleyen Firma", "email": "pending-approval@example.com", "phone": testPhone("pending-approval"), "password": "GucluSifre123", "role": models.RoleCustomer, "accountType": models.AccountTypeCorporate, "companyName": "Bekleyen Firma"})
+	if pending.Code != http.StatusOK {
+		t.Fatalf("register %d %s", pending.Code, pending.Body.String())
+	}
+	session := decodeResponse[testSession](t, pending)
+	if r := requestJSON(t, h, http.MethodGet, "/api/corporate/wallet", session.AccessToken, nil); r.Code != http.StatusForbidden {
+		t.Fatalf("pending wallet status=%d", r.Code)
+	}
+	admin := adminLoginForTest(t, h)
+	if r := requestJSON(t, h, http.MethodPatch, "/api/admin/corporate-applications/"+session.User.ID, admin.AccessToken, map[string]string{"status": models.CorporateStatusApproved}); r.Code != http.StatusOK {
+		t.Fatalf("approval status=%d", r.Code)
+	}
+	if r := requestJSON(t, h, http.MethodGet, "/api/corporate/wallet", session.AccessToken, nil); r.Code != http.StatusOK {
+		t.Fatalf("approved wallet status=%d", r.Code)
+	}
+}
+
 func configureTenPercentWallet(t *testing.T, s *store.RedisStore) {
 	t.Helper()
 	p := models.DefaultWalletPolicy()

@@ -8,9 +8,16 @@ import (
 )
 
 const (
-	AccountTypeIndividual = "individual"
-	AccountTypeCorporate  = "corporate"
+	AccountTypeIndividual   = "individual"
+	AccountTypeCorporate    = "corporate"
+	CorporateStatusPending  = "pending"
+	CorporateStatusApproved = "approved"
+	CorporateStatusRejected = "rejected"
 )
+
+func ValidCorporateStatus(value string) bool {
+	return value == CorporateStatusPending || value == CorporateStatusApproved || value == CorporateStatusRejected
+}
 
 const (
 	WalletTransactionShipmentReward = "earn"

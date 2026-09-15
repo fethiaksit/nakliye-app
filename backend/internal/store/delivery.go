@@ -119,6 +119,16 @@ func (s *RedisStore) CompleteDeliveryWithReward(expectedStatus string, updated m
 		if err != nil || company.OwnerCustomerID != updated.CustomerID {
 			return nil, ErrCorporateAccountRequired
 		}
+		owner, ownerErr := s.GetUser(company.OwnerCustomerID)
+		if ownerErr != nil {
+			return nil, ownerErr
+		}
+		if owner.CorporateStatus != "" && owner.CorporateStatus != models.CorporateStatusApproved {
+			rewardTemplate = nil
+		}
+		if rewardTemplate == nil {
+			goto rewardSetupDone
+		}
 		wallet, err = s.GetCorporateWallet(company.ID)
 		if err != nil {
 			return nil, err
@@ -129,6 +139,7 @@ func (s *RedisStore) CompleteDeliveryWithReward(expectedStatus string, updated m
 		rewardTransactionKey = "wallet-transaction:" + reward.ID
 		watchKeys = append(watchKeys, allocationKey, walletKey, rewardUniqueKey, rewardTransactionKey, walletPolicyKey, walletRateKey(company.ID))
 	}
+rewardSetupDone:
 
 	err = s.client.Watch(s.ctx, func(tx *redis.Tx) error {
 		storedLoadBody, getErr := tx.Get(s.ctx, loadKey).Bytes()

@@ -25,6 +25,7 @@ export default function CorporateWalletAdmin({request, items}: {request: Request
  const [selected, setSelected] = useState<string>("");
  const [message, setMessage] = useState("");
  const [busy, setBusy] = useState(false);
+ const [applications, setApplications] = useState<any[]>([]);
  const [settingsLoading, setSettingsLoading] = useState(true);
  useEffect(() => {
   let alive=true;
@@ -39,6 +40,8 @@ export default function CorporateWalletAdmin({request, items}: {request: Request
    .finally(()=>{if(alive)setSettingsLoading(false);});
   return()=>{alive=false;};
  },[request]);
+ useEffect(() => { let alive=true; request("/corporate-applications").then(v=>{if(alive)setApplications(Array.isArray(v?.items)?v.items:[]);}).catch(()=>{}); return()=>{alive=false;}; },[request]);
+ async function review(id:string,status:string){ setBusy(true); try { const body:any={status}; if(status==="rejected") body.rejectionReason="Yönetici tarafından reddedildi."; await request(`/corporate-applications/${id}`,{method:"PATCH",body:JSON.stringify(body)}); setApplications(current=>current.filter(item=>item.id!==id)); } finally {setBusy(false);} }
  async function save(event: FormEvent<HTMLFormElement>) {
   event.preventDefault(); if (!policy) return;
   const form = new FormData(event.currentTarget);setBusy(true);setMessage("");
@@ -54,6 +57,7 @@ export default function CorporateWalletAdmin({request, items}: {request: Request
  }
  return <div className="wallet-management">
   {message && <p role="status" className="alert">{message}</p>}
+  {applications.some(item=>item.corporateStatus==="pending") && <section className="panel"><h2>Kurumsal Başvurular</h2>{applications.filter(item=>item.corporateStatus==="pending").map(item=><div className="review-card" key={item.id}><div><b>{item.company?.name || item.name}</b><small>{item.company?.authorizedPerson || item.name}<br/>{item.company?.taxNumber || "Vergi no yok"} · {new Date(item.createdAt).toLocaleDateString("tr-TR")}</small></div><div className="review-actions"><button className="primary-button" disabled={busy} onClick={()=>void review(item.id,"approved")}>Onayla</button><button className="danger-button" disabled={busy} onClick={()=>void review(item.id,"rejected")}>Reddet</button></div></div>)}</section>}
   {policy ? <form className="panel wallet-settings" onSubmit={save}>
    <h2>Kurumsal Cüzdan Yönetimi</h2>
    <label className="check"><input name="enabled" type="checkbox" defaultChecked={policy.enabled}/> Cüzdan kazanımı ve kullanımı açık</label>

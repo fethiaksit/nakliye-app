@@ -176,6 +176,7 @@ export default function CorporateAccountScreens({ page, onPageChange, account, f
   }, []);
 
   useEffect(() => {
+    if (account?.corporateStatus && account.corporateStatus !== 'approved') return;
     if (page === 'home') void fetchDashboard();
     if (['active-jobs', 'history-jobs', 'monthly-jobs', 'support-new'].includes(page)) void fetchLoads();
     if (page === 'company') void fetchCompany();
@@ -205,6 +206,7 @@ export default function CorporateAccountScreens({ page, onPageChange, account, f
 	const removeFavorite = async driverId => { try { await corporate.removeFavorite(driverId); await fetchFavorites(); showToast('Şoför favorilerden çıkarıldı.', { type: 'success' }); } catch (error) { showToast(apiError(error), { type: 'error', title: 'Favori güncellenemedi' }); } };
 
   if (state.error && !['company-edit', 'support-new', 'password'].includes(page)) return <ScreenState type="error" title="Kurumsal hesap yüklenemedi" message={state.error} onRetry={page === 'home' ? fetchDashboard : page === 'company' ? fetchCompany : page === 'wallet' ? fetchWallet : page === 'favorites' ? fetchFavorites : fetchLoads} />;
+  if (account?.corporateStatus && account.corporateStatus !== 'approved') return <ScreenState title="Kurumsal başvuru beklemede" message={account.corporateStatus === 'rejected' ? 'Kurumsal başvurunuz reddedildi.' : 'Kurumsal hesabınız yönetici onayı bekliyor.'} />;
   if (state.loading && page !== 'password' && !dashboard && !company && !accountLoads.length) return <ListSkeleton count={3} />;
 
   if (page === 'company') return <CompanyPage company={company} onBack={() => onPageChange('home')} onEdit={() => { setCompanyForm(companyFormFor(company)); onPageChange('company-edit'); }} />;

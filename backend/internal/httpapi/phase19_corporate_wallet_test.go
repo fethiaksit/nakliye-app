@@ -26,7 +26,13 @@ func registerCorporateTestUser(t *testing.T, handler http.Handler, suffix string
 	if response.Code != http.StatusOK {
 		t.Fatalf("corporate register status=%d body=%s", response.Code, response.Body.String())
 	}
-	return decodeResponse[testSession](t, response)
+	session := decodeResponse[testSession](t, response)
+	admin := adminLoginForTest(t, handler)
+	approval := requestJSON(t, handler, http.MethodPatch, "/api/admin/corporate-applications/"+session.User.ID, admin.AccessToken, map[string]string{"status": models.CorporateStatusApproved})
+	if approval.Code != http.StatusOK {
+		t.Fatalf("corporate approval status=%d body=%s", approval.Code, approval.Body.String())
+	}
+	return session
 }
 
 func acceptOfferAmount(t *testing.T, handler http.Handler, customer, driver testSession, load models.Load, amountTL float64) models.Load {
