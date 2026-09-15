@@ -212,3 +212,78 @@ func TestPhaseTenDeliveryCodeAndPhotoCompletion(t *testing.T) {
 		}
 	}
 }
+
+func TestDeliveryCodeRepairsMissingLegacyVerification(t *testing.T) {
+	handler, redisStore := newFlowTestAPI(t)
+
+	customer := registerTestUser(t, handler, "legacydeliverycustomer", models.RoleCustomer)
+	driver := registerTestUser(t, handler, "legacydeliverydriver", models.RoleDriver)
+
+	// Önce normal bir load oluşturarak geçerli yük verisini elde et.
+	source := createPublishedStatusTestLoad(t, handler, customer, "Eski teslimat kaydı")
+
+	// Faz 10 öncesindeki eski kabul edilmiş bir işi simüle ediyoruz:
+	// load mevcut, şoför atanmış, fakat delivery-verification kaydı hiç yok.
+	legacy := source
+	legacy.ID = "legacy-" + source.ID
+	legacy.Title = "Verification kaydı eksik eski iş"
+	legacy.Status = models.LoadStatusDriverSelected
+	legacy.AssignedDriver = driver.User.ID
+	legacy.DeliveryVerified = false
+	legacy.DeliveryVerifiedAt = nil
+	legacy.DeliveryPhotoURL = ""
+	legacy.DeliveryVerificationMethod = ""
+
+	if err := redisStore.SaveLoad(legacy); err != nil {
+		t.Fatalf("legacy load save failed: %v", err)
+	}
+
+	// Ön koşul: verification gerçekten bulunmamalı.
+	if _, err := redisStore.GetDeliveryVerification(legacy.ID); err == nil {
+		t.Fatal("legacy load unexpectedly already has delivery verification")
+	}
+
+	// İlk çağrı eksik verification kaydını otomatik oluşturmalı.
+	firstCode, firstResponse := deliveryCodeForTest(t, handler, legacy.ID, customer.AccessToken)
+	if firstResponse.Code != http.StatusOK {
+		t.Fatalf("first delivery code status=%d body=%s", firstResponse.Code, firstResponse.Body.String())
+	}
+	if !regexp.MustCompile(`^\d{6}$`).MatchString(firstCode) {
+		t.Fatalf("invalid generated delivery code: %q", firstCode)
+	}
+
+	verification, err := redisStore.GetDeliveryVerification(legacy.ID)
+	if err != nil {
+		t.Fatalf("repaired verification not stored: %v", err)
+	}
+	if verification.LoadID != legacy.ID ||
+		verification.CustomerID != customer.User.ID ||
+		verification.DriverID != driver.User.ID ||
+		verification.CodeHash == "" ||
+		verification.CodeCiphertext == "" ||
+		verification.Verified {
+		t.Fatalf("invalid repaired verification: %#v", verification)
+	}
+
+	// İkinci çağrı yeni kod üretmemeli; aynı kod dönmeli.
+	secondCode, secondResponse := deliveryCodeForTest(t, handler, legacy.ID, customer.AccessToken)
+	if secondResponse.Code != http.StatusOK {
+		t.Fatalf("second delivery code status=%d body=%s", secondResponse.Code, secondResponse.Body.String())
+	}
+	if secondCode != firstCode {
+		t.Fatalf("delivery code changed between requests: first=%q second=%q", firstCode, secondCode)
+	}
+
+	// Gizli değer load JSON'una sızmamalı.
+	stored, err := redisStore.GetLoad(legacy.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body, _ := json.Marshal(stored)
+	if strings.Contains(string(body), firstCode) ||
+		strings.Contains(string(body), "codeHash") ||
+		strings.Contains(string(body), "codeCiphertext") {
+		t.Fatalf("legacy load serialization leaked verification secret: %s", body)
+	}
+}

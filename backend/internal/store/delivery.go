@@ -18,6 +18,49 @@ func (s *RedisStore) GetDeliveryVerification(loadID string) (models.DeliveryVeri
 	return verification, json.Unmarshal(body, &verification)
 }
 
+// EnsureDeliveryVerification returns the existing delivery verification or
+// creates it once when an older accepted load does not yet have one.
+// SetNX prevents an existing delivery code from ever being replaced.
+func (s *RedisStore) EnsureDeliveryVerification(verification models.DeliveryVerification) (models.DeliveryVerification, error) {
+	var empty models.DeliveryVerification
+
+	if verification.LoadID == "" ||
+		verification.CustomerID == "" ||
+		verification.DriverID == "" ||
+		verification.CodeHash == "" ||
+		verification.CodeCiphertext == "" ||
+		verification.CreatedAt.IsZero() {
+		return empty, errors.New("invalid delivery verification")
+	}
+
+	existing, err := s.GetDeliveryVerification(verification.LoadID)
+	if err == nil {
+		return existing, nil
+	}
+	if !errors.Is(err, redis.Nil) {
+		return empty, err
+	}
+
+	body, err := json.Marshal(verification)
+	if err != nil {
+		return empty, err
+	}
+
+	key := "load-delivery-verification:" + verification.LoadID
+
+	created, err := s.client.SetNX(s.ctx, key, body, 0).Result()
+	if err != nil {
+		return empty, err
+	}
+
+	if created {
+		return verification, nil
+	}
+
+	// Başka bir istek aynı anda kaydı oluşturduysa mevcut olanı kullan.
+	return s.GetDeliveryVerification(verification.LoadID)
+}
+
 // CompleteDelivery retains the existing persistence contract for individual
 // customers and tests that do not need a corporate reward.
 func (s *RedisStore) CompleteDelivery(expectedStatus string, updated models.Load, event models.LoadStatusEvent, verification models.DeliveryVerification) error {

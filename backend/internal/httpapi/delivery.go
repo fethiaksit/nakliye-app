@@ -101,6 +101,24 @@ func validDeliveryCode(code string) bool {
 	return true
 }
 
+func deliveryCodeAvailableForLoad(load models.Load) bool {
+	if load.DeliveryVerified || load.AssignedDriver == "" {
+		return false
+	}
+
+	switch models.CanonicalLoadStatus(load.Status) {
+	case models.LoadStatusDriverSelected,
+		models.LoadStatusDriverEnRoute,
+		models.LoadStatusAtPickup,
+		models.LoadStatusPickedUp,
+		models.LoadStatusEnRouteToDelivery,
+		models.LoadStatusDelivered:
+		return true
+	default:
+		return false
+	}
+}
+
 func (a *API) deliveryCode(w http.ResponseWriter, r *http.Request) {
 	principal := current(r)
 	if principal.Role != models.RoleCustomer {
@@ -118,8 +136,24 @@ func (a *API) deliveryCode(w http.ResponseWriter, r *http.Request) {
 	}
 	verification, err := a.store.GetDeliveryVerification(load.ID)
 	if err != nil {
-		notFound(w)
-		return
+		// Faz 10'dan önce kabul edilmiş veya verification kaydı eksilmiş
+		// aktif yükleri güvenli biçimde onar.
+		if !deliveryCodeAvailableForLoad(load) {
+			notFound(w)
+			return
+		}
+
+		generated, generateErr := a.newDeliveryVerification(load)
+		if generateErr != nil {
+			serverError(w, generateErr)
+			return
+		}
+
+		verification, err = a.store.EnsureDeliveryVerification(generated)
+		if err != nil {
+			serverError(w, err)
+			return
+		}
 	}
 	if verification.CustomerID != principal.ID || verification.LoadID != load.ID {
 		forbidden(w)
