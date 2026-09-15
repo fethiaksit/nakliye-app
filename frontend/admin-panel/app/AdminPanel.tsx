@@ -1,14 +1,16 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
+import CorporateWalletAdmin, { WalletCustomer } from "./CorporateWalletAdmin";
 
-type Tab = "dashboard" | "users" | "drivers" | "loads" | "complaints" | "activity";
+type Tab = "corporate-wallets" | "dashboard" | "users" | "drivers" | "loads" | "complaints" | "activity";
 type DetailKind = "user" | "driver" | "load" | "complaint";
 type AnyRecord = Record<string, any>;
 
 const API_BASE = (process.env.NEXT_PUBLIC_ADMIN_API_URL || "http://localhost:8080/api/admin").replace(/\/$/, "");
 
 const navigation: { id: Tab; label: string; mark: string }[] = [
+  { id: "corporate-wallets", label: "Kurumsal Cüzdan Yönetimi", mark: "07" },
   { id: "dashboard", label: "Genel bakış", mark: "01" },
   { id: "users", label: "Kullanıcılar", mark: "02" },
   { id: "drivers", label: "Şoför doğrulama", mark: "03" },
@@ -36,7 +38,6 @@ const labels: Record<string, string> = {
 
 const formatDate = (value?: string) => value ? new Intl.DateTimeFormat("tr-TR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "—";
 const formatMoney = (value?: number) => new Intl.NumberFormat("tr-TR", { style: "currency", currency: "TRY", maximumFractionDigits: 0 }).format(value || 0);
-const formatCents = (value?: number) => formatMoney(Number(value || 0) / 100);
 const label = (value?: string) => labels[value || ""] || value || "—";
 const initials = (name?: string) => (name || "NA").split(" ").slice(0, 2).map(part => part[0]).join("").toUpperCase();
 
@@ -92,6 +93,9 @@ export default function AdminPanel() {
     }
     if (response.status === 204) return null;
     const body = await response.json().catch(() => ({}));
+    if (!response.ok && path.startsWith("/corporate-wallets")) {
+      throw new Error(`Cüzdan API: HTTP ${response.status} (${path.split("?")[0]}). ${body?.error?.message || (response.status === 404 ? "Bağlı backend cüzdan endpoint'ini sunmuyor; backend sürümünü kontrol edin." : "İstek başarısız oldu.")}`);
+    }
     if (!response.ok) throw new Error(body?.error?.message || "İşlem tamamlanamadı.");
     return body;
   }, [token]);
@@ -110,10 +114,15 @@ export default function AdminPanel() {
   const loadTab = useCallback(async (target: Tab) => {
     if (!token) return;
     setLoading(true); setError(""); setNotice(""); setDetail(null); setDetailKind(null);
+    if (target === "corporate-wallets") setData(null);
     try {
       if (target === "activity") {
         const [activity, stats] = await Promise.all([request(pathForTab(target)), request("/stats?days=14")]);
         setData({ ...activity, stats });
+      } else if (target === "corporate-wallets") {
+        const result = await request(pathForTab(target));
+        if (!result || !Array.isArray(result.items)) throw new Error("Kurumsal müşteri listesi API yanıtı geçersiz veya boş.");
+        setData(result);
       } else {
         setData(await request(pathForTab(target)));
       }
@@ -185,8 +194,8 @@ export default function AdminPanel() {
         </header>
         {error && <div className="alert error-alert" role="alert">{error}<button onClick={() => setError("")}>Kapat</button></div>}
         {notice && <div className="alert success-alert" role="status">{notice}<button onClick={() => setNotice("")}>Kapat</button></div>}
-        {tab !== "dashboard" && tab !== "activity" && <Toolbar tab={tab} query={query} setQuery={setQuery} filter={filter} setFilter={setFilter} search={() => void loadTab(tab)} />}
-        {loading ? <LoadingRows /> : <PanelContent tab={tab} data={data} openDetail={openDetail} />}
+        {tab !== "corporate-wallets" && tab !== "dashboard" && tab !== "activity" && <Toolbar tab={tab} query={query} setQuery={setQuery} filter={filter} setFilter={setFilter} search={() => void loadTab(tab)} />}
+        {loading ? <LoadingRows /> : tab === "corporate-wallets" ? <CorporateWalletAdmin request={request} items={data?.items || []} /> : <PanelContent tab={tab} data={data} openDetail={openDetail} />}
       </section>
       {detail && detailKind && <DetailDrawer kind={detailKind} data={detail} close={() => setDetail(null)} note={actionNote} setNote={setActionNote} busy={actionBusy} mutate={mutate} request={request} refresh={() => void openDetail(detailKind, detailId(detailKind, detail))} />}
     </main>
@@ -247,10 +256,10 @@ function detailId(kind: DetailKind, data: AnyRecord) { return kind === "driver" 
 function DetailDrawer({ kind, data, close, note, setNote, busy, mutate, request, refresh }: { kind: DetailKind; data: AnyRecord; close: () => void; note: string; setNote: (value: string) => void; busy: boolean; mutate: (path: string, payload: AnyRecord, success: string, refreshDetail?: [DetailKind, string]) => Promise<void>; request: (path: string, init?: RequestInit) => Promise<any>; refresh: () => void }) {
   const id = detailId(kind, data);
   const user = kind === "driver" ? data.user : kind === "user" ? data : null;
-  return <div className="drawer-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) close(); }}><aside className="drawer" aria-modal="true" role="dialog"><header><div><p>{kind === "driver" ? "ŞOFÖR DOĞRULAMA" : kind === "load" ? "İLAN DETAYI" : kind === "complaint" ? "ŞİKÂYET İNCELEME" : "KULLANICI DETAYI"}</p><h2>{user?.name || data.load?.title || label(data.complaint?.reason)}</h2></div><button onClick={close} aria-label="Detayı kapat">×</button></header><div className="drawer-body">{kind === "user" && <UserDetail user={data} note={note} setNote={setNote} busy={busy} mutate={mutate} />}{kind === "driver" && <DriverDetail data={data} note={note} setNote={setNote} busy={busy} mutate={mutate} request={request} refresh={refresh} />}{kind === "load" && <LoadDetail data={data} note={note} setNote={setNote} busy={busy} mutate={mutate} />}{kind === "complaint" && <ComplaintDetail data={data} note={note} setNote={setNote} busy={busy} mutate={mutate} />}</div><footer><code>ID: {id}</code><button className="outline-button" onClick={close}>Kapat</button></footer></aside></div>;
+  return <div className="drawer-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) close(); }}><aside className="drawer" aria-modal="true" role="dialog"><header><div><p>{kind === "driver" ? "ŞOFÖR DOĞRULAMA" : kind === "load" ? "İLAN DETAYI" : kind === "complaint" ? "ŞİKÂYET İNCELEME" : "KULLANICI DETAYI"}</p><h2>{user?.name || data.load?.title || label(data.complaint?.reason)}</h2></div><button onClick={close} aria-label="Detayı kapat">×</button></header><div className="drawer-body">{kind === "user" && <UserDetail user={data} request={request} note={note} setNote={setNote} busy={busy} mutate={mutate} />}{kind === "driver" && <DriverDetail data={data} note={note} setNote={setNote} busy={busy} mutate={mutate} request={request} refresh={refresh} />}{kind === "load" && <LoadDetail data={data} note={note} setNote={setNote} busy={busy} mutate={mutate} />}{kind === "complaint" && <ComplaintDetail data={data} note={note} setNote={setNote} busy={busy} mutate={mutate} />}</div><footer><code>ID: {id}</code><button className="outline-button" onClick={close}>Kapat</button></footer></aside></div>;
 }
 
-function UserDetail({ user, note, setNote, busy, mutate }: any) { const blocked = user.accountStatus === "blocked"; return <><Person user={user} /><InfoGrid items={[["Rol", label(user.role)], ["Hesap türü", user.role === "customer" ? label(user.accountType) : "—"], ["Telefon", user.phone], ["Kayıt", formatDate(user.createdAt)], ["Son görülme", formatDate(user.lastSeenAt)], ["Hesap", label(user.accountStatus)]]} />{user.accountType === "corporate" && user.company ? <section><h3>Kurumsal hesap</h3><InfoGrid items={[["Firma", user.company.name], ["Yetkili", user.company.authorizedPerson], ["Vergi no", user.company.taxNumber || "Tamamlanmadı"], ["Vergi dairesi", user.company.taxOffice || "Tamamlanmadı"], ["Firma telefonu", user.company.phone], ["Cüzdan bakiyesi", formatCents(user.wallet?.balanceCents)]]} /><p className="muted">{user.company.address || "Firma adresi tamamlanmadı."}</p><h3>Cüzdan hareketleri</h3>{(user.walletTransactions || []).length ? <div className="wallet-ledger">{user.walletTransactions.map((transaction: AnyRecord) => <div key={transaction.id}><span><b>{label(transaction.type)}</b><small>{transaction.pickupAddress && transaction.deliveryAddress ? `${transaction.pickupAddress} → ${transaction.deliveryAddress}` : transaction.description}<br />{formatDate(transaction.createdAt)}</small></span><strong className={transaction.amountCents < 0 ? "negative" : "positive"}>{transaction.amountCents >= 0 ? "+" : "−"} {formatCents(Math.abs(transaction.amountCents))}</strong></div>)}</div> : <p className="muted">Henüz cüzdan hareketi bulunmuyor.</p>}</section> : null}<section className="action-box"><h3>{blocked ? "Hesabı yeniden aktifleştir" : "Hesabı engelle"}</h3><p>{blocked ? "Kullanıcı yeniden oturum açabilir ve mobil akışlara erişebilir." : "Mevcut tokenlar anında geçersiz olur; yeni giriş engellenir."}</p>{!blocked && <textarea value={note} onChange={event => setNote(event.target.value)} placeholder="Engelleme nedeni (zorunlu)" />}<button className={blocked ? "primary-button" : "danger-button"} disabled={busy || (!blocked && !note.trim())} onClick={() => void mutate(`/users/${user.id}/status`, { status: blocked ? "active" : "blocked", reason: note }, blocked ? "Kullanıcı yeniden aktifleştirildi." : "Kullanıcı engellendi.")}>{blocked ? "Yeniden aktifleştir" : "Hesabı engelle"}</button></section></>; }
+function UserDetail({ user, request, note, setNote, busy, mutate }: any) { const blocked = user.accountStatus === "blocked"; return <><Person user={user} /><InfoGrid items={[["Rol", label(user.role)], ["Hesap türü", user.role === "customer" ? label(user.accountType) : "—"], ["Telefon", user.phone], ["Kayıt", formatDate(user.createdAt)], ["Son görülme", formatDate(user.lastSeenAt)], ["Hesap", label(user.accountStatus)]]} />{user.accountType === "corporate" && user.company ? <section><h3>Kurumsal hesap</h3><InfoGrid items={[["Firma", user.company.name], ["Yetkili", user.company.authorizedPerson], ["Vergi no", user.company.taxNumber || "Tamamlanmadı"], ["Vergi dairesi", user.company.taxOffice || "Tamamlanmadı"], ["Firma telefonu", user.company.phone]]} /><p className="muted">{user.company.address || "Firma adresi tamamlanmadı."}</p><WalletCustomer customerId={user.id} request={request} /></section> : null}<section className="action-box"><h3>{blocked ? "Hesabı yeniden aktifleştir" : "Hesabı engelle"}</h3><p>{blocked ? "Kullanıcı yeniden oturum açabilir ve mobil akışlara erişebilir." : "Mevcut tokenlar anında geçersiz olur; yeni giriş engellenir."}</p>{!blocked && <textarea value={note} onChange={event => setNote(event.target.value)} placeholder="Engelleme nedeni (zorunlu)" />}<button className={blocked ? "primary-button" : "danger-button"} disabled={busy || (!blocked && !note.trim())} onClick={() => void mutate(`/users/${user.id}/status`, { status: blocked ? "active" : "blocked", reason: note }, blocked ? "Kullanıcı yeniden aktifleştirildi." : "Kullanıcı engellendi.")}>{blocked ? "Yeniden aktifleştir" : "Hesabı engelle"}</button></section></>; }
 
 function DriverDetail({ data, note, setNote, busy, mutate, request, refresh }: any) { const user = data.user; const [docForm, setDocForm] = useState({ kind: "driver_license", title: "", fileURL: "" }); async function addDocument(event: FormEvent) { event.preventDefault(); try { await request(`/drivers/${user.id}/documents`, { method: "POST", body: JSON.stringify(docForm) }); setDocForm({ kind: "driver_license", title: "", fileURL: "" }); refresh(); } catch { /* parent surfaces API state on next action */ } } return <><Person user={user} /><InfoGrid items={[["Telefon", user.phone], ["Plaka", user.driverProfile?.licensePlate || "—"], ["Hizmet bölgesi", user.driverProfile?.serviceArea || "—"], ["Tamamlanan", user.driverProfile?.completedJobs || 0], ["Puan", user.driverProfile?.rating || "—"], ["Doğrulama", label(user.verificationStatus)]]} /><section><h3>Şoför doğrulaması</h3><textarea value={note} onChange={event => setNote(event.target.value)} placeholder="İnceleme notu / ret gerekçesi" /><div className="button-row"><button className="primary-button" disabled={busy} onClick={() => void mutate(`/drivers/${user.id}/verification`, { status: "verified", note }, "Şoför doğrulandı.", ["driver", user.id])}>Doğrula</button><button className="danger-button" disabled={busy || !note.trim()} onClick={() => void mutate(`/drivers/${user.id}/verification`, { status: "rejected", note }, "Şoför doğrulaması reddedildi.", ["driver", user.id])}>Reddet</button></div></section><section><h3>Belgeler</h3>{(data.documents || []).map((document: AnyRecord) => <div className="review-card" key={document.id}><div><b>{document.title}</b><small>{label(document.kind)} · <a href={document.fileUrl} target="_blank" rel="noreferrer">Belgeyi aç</a></small></div><Status value={document.status} /><div className="review-actions"><button onClick={() => void mutate(`/driver-documents/${document.id}`, { status: "verified", note }, "Belge doğrulandı.", ["driver", user.id])}>Onayla</button><button disabled={!note.trim()} onClick={() => void mutate(`/driver-documents/${document.id}`, { status: "rejected", note }, "Belge reddedildi.", ["driver", user.id])}>Reddet</button></div></div>)}<form className="document-form" onSubmit={addDocument}><select value={docForm.kind} onChange={event => setDocForm({ ...docForm, kind: event.target.value })}>{["identity", "driver_license", "vehicle_registration", "insurance", "criminal_record", "other"].map(kind => <option key={kind} value={kind}>{label(kind)}</option>)}</select><input required placeholder="Belge başlığı" value={docForm.title} onChange={event => setDocForm({ ...docForm, title: event.target.value })} /><input required type="url" placeholder="https:// güvenli belge adresi" value={docForm.fileURL} onChange={event => setDocForm({ ...docForm, fileURL: event.target.value })} /><button className="outline-button">Belge ekle</button></form></section><section><h3>Araçlar</h3>{(data.vehicles || []).map((vehicle: AnyRecord) => <div className="review-card" key={vehicle.id}><div><b>{vehicle.brand} {vehicle.model}</b><small>{vehicle.licensePlate} · {vehicle.capacityKg} kg</small></div><Status value={vehicle.verificationStatus} /><div className="review-actions"><button onClick={() => void mutate(`/vehicles/${vehicle.id}/verification`, { status: "verified", note }, "Araç doğrulandı.", ["driver", user.id])}>Onayla</button><button disabled={!note.trim()} onClick={() => void mutate(`/vehicles/${vehicle.id}/verification`, { status: "rejected", note }, "Araç reddedildi.", ["driver", user.id])}>Reddet</button></div></div>)}</section></>; }
 

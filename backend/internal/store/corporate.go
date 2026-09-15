@@ -114,7 +114,30 @@ func (s *RedisStore) GetWalletTransaction(id string) (models.WalletTransaction, 
 	if err != nil {
 		return transaction, err
 	}
-	return transaction, json.Unmarshal(body, &transaction)
+	if err = json.Unmarshal(body, &transaction); err != nil {
+		return transaction, err
+	}
+	// Read-time compatibility preserves the immutable legacy ledger.
+	if transaction.SchemaVersion == 0 {
+		transaction.BalanceBeforeCents = transaction.BalanceAfterCents - transaction.AmountCents
+		if transaction.Type == "shipment_reward" {
+			transaction.RewardRateBps = 1000
+		}
+		if company, e := s.GetCompany(transaction.CompanyID); e == nil {
+			transaction.CorporateCustomerID = company.OwnerCustomerID
+		}
+	}
+	switch transaction.Type {
+	case "shipment_reward":
+		transaction.Type = models.WalletTransactionShipmentReward
+	case "shipment_usage":
+		transaction.Type = models.WalletTransactionShipmentUsage
+	case "reversal":
+		transaction.Type = models.WalletTransactionReversal
+	case "adjustment":
+		transaction.Type = models.WalletTransactionAdjustment
+	}
+	return transaction, nil
 }
 
 func (s *RedisStore) ListWalletTransactions(walletID string) ([]models.WalletTransaction, error) {
@@ -125,7 +148,10 @@ func (s *RedisStore) ListWalletTransactions(walletID string) ([]models.WalletTra
 	transactions := make([]models.WalletTransaction, 0, len(ids))
 	for _, id := range ids {
 		transaction, getErr := s.GetWalletTransaction(id)
-		if getErr == nil && transaction.WalletID == walletID {
+		if getErr != nil {
+			return nil, getErr
+		}
+		if transaction.WalletID == walletID {
 			transactions = append(transactions, transaction)
 		}
 	}
@@ -142,6 +168,15 @@ func (s *RedisStore) GetLoadWalletAllocation(loadID string) (models.LoadWalletAl
 }
 
 func walletUniqueKey(transactionType, loadID string) string {
+	// Keep historical idempotency keys valid after the public type rename.
+	switch transactionType {
+	case models.WalletTransactionShipmentReward:
+		transactionType = "shipment_reward"
+	case models.WalletTransactionShipmentUsage:
+		transactionType = "shipment_usage"
+	case models.WalletTransactionReversal:
+		transactionType = "reversal"
+	}
 	return "wallet-transaction-unique:" + transactionType + ":" + loadID
 }
 
@@ -160,6 +195,13 @@ func (s *RedisStore) ApplyWalletCredit(company models.Company, requestedLoad mod
 	uniqueKey := walletUniqueKey(models.WalletTransactionShipmentUsage, requestedLoad.ID)
 	transactionKey := "wallet-transaction:" + transaction.ID
 	err = s.client.Watch(s.ctx, func(tx *redis.Tx) error {
+		policy, policyErr := s.readWalletPolicy(tx)
+		if policyErr != nil {
+			return policyErr
+		}
+		if !policy.Enabled {
+			return ErrWalletBalance
+		}
 		loadBody, getErr := tx.Get(s.ctx, loadKey).Bytes()
 		if getErr != nil {
 			return getErr
@@ -172,7 +214,7 @@ func (s *RedisStore) ApplyWalletCredit(company models.Company, requestedLoad mod
 			return ErrInvalidLoadStatusTransition
 		}
 		priceCents, validPrice := models.TLToCents(storedLoad.AgreedPriceTL)
-		if !validPrice || amountCents > priceCents {
+		if !validPrice || priceCents > models.MaxWalletCents || amountCents > models.WalletPercent(priceCents, policy.MaxUsageBps, false) {
 			return ErrWalletBalance
 		}
 		if exists, existsErr := tx.Exists(s.ctx, allocationKey, uniqueKey).Result(); existsErr != nil {
@@ -191,6 +233,9 @@ func (s *RedisStore) ApplyWalletCredit(company models.Company, requestedLoad mod
 		if storedWallet.CompanyID != company.ID || storedWallet.BalanceCents < amountCents {
 			return ErrWalletBalance
 		}
+		transaction.SchemaVersion = 1
+		transaction.CorporateCustomerID = company.OwnerCustomerID
+		transaction.BalanceBeforeCents = storedWallet.BalanceCents
 		storedWallet.BalanceCents -= amountCents
 		storedWallet.UpdatedAt = transaction.CreatedAt
 		allocation := models.LoadWalletAllocation{
@@ -223,7 +268,7 @@ func (s *RedisStore) ApplyWalletCredit(company models.Company, requestedLoad mod
 			return nil
 		})
 		return txErr
-	}, loadKey, walletKey, allocationKey, uniqueKey, transactionKey)
+	}, loadKey, walletKey, allocationKey, uniqueKey, transactionKey, walletPolicyKey)
 	if errors.Is(err, redis.TxFailedErr) {
 		err = ErrWalletConflict
 	}
@@ -315,6 +360,9 @@ func (s *RedisStore) TransitionLoadStatusAndReverseWallet(expectedStatus string,
 		if storedWallet.CompanyID != company.ID || storedWallet.BalanceCents > int64(^uint64(0)>>1)-storedAllocation.UsedCents {
 			return ErrWalletBalance
 		}
+		transaction.SchemaVersion = 1
+		transaction.CorporateCustomerID = company.OwnerCustomerID
+		transaction.BalanceBeforeCents = storedWallet.BalanceCents
 		storedWallet.BalanceCents += storedAllocation.UsedCents
 		storedWallet.UpdatedAt = transaction.CreatedAt
 		storedAllocation.UsageReversalTransactionID = transaction.ID

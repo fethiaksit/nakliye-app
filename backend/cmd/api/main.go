@@ -27,6 +27,9 @@ func main() {
 	if err = s.Ping(); err != nil {
 		log.Fatalf("Redis'e bağlanılamadı: %v", err)
 	}
+	if err = s.MigrateWalletPolicy(); err != nil {
+		log.Fatalf("Cüzdan şema güncellemesi: %v", err)
+	}
 	log.Printf("Server listening on http://0.0.0.0:%s (environment=%s)", cfg.Port, cfg.Environment)
 	if cfg.LANHost != "" {
 		log.Printf("LAN access: http://%s:%s", cfg.LANHost, cfg.Port)

@@ -2,6 +2,8 @@ package models
 
 import (
 	"math"
+	"math/big"
+	"strconv"
 	"time"
 )
 
@@ -11,10 +13,11 @@ const (
 )
 
 const (
-	WalletTransactionShipmentReward = "shipment_reward"
-	WalletTransactionShipmentUsage  = "shipment_usage"
-	WalletTransactionAdjustment     = "adjustment"
-	WalletTransactionReversal       = "reversal"
+	WalletTransactionShipmentReward = "earn"
+	WalletTransactionShipmentUsage  = "spend"
+	WalletTransactionAdjustment     = "admin_adjustment"
+	WalletTransactionReversal       = "refund"
+	WalletTransactionExpired        = "expired"
 )
 
 func ValidCustomerAccountType(value string) bool {
@@ -58,19 +61,24 @@ type CorporateWallet struct {
 // AmountCents is signed: rewards and reversals are positive, usage is
 // negative. BalanceAfterCents makes each immutable ledger record auditable.
 type WalletTransaction struct {
-	ID                string    `json:"id"`
-	WalletID          string    `json:"walletId"`
-	CompanyID         string    `json:"companyId"`
-	LoadID            string    `json:"loadId,omitempty"`
-	Type              string    `json:"type"`
-	AmountCents       int64     `json:"amountCents"`
-	BalanceAfterCents int64     `json:"balanceAfterCents"`
-	Description       string    `json:"description"`
-	PickupAddress     string    `json:"pickupAddress,omitempty"`
-	DeliveryAddress   string    `json:"deliveryAddress,omitempty"`
-	ActorID           string    `json:"actorId,omitempty"`
-	ActorRole         string    `json:"actorRole,omitempty"`
-	CreatedAt         time.Time `json:"createdAt"`
+	SchemaVersion       int        `json:"schemaVersion"`
+	CorporateCustomerID string     `json:"corporateCustomerId"`
+	BalanceBeforeCents  int64      `json:"balanceBeforeCents"`
+	RewardRateBps       int64      `json:"rewardRateBps"`
+	ExpiresAt           *time.Time `json:"expiresAt,omitempty"`
+	ID                  string     `json:"id"`
+	WalletID            string     `json:"walletId"`
+	CompanyID           string     `json:"companyId"`
+	LoadID              string     `json:"loadId,omitempty"`
+	Type                string     `json:"type"`
+	AmountCents         int64      `json:"amountCents"`
+	BalanceAfterCents   int64      `json:"balanceAfterCents"`
+	Description         string     `json:"description"`
+	PickupAddress       string     `json:"pickupAddress,omitempty"`
+	DeliveryAddress     string     `json:"deliveryAddress,omitempty"`
+	ActorID             string     `json:"actorId,omitempty"`
+	ActorRole           string     `json:"actorRole,omitempty"`
+	CreatedAt           time.Time  `json:"createdAt"`
 }
 
 // LoadWalletAllocation is deliberately not embedded in Load. Driver-facing
@@ -97,19 +105,23 @@ type FavoriteDriver struct {
 }
 
 func TLToCents(value float64) (int64, bool) {
-	if value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) || value > float64(math.MaxInt64)/100 {
+	if value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
 		return 0, false
 	}
-	return int64(math.Round(value * 100)), true
-}
-
-// CorporateRewardCents calculates the 10% loyalty credit after previously
-// used wallet credit. Integer cents avoid floating-point ledger drift.
-func CorporateRewardCents(agreedPriceTL float64, usedCents int64) (eligibleCents, rewardCents int64, ok bool) {
-	priceCents, valid := TLToCents(agreedPriceTL)
-	if !valid || usedCents < 0 || usedCents > priceCents {
-		return 0, 0, false
+	// Legacy load/offer APIs expose TL floats. Convert their decimal representation
+	// once at this boundary; all wallet arithmetic remains exact integer/rational.
+	r, ok := new(big.Rat).SetString(strconv.FormatFloat(value, 'f', -1, 64))
+	if !ok {
+		return 0, false
 	}
-	eligibleCents = priceCents - usedCents
-	return eligibleCents, (eligibleCents + 5) / 10, true
+	r.Mul(r, big.NewRat(100, 1))
+	if r.Cmp(big.NewRat(MaxWalletCents, 1)) > 0 {
+		return 0, false
+	}
+	r.Add(r, big.NewRat(1, 2))
+	n := new(big.Int).Quo(r.Num(), r.Denom())
+	if !n.IsInt64() || n.Sign() <= 0 {
+		return 0, false
+	}
+	return n.Int64(), true
 }

@@ -84,6 +84,7 @@ func findWalletTransaction(transactions []models.WalletTransaction, loadID, tran
 
 func TestPhaseNineteenCorporateAccountRewardAndFavorites(t *testing.T) {
 	handler, redisStore := newFlowTestAPI(t)
+	configureTenPercentWallet(t, redisStore)
 	corporate := registerCorporateTestUser(t, handler, "corporate_reward")
 	otherCorporate := registerCorporateTestUser(t, handler, "corporate_other")
 	individual := registerTestUser(t, handler, "corporate_individual", models.RoleCustomer)
@@ -161,7 +162,8 @@ func TestPhaseNineteenCorporateAccountRewardAndFavorites(t *testing.T) {
 }
 
 func TestPhaseNineteenWalletUsageAndCancellationReversal(t *testing.T) {
-	handler, _ := newFlowTestAPI(t)
+	handler, redisStore := newFlowTestAPI(t)
+	configureTenPercentWallet(t, redisStore)
 	corporate := registerCorporateTestUser(t, handler, "corporate_reversal")
 	driver := registerTestUser(t, handler, "corporate_reversal_driver", models.RoleDriver)
 
@@ -208,7 +210,8 @@ func TestPhaseNineteenWalletUsageAndCancellationReversal(t *testing.T) {
 }
 
 func TestPhaseNineteenRewardUsesNetAmount(t *testing.T) {
-	handler, _ := newFlowTestAPI(t)
+	handler, redisStore := newFlowTestAPI(t)
+	configureTenPercentWallet(t, redisStore)
 	corporate := registerCorporateTestUser(t, handler, "corporate_net")
 	driver := registerTestUser(t, handler, "corporate_net_driver", models.RoleDriver)
 
@@ -231,6 +234,7 @@ func TestPhaseNineteenRewardUsesNetAmount(t *testing.T) {
 
 func TestPhaseNineteenConcurrentWalletSpendCannotGoNegative(t *testing.T) {
 	handler, redisStore := newFlowTestAPI(t)
+	configureTenPercentWallet(t, redisStore)
 	corporate := registerCorporateTestUser(t, handler, "corporate_race")
 	driver := registerTestUser(t, handler, "corporate_race_driver", models.RoleDriver)
 	completeCorporateLoad(t, handler, corporate, driver, corporateAcceptedLoad(t, handler, corporate, driver, "Bakiye oluşturan taşıma", 10_000))

@@ -255,6 +255,17 @@ func (s *RedisStore) TransitionLoadStatus(expectedStatus string, updated models.
 	loadKey := "load:" + updated.ID
 	eventKey := "load-status-event:" + event.ID
 	err = s.client.Watch(s.ctx, func(tx *redis.Tx) error {
+		// A wallet allocation can appear between cancellation's initial lookup
+		// and this fallback. Retry through the refund path instead of losing credit.
+		if updated.Status == models.LoadStatusCancelled {
+			exists, e := tx.Exists(s.ctx, "load-wallet:"+updated.ID).Result()
+			if e != nil {
+				return e
+			}
+			if exists != 0 {
+				return ErrWalletConflict
+			}
+		}
 		storedBody, getErr := tx.Get(s.ctx, loadKey).Bytes()
 		if getErr != nil {
 			return getErr
@@ -282,7 +293,7 @@ func (s *RedisStore) TransitionLoadStatus(expectedStatus string, updated models.
 			return nil
 		})
 		return txErr
-	}, loadKey, eventKey)
+	}, loadKey, eventKey, "load-wallet:"+updated.ID)
 	if errors.Is(err, redis.TxFailedErr) {
 		return ErrLoadStatusConflict
 	}

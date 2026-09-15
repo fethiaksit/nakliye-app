@@ -65,6 +65,7 @@ func (s *RedisStore) CompleteDeliveryWithReward(expectedStatus string, updated m
 	var reward models.WalletTransaction
 	var wallet models.CorporateWallet
 	var company models.Company
+	rewardEnabled := false
 	allocationKey, walletKey, rewardUniqueKey, rewardTransactionKey := "", "", "", ""
 	if rewardTemplate != nil {
 		reward = *rewardTemplate
@@ -83,7 +84,7 @@ func (s *RedisStore) CompleteDeliveryWithReward(expectedStatus string, updated m
 		walletKey = "wallet:" + wallet.ID
 		rewardUniqueKey = walletUniqueKey(models.WalletTransactionShipmentReward, updated.ID)
 		rewardTransactionKey = "wallet-transaction:" + reward.ID
-		watchKeys = append(watchKeys, allocationKey, walletKey, rewardUniqueKey, rewardTransactionKey)
+		watchKeys = append(watchKeys, allocationKey, walletKey, rewardUniqueKey, rewardTransactionKey, walletPolicyKey, walletRateKey(company.ID))
 	}
 
 	err = s.client.Watch(s.ctx, func(tx *redis.Tx) error {
@@ -129,6 +130,15 @@ func (s *RedisStore) CompleteDeliveryWithReward(expectedStatus string, updated m
 		var walletBody, allocationBody, rewardBody []byte
 		var allocation models.LoadWalletAllocation
 		if rewardTemplate != nil {
+			policy, policyErr := s.readWalletPolicy(tx)
+			if policyErr != nil {
+				return policyErr
+			}
+			rewardEnabled = policy.Enabled
+			override, rateErr := s.readWalletRate(tx, company.ID)
+			if rateErr != nil {
+				return rateErr
+			}
 			if exists, existsErr := tx.Exists(s.ctx, rewardUniqueKey, rewardTransactionKey).Result(); existsErr != nil {
 				return existsErr
 			} else if exists != 0 {
@@ -160,16 +170,31 @@ func (s *RedisStore) CompleteDeliveryWithReward(expectedStatus string, updated m
 			} else if unmarshalErr := json.Unmarshal(storedAllocationBody, &allocation); unmarshalErr != nil {
 				return unmarshalErr
 			}
-			eligibleCents, rewardCents, valid := models.CorporateRewardCents(storedLoad.AgreedPriceTL, allocation.UsedCents)
 			priceCents, priceValid := models.TLToCents(storedLoad.AgreedPriceTL)
-			if !valid || !priceValid || allocation.CompanyID != company.ID || allocation.WalletID != wallet.ID || allocation.LoadID != storedLoad.ID ||
+			eligibleCents := priceCents - allocation.UsedCents
+			jobs, volume, progressErr := s.corporateProgress(company)
+			if progressErr != nil {
+				return progressErr
+			}
+			_, rate := policy.Rate(jobs, volume, override)
+			rewardCents := models.WalletPercent(eligibleCents, rate, true)
+			if !rewardEnabled {
+				rewardCents = 0
+			}
+			if !priceValid || priceCents > models.MaxWalletCents || allocation.UsedCents < 0 || eligibleCents < 0 || allocation.CompanyID != company.ID || allocation.WalletID != wallet.ID || allocation.LoadID != storedLoad.ID ||
 				allocation.OriginalAmountCents != priceCents || allocation.NetEligibleAmountCents != eligibleCents || allocation.UsageReversalTransactionID != "" || allocation.RewardTransactionID != "" ||
-				wallet.BalanceCents > int64(^uint64(0)>>1)-rewardCents {
+				wallet.BalanceCents > models.MaxWalletCents-rewardCents {
 				return ErrWalletBalance
 			}
+			reward.SchemaVersion = 1
+			reward.CorporateCustomerID = company.OwnerCustomerID
+			reward.RewardRateBps = rate
+			reward.BalanceBeforeCents = wallet.BalanceCents
 			wallet.BalanceCents += rewardCents
 			wallet.UpdatedAt = reward.CreatedAt
-			allocation.RewardTransactionID = reward.ID
+			if rewardEnabled {
+				allocation.RewardTransactionID = reward.ID
+			}
 			allocation.UpdatedAt = reward.CreatedAt
 			reward.WalletID = wallet.ID
 			reward.AmountCents = rewardCents
@@ -196,9 +221,11 @@ func (s *RedisStore) CompleteDeliveryWithReward(expectedStatus string, updated m
 			if rewardTemplate != nil {
 				pipe.Set(s.ctx, walletKey, walletBody, 0)
 				pipe.Set(s.ctx, allocationKey, allocationBody, 0)
-				pipe.Set(s.ctx, rewardTransactionKey, rewardBody, 0)
-				pipe.ZAdd(s.ctx, "wallet-transactions:"+wallet.ID, redis.Z{Score: float64(reward.CreatedAt.UnixMicro()), Member: reward.ID})
-				pipe.Set(s.ctx, rewardUniqueKey, reward.ID, 0)
+				if rewardEnabled {
+					pipe.Set(s.ctx, rewardTransactionKey, rewardBody, 0)
+					pipe.ZAdd(s.ctx, "wallet-transactions:"+wallet.ID, redis.Z{Score: float64(reward.CreatedAt.UnixMicro()), Member: reward.ID})
+					pipe.Set(s.ctx, rewardUniqueKey, reward.ID, 0)
+				}
 			}
 			return nil
 		})
@@ -210,7 +237,7 @@ func (s *RedisStore) CompleteDeliveryWithReward(expectedStatus string, updated m
 	if err != nil {
 		return nil, err
 	}
-	if rewardTemplate == nil {
+	if rewardTemplate == nil || !rewardEnabled {
 		return nil, nil
 	}
 	return &reward, nil

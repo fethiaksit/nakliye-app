@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { formatWalletCents } from '../../../shared/walletMoney.mjs';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import DatePickerField from '../../../shared/ui/DatePickerField';
@@ -30,7 +31,7 @@ const companyFormFor = company => ({
   name: company?.name || '', authorizedPerson: company?.authorizedPerson || '', taxNumber: company?.taxNumber || '',
   taxOffice: company?.taxOffice || '', address: company?.address || '', phone: company?.phone || '', email: company?.email || '',
 });
-const centsMoney = value => formatMoney(Number(value || 0) / 100);
+const centsMoney = formatWalletCents;
 const isSameMonth = (date, reference) => date.getFullYear() === reference.getFullYear() && date.getMonth() === reference.getMonth();
 
 function DashboardCard({ icon, label, value, hint, onPress }) {
@@ -44,7 +45,7 @@ function WalletTransactions({ items = [], compact = false }) {
   if (!items.length) return <ScreenState compact title="Henüz hareket yok" message="Tamamlanan uygun nakliyelerden kazanılan ve kullanılan krediler burada görünür." />;
   return <View>{items.map(transaction => <View key={transaction.id} style={styles.transactionRow}>
     <View style={[styles.transactionIcon, transaction.amountCents < 0 && styles.transactionIconUsage]}><Icon name={transaction.amountCents < 0 ? 'arrow-up-outline' : 'arrow-down-outline'} size={18} color={transaction.amountCents < 0 ? colors.warning : colors.success} /></View>
-    <View style={styles.transactionCopy}><Text style={styles.transactionTitle}>{transaction.description}</Text><Text style={styles.transactionMeta} numberOfLines={compact ? 1 : 2}>{transaction.pickupAddress && transaction.deliveryAddress ? `${transaction.pickupAddress} → ${transaction.deliveryAddress} · ` : ''}{new Date(transaction.createdAt).toLocaleDateString('tr-TR')}</Text></View>
+    <View style={styles.transactionCopy}><Text style={styles.transactionTitle}>{transaction.description}</Text><Text style={styles.transactionMeta} numberOfLines={compact ? 1 : undefined}>{transaction.pickupAddress && transaction.deliveryAddress ? `${transaction.pickupAddress} → ${transaction.deliveryAddress} · ` : ''}{new Date(transaction.createdAt).toLocaleDateString('tr-TR')}{!compact ? ` · Bakiye: ${centsMoney(transaction.balanceBeforeCents)} → ${centsMoney(transaction.balanceAfterCents)}${transaction.type === 'earn' ? ` · %${transaction.rewardRateBps / 100}` : ''}` : ''}</Text></View>
     <Text style={[styles.transactionAmount, transaction.amountCents < 0 && styles.transactionAmountUsage]}>{transaction.amountCents >= 0 ? '+' : '−'} {centsMoney(Math.abs(transaction.amountCents))}</Text>
   </View>)}</View>;
 }
@@ -213,7 +214,7 @@ export default function CorporateAccountScreens({ page, onPageChange, account, f
   if (page === 'history-jobs') return <AccountJobsPage title="Geçmiş Nakliyeler" subtitle="Tamamlanan ve iptal edilen kurumsal işler" items={accountLoads.filter(load => ['completed', 'cancelled'].includes(load.status))} loading={state.loading} error={state.error} onRetry={fetchLoads} onBack={() => onPageChange('home')} onOpen={onOpenLoad} statusLabel={loadStatusLabel} formatMoney={formatMoney} resolveMediaUrl={resolveMediaUrl} emptyMessage="Geçmiş nakliye bulunmuyor." />;
   if (page === 'monthly-jobs') return <MonthlyCompletedPage items={accountLoads} loading={state.loading} error={state.error} onRetry={fetchLoads} onBack={() => onPageChange('home')} onOpen={onOpenLoad} />;
   if (page === 'favorites') return <FavoriteDriversPage items={favorites} loading={state.loading} error={state.error} onRetry={fetchFavorites} onBack={() => onPageChange('home')} onRemove={removeFavorite} />;
-  if (page === 'wallet') return <><AccountBackHeader title="Cüzdanım" subtitle="Yalnız sonraki uygun nakliyelerde kullanılabilen kredi" onBack={() => onPageChange('home')} /><View style={styles.walletHero}><Text style={styles.walletEyebrow}>KULLANILABİLİR BAKİYE</Text><Text style={styles.walletBalance}>{centsMoney(wallet?.wallet?.balanceCents)}</Text><Text style={styles.walletHint}>Bankaya çekilemez, transfer edilemez ve nakit olarak talep edilemez.</Text></View><SectionCard title="Cüzdan hareketleri" icon="receipt-outline"><WalletTransactions items={wallet?.transactions} /></SectionCard></>;
+  if (page === 'wallet') return <><AccountBackHeader title="Cüzdanım" subtitle="Yalnız sonraki uygun nakliyelerde kullanılabilen kredi" onBack={() => onPageChange('home')} /><View style={styles.walletHero}><Text style={styles.walletEyebrow}>KULLANILABİLİR BAKİYE</Text><Text style={styles.walletBalance}>{centsMoney(wallet?.wallet?.balanceCents)}</Text><Text style={styles.walletHint}>Bankaya çekilemez, transfer edilemez ve nakit olarak talep edilemez.</Text></View>{wallet?.summary ? <SectionCard title="Sadakat bilgilerim" icon="star-outline"><DetailRow icon="wallet-outline" label="Seviye" value={wallet.summary.tier} /><DetailRow icon="wallet-outline" label="Kazanım oranı" value={`%${wallet.summary.rewardRateBps / 100}`} /><DetailRow icon="wallet-outline" label="Toplam kazanılan" value={centsMoney(wallet.summary.totalEarnedCents)} /><DetailRow icon="wallet-outline" label="Toplam kullanılan (iadeler düşülmüş)" value={centsMoney(wallet.summary.totalUsedCents)} /><DetailRow icon="wallet-outline" label="Nakliye başına kullanım sınırı" value={`%${wallet.summary.maxUsageBps / 100}`} /><Text style={typography.small}>{wallet.summary.enabled ? "Kazanım, tamamlanan nakliyede cüzdan indirimi sonrası ödenecek tutar üzerinden hesaplanır." : "Cüzdan kazanımı ve kullanımı şu anda kapalıdır. Mevcut bakiyeniz korunur."}</Text></SectionCard> : null}<SectionCard title="Cüzdan hareketleri" icon="receipt-outline"><WalletTransactions items={wallet?.transactions} /></SectionCard></>;
   if (page === 'support') return <SupportListPage items={tickets} loading={state.loading} error={state.error} onRetry={fetchTickets} onBack={() => onPageChange('home')} onNew={() => { setSupportForm(initialSupportForm()); onPageChange('support-new'); }} onOpen={openTicket} />;
   if (page === 'support-new') return <SupportNewPage form={supportForm} setForm={setSupportForm} loads={accountLoads.filter(load => load.assignedDriverId)} loading={saving} onSubmit={submitSupport} onBack={() => onPageChange('support')} />;
   if (page === 'support-detail') return <SupportDetailPage item={selectedTicket} onBack={() => onPageChange('support')} />;

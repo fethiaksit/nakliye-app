@@ -180,7 +180,12 @@ func (a *API) corporateWallet(w http.ResponseWriter, r *http.Request) {
 		serverError(w, err)
 		return
 	}
-	jsonResponse(w, http.StatusOK, map[string]any{"wallet": wallet, "transactions": transactions})
+	summary, err := a.store.WalletSummary(company, transactions)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]any{"wallet": wallet, "transactions": transactions, "summary": summary})
 }
 
 func minCents(first, second int64) int64 {
@@ -191,6 +196,10 @@ func minCents(first, second int64) int64 {
 }
 
 func (a *API) corporateLoadWalletView(company models.Company, load models.Load) (map[string]any, error) {
+	policy, err := a.store.GetWalletPolicy()
+	if err != nil {
+		return nil, err
+	}
 	wallet, err := a.store.GetCorporateWallet(company.ID)
 	if err != nil {
 		return nil, err
@@ -214,10 +223,11 @@ func (a *API) corporateLoadWalletView(company models.Company, load models.Load) 
 		usedCents = allocation.UsedCents
 	}
 	maxUsable := int64(0)
-	if load.Status == models.LoadStatusDriverSelected && allocation == nil {
-		maxUsable = minCents(wallet.BalanceCents, priceCents)
+	if policy.Enabled && load.Status == models.LoadStatusDriverSelected && allocation == nil {
+		maxUsable = minCents(wallet.BalanceCents, models.WalletPercent(priceCents, policy.MaxUsageBps, false))
 	}
 	return map[string]any{
+		"enabled": policy.Enabled, "maxUsageBps": policy.MaxUsageBps,
 		"wallet": wallet, "allocation": allocation, "agreedAmountCents": priceCents,
 		"usedCents": usedCents, "customerPayableCents": priceCents - usedCents, "maxUsableCents": maxUsable,
 	}, nil
@@ -248,7 +258,7 @@ func (a *API) corporateLoadWallet(w http.ResponseWriter, r *http.Request) {
 func writeWalletError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, store.ErrWalletBalance):
-		badRequest(w, "kullanılacak kredi mevcut bakiyeyi veya nakliye tutarını aşamaz")
+		badRequest(w, "cüzdan kapalı olabilir veya tutar/oran izin verilen sınırları aşıyor")
 	case errors.Is(err, store.ErrWalletUsageExists):
 		conflict(w, "bu nakliye için cüzdan kredisi daha önce kullanılmış")
 	case errors.Is(err, store.ErrWalletConflict), errors.Is(err, store.ErrLoadStatusConflict):

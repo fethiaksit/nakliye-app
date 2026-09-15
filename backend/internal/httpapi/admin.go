@@ -355,7 +355,18 @@ func (a *API) adminUser(w http.ResponseWriter, r *http.Request) {
 			view["company"] = company
 			if wallet, walletErr := a.store.GetCorporateWallet(company.ID); walletErr == nil {
 				view["wallet"] = wallet
-				view["walletTransactions"], _ = a.store.ListWalletTransactions(wallet.ID)
+				transactions, summaryErr := a.store.ListWalletTransactions(wallet.ID)
+				if summaryErr != nil {
+					serverError(w, summaryErr)
+					return
+				}
+				summary, summaryErr := a.store.WalletSummary(company, transactions)
+				if summaryErr != nil {
+					serverError(w, summaryErr)
+					return
+				}
+				view["walletSummary"] = summary
+				view["walletTransactions"] = transactions
 			}
 		}
 	}
