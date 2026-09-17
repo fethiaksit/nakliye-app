@@ -2196,7 +2196,7 @@ func (a *API) uploadConversationAttachment(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	defer file.Close()
-	url, err := a.savePhoto(file, header)
+	url, err := a.savePhoto(file, header, current(r).ID, l.ID)
 	if err != nil {
 		badRequest(w, err.Error())
 		return
@@ -2262,7 +2262,7 @@ func (a *API) uploadPhoto(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer file.Close()
-	url, e := a.savePhoto(file, header)
+	url, e := a.savePhoto(file, header, current(r).ID, "")
 	if e != nil {
 		badRequest(w, e.Error())
 		return
@@ -2304,7 +2304,7 @@ func (a *API) uploadLoadPhotos(w http.ResponseWriter, r *http.Request) {
 			serverError(w, err)
 			return
 		}
-		url, saveErr := a.savePhoto(file, header)
+		url, saveErr := a.savePhoto(file, header, current(r).ID, l.ID)
 		_ = file.Close()
 		if saveErr != nil {
 			cleanup()
@@ -2322,7 +2322,7 @@ func (a *API) uploadLoadPhotos(w http.ResponseWriter, r *http.Request) {
 	}
 	jsonResponse(w, http.StatusCreated, l)
 }
-func (a *API) savePhoto(file io.Reader, header *multipart.FileHeader) (string, error) {
+func (a *API) savePhoto(file io.Reader, header *multipart.FileHeader, ownerID, loadID string) (string, error) {
 	if header.Size <= 0 || header.Size > a.maxUploadBytes {
 		return "", errors.New("fotoğraf boyutu limiti aşıldı")
 	}
@@ -2342,7 +2342,7 @@ func (a *API) savePhoto(file io.Reader, header *multipart.FileHeader) (string, e
 		return "", errors.New("yalnızca JPEG, PNG veya WEBP fotoğraf yüklenebilir")
 	}
 	id := uuid.NewString()
-	if err = a.store.SavePhoto(id, data, contentType); err != nil {
+	if err = a.store.SavePhoto(id, data, contentType, ownerID, loadID); err != nil {
 		return "", err
 	}
 	return "/api/photos/" + id, nil
@@ -2383,11 +2383,121 @@ func (a *API) deleteLoadPhoto(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, l)
 }
 func (a *API) photo(w http.ResponseWriter, r *http.Request) {
-	data, ct, e := a.store.GetPhoto(r.PathValue("id"))
+	raw := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if raw == "" {
+		unauthorized(w, "oturum gerekli")
+		return
+	}
+	
+	isAdmin := false
+	var userID string
+	var u models.User
+	
+	_, adminErr := a.verifyAdmin(raw)
+	if adminErr == nil {
+		isAdmin = true
+	} else {
+		p, err := a.verify(raw)
+		if err != nil {
+			unauthorized(w, "geçersiz token")
+			return
+		}
+		userID = p.ID
+		u, _ = a.store.GetUser(userID)
+	}
+
+	photoID := r.PathValue("id")
+	data, ct, ownerID, loadID, e := a.store.GetPhoto(photoID)
 	if e != nil {
 		notFound(w)
 		return
 	}
+	
+	if !isAdmin {
+		authorized := false
+		if ownerID == userID {
+			authorized = true
+		}
+		
+		if !authorized && loadID != "" {
+			l, err := a.store.GetLoad(loadID)
+			if err == nil {
+				if l.CustomerID == userID || l.AssignedDriver == userID {
+					authorized = true
+				} else if u.Role == models.RoleDriver && l.Status == models.LoadStatusPublished {
+					authorized = true
+				}
+			}
+		}
+		
+		if !authorized {
+			claim, err := a.store.MessageAttachmentClaim(photoID)
+			if err == nil && claim != "" {
+				parts := strings.SplitN(claim, ":", 2)
+				if len(parts) == 2 {
+					if parts[0] == userID {
+						authorized = true
+					} else {
+						l, err := a.store.GetLoad(parts[1])
+						if err == nil && (l.CustomerID == userID || l.AssignedDriver == userID) {
+							authorized = true
+						}
+					}
+				}
+			}
+		}
+		
+		if !authorized && ownerID == "" && loadID == "" {
+			if u.Role == models.RoleDriver {
+				docs, _ := a.store.ListDriverDocuments(userID)
+				for _, doc := range docs {
+					if strings.HasSuffix(doc.FileURL, photoID) {
+						authorized = true
+						break
+					}
+				}
+				if !authorized {
+					vehs, _ := a.store.ListVehicles(userID)
+					for _, veh := range vehs {
+						if strings.HasSuffix(veh.PhotoURL, photoID) {
+							authorized = true
+							break
+						}
+					}
+				}
+			}
+			if !authorized {
+				var loads []models.Load
+				if u.Role == models.RoleCustomer {
+					loads, _, _ = a.store.ListLoads(userID, "", store.LoadFilter{}, 0, 1000)
+				} else if u.Role == models.RoleDriver {
+					loads, _, _ = a.store.ListLoads("", userID, store.LoadFilter{}, 0, 1000)
+					openLoads, _ := a.store.ListOpenLoads()
+					loads = append(loads, openLoads...)
+				}
+				for _, l := range loads {
+					for _, url := range l.PhotoURLs {
+						if strings.HasSuffix(url, photoID) {
+							authorized = true
+							break
+						}
+					}
+					if l.DeliveryPhotoURL != "" && strings.HasSuffix(l.DeliveryPhotoURL, photoID) {
+						authorized = true
+					}
+					if authorized {
+						break
+					}
+				}
+			}
+		}
+		
+		if !authorized {
+			forbidden(w)
+			return
+		}
+	}
+
 	w.Header().Set("Content-Type", ct)
 	w.Header().Set("Cache-Control", "private, max-age=86400")
 	_, _ = w.Write(data)

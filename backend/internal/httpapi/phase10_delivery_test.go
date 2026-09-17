@@ -171,7 +171,7 @@ func TestPhaseTenDeliveryCodeAndPhotoCompletion(t *testing.T) {
 		t.Fatalf("completed secure record=%#v err=%v", verification, err)
 	}
 	photoID := strings.TrimPrefix(completed.DeliveryPhotoURL, "/api/photos/")
-	if _, contentType, photoErr := redisStore.GetPhoto(photoID); photoErr != nil || contentType != "image/jpeg" {
+	if _, contentType, _, _, photoErr := redisStore.GetPhoto(photoID); photoErr != nil || contentType != "image/jpeg" {
 		t.Fatalf("delivery photo contentType=%q err=%v", contentType, photoErr)
 	}
 	history := statusHistory(t, redisStore, load.ID)

@@ -227,7 +227,7 @@ func (a *API) completeDelivery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer file.Close()
-	photoURL, err := a.savePhoto(file, header)
+	photoURL, err := a.savePhoto(file, header, principal.ID, load.ID)
 	if err != nil {
 		badRequest(w, err.Error())
 		return

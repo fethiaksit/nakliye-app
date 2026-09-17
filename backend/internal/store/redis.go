@@ -446,20 +446,22 @@ func (s *RedisStore) AcceptOffer(load models.Load, accepted models.Offer, allOff
 	}
 	return err
 }
-func (s *RedisStore) SavePhoto(id string, data []byte, contentType string) error {
-	return s.client.HSet(s.ctx, "photo:"+id, "data", data, "contentType", contentType).Err()
+func (s *RedisStore) SavePhoto(id string, data []byte, contentType, ownerID, loadID string) error {
+	return s.client.HSet(s.ctx, "photo:"+id, "data", data, "contentType", contentType, "ownerID", ownerID, "loadID", loadID).Err()
 }
-func (s *RedisStore) GetPhoto(id string) ([]byte, string, error) {
-	values, err := s.client.HMGet(s.ctx, "photo:"+id, "data", "contentType").Result()
+func (s *RedisStore) GetPhoto(id string) ([]byte, string, string, string, error) {
+	values, err := s.client.HMGet(s.ctx, "photo:"+id, "data", "contentType", "ownerID", "loadID").Result()
 	if err != nil {
-		return nil, "", err
+		return nil, "", "", "", err
 	}
-	if len(values) != 2 || values[0] == nil {
-		return nil, "", redis.Nil
+	if len(values) != 4 || values[0] == nil {
+		return nil, "", "", "", redis.Nil
 	}
 	data, _ := values[0].(string)
 	contentType, _ := values[1].(string)
-	return []byte(data), contentType, nil
+	ownerID, _ := values[2].(string)
+	loadID, _ := values[3].(string)
+	return []byte(data), contentType, ownerID, loadID, nil
 }
 func (s *RedisStore) DeletePhoto(id string) error { return s.client.Del(s.ctx, "photo:"+id).Err() }
 func (s *RedisStore) SaveConversation(c models.Conversation) error {
