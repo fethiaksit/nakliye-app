@@ -422,17 +422,27 @@ func containsString(values []string, wanted string) bool {
 	return false
 }
 
-func (c *GoogleMapsClient) Calculate(ctx context.Context, pickup, dropoff models.Coordinate) (RouteResult, error) {
+func (c *GoogleMapsClient) Calculate(ctx context.Context, pickup, dropoff models.Coordinate, intermediates ...models.Coordinate) (RouteResult, error) {
 	if err := c.configured(); err != nil {
 		return RouteResult{}, err
 	}
 	if !ValidCoordinate(pickup) || !ValidCoordinate(dropoff) {
 		return RouteResult{}, ErrInvalidCoordinates
 	}
-	if sameCoordinates(pickup, dropoff) {
+	if len(intermediates) == 0 && sameCoordinates(pickup, dropoff) {
 		return RouteResult{}, ErrSameCoordinates
 	}
-	cacheKey := normalizedKey("route", coordinateKey(pickup), coordinateKey(dropoff))
+	for _, intermediate := range intermediates {
+		if !ValidCoordinate(intermediate) {
+			return RouteResult{}, ErrInvalidCoordinates
+		}
+	}
+	cacheParts := []string{"route", coordinateKey(pickup)}
+	for _, intermediate := range intermediates {
+		cacheParts = append(cacheParts, coordinateKey(intermediate))
+	}
+	cacheParts = append(cacheParts, coordinateKey(dropoff))
+	cacheKey := normalizedKey(cacheParts...)
 	if cached, ok := c.cached(cacheKey); ok {
 		return cached.(RouteResult), nil
 	}
@@ -443,6 +453,13 @@ func (c *GoogleMapsClient) Calculate(ctx context.Context, pickup, dropoff models
 		"routingPreference": "TRAFFIC_AWARE",
 		"languageCode":      "tr-TR",
 		"units":             "METRIC",
+	}
+	if len(intermediates) > 0 {
+		var intermediateWaypoints []map[string]any
+		for _, intermediate := range intermediates {
+			intermediateWaypoints = append(intermediateWaypoints, routeWaypoint(intermediate))
+		}
+		payload["intermediates"] = intermediateWaypoints
 	}
 	var response struct {
 		Routes []struct {
