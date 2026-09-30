@@ -49,6 +49,29 @@ func (s *RedisStore) ListAllUsers() ([]models.User, error) {
 	return users, nil
 }
 
+func (s *RedisStore) ListAllCompanies() ([]models.Company, error) {
+	keys, err := s.scanKeys("company:*")
+	if err != nil {
+		return nil, err
+	}
+	companies := make([]models.Company, 0, len(keys))
+	for _, key := range keys {
+		if strings.HasPrefix(key, "company:user:") {
+			continue
+		}
+		body, getErr := s.client.Get(s.ctx, key).Bytes()
+		if getErr != nil {
+			continue
+		}
+		var company models.Company
+		if json.Unmarshal(body, &company) == nil && company.ID != "" {
+			companies = append(companies, company)
+		}
+	}
+	sort.Slice(companies, func(i, j int) bool { return companies[i].CreatedAt.After(companies[j].CreatedAt) })
+	return companies, nil
+}
+
 func (s *RedisStore) ListAllLoads() ([]models.Load, error) {
 	keys, err := s.scanKeys("load:*")
 	if err != nil {

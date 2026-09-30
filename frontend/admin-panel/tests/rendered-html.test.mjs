@@ -36,3 +36,19 @@ test("keeps admin auth and API configuration separate", async () => {
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
   await assert.rejects(access(new URL("../app/_sites-preview/SkeletonPreview.tsx", import.meta.url)));
 });
+
+test("includes corporate accounts management with filters and review workflow", async () => {
+  const panel = await readFile(new URL("../app/AdminPanel.tsx", import.meta.url), "utf8");
+  assert.match(panel, /Kurumsal Hesaplar/);
+  assert.match(panel, /corporate-applications/);
+  assert.match(panel, /Onay Bekleyenler/);
+  assert.match(panel, /Onaylananlar/);
+  assert.match(panel, /Reddedilenler/);
+  assert.match(panel, /Firma adı/);
+  assert.match(panel, /Yetkili kişi/);
+  assert.match(panel, /Vergi numarası/);
+  assert.match(panel, /Başvuru tarihi/);
+  assert.match(panel, /ONAYLA/);
+  assert.match(panel, /REDDET/);
+  assert.match(panel, /rejectionReason/);
+});

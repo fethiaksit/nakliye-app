@@ -4,6 +4,7 @@ import (
 	"math"
 	"math/big"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -17,6 +18,20 @@ const (
 
 func ValidCorporateStatus(value string) bool {
 	return value == CorporateStatusPending || value == CorporateStatusApproved || value == CorporateStatusRejected
+}
+
+func CanonicalCorporateStatus(status string) string {
+	s := strings.ToLower(strings.TrimSpace(status))
+	switch s {
+	case CorporateStatusApproved, "onaylandi", "onaylandı", "approved_corporate", "active":
+		return CorporateStatusApproved
+	case CorporateStatusRejected, "reddedildi", "rejected_corporate", "declined":
+		return CorporateStatusRejected
+	case CorporateStatusPending, "beklemede", "onay_bekliyor", "reviewing", "in_review", "submitted":
+		return CorporateStatusPending
+	default:
+		return ""
+	}
 }
 
 const (
@@ -34,7 +49,10 @@ func ValidCustomerAccountType(value string) bool {
 // CustomerAccountType keeps customer records created before account types
 // were introduced backward compatible without mutating their persisted data.
 func CustomerAccountType(user User) string {
-	if user.Role == RoleCustomer && user.AccountType == AccountTypeCorporate {
+	if (user.Role == RoleCustomer || user.Role == RoleCorporate) && user.AccountType == AccountTypeCorporate {
+		return AccountTypeCorporate
+	}
+	if user.Role == RoleCorporate || user.AccountType == AccountTypeCorporate {
 		return AccountTypeCorporate
 	}
 	return AccountTypeIndividual
@@ -44,17 +62,19 @@ func CustomerAccountType(user User) string {
 // server-side mapping. Additional company-user mappings can be added later
 // without changing the company or wallet records.
 type Company struct {
-	ID               string    `json:"id"`
-	OwnerCustomerID  string    `json:"ownerCustomerId"`
-	Name             string    `json:"name"`
-	AuthorizedPerson string    `json:"authorizedPerson"`
-	TaxNumber        string    `json:"taxNumber"`
-	TaxOffice        string    `json:"taxOffice"`
-	Address          string    `json:"address"`
-	Phone            string    `json:"phone"`
-	Email            string    `json:"email"`
-	CreatedAt        time.Time `json:"createdAt"`
-	UpdatedAt        time.Time `json:"updatedAt"`
+	ID               string     `json:"id"`
+	OwnerCustomerID  string     `json:"ownerCustomerId"`
+	Name             string     `json:"name"`
+	AuthorizedPerson string     `json:"authorizedPerson"`
+	TaxNumber        string     `json:"taxNumber"`
+	TaxOffice        string     `json:"taxOffice"`
+	Address          string     `json:"address"`
+	Phone            string     `json:"phone"`
+	Email            string     `json:"email"`
+	Status           string     `json:"status,omitempty"`
+	ApprovedAt       *time.Time `json:"approvedAt,omitempty"`
+	CreatedAt        time.Time  `json:"createdAt"`
+	UpdatedAt        time.Time  `json:"updatedAt"`
 }
 
 type CorporateWallet struct {

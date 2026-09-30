@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"nakliye-api/internal/models"
 )
 
@@ -159,8 +160,8 @@ func vehicleVerificationStatus(vehicle models.Vehicle) string {
 	return models.VerificationPending
 }
 
-func adminUserView(user models.User) map[string]any {
-	view := publicUser(user)
+func (a *API) adminUserView(user models.User) map[string]any {
+	view := a.publicUser(user)
 	view["accountStatus"] = accountStatus(user)
 	if user.BlockedAt != nil {
 		view["blockedAt"] = user.BlockedAt
@@ -199,39 +200,6 @@ func containsFold(value, query string) bool {
 	return strings.Contains(strings.ToLower(value), strings.ToLower(strings.TrimSpace(query)))
 }
 
-func (a *API) adminDashboard(w http.ResponseWriter, r *http.Request) {
-	users, err := a.store.ListAllUsers()
-	if err != nil {
-		serverError(w, err)
-		return
-	}
-	loads, err := a.store.ListAllLoads()
-	if err != nil {
-		serverError(w, err)
-		return
-	}
-	complaints, err := a.store.ListComplaints()
-	if err != nil {
-		serverError(w, err)
-		return
-	}
-	counts := dashboardCounts(users, loads, complaints)
-	queue := make([]map[string]any, 0)
-	for _, user := range users {
-		if user.Role == models.RoleDriver && driverVerificationStatus(user) == models.VerificationPending {
-			queue = append(queue, adminUserView(user))
-			if len(queue) == 5 {
-				break
-			}
-		}
-	}
-	activity, _ := a.store.ListActivityEvents(8)
-	jsonResponse(w, http.StatusOK, map[string]any{
-		"counts": counts, "daily": buildDailyStats(users, loads, complaints, 7),
-		"verificationQueue": queue, "recentActivity": activity,
-	})
-}
-
 func dashboardCounts(users []models.User, loads []models.Load, complaints []models.MessageComplaint) map[string]int {
 	counts := map[string]int{
 		"customers": 0, "drivers": 0, "verifiedDrivers": 0, "pendingDrivers": 0,
@@ -239,8 +207,11 @@ func dashboardCounts(users []models.User, loads []models.Load, complaints []mode
 	}
 	for _, user := range users {
 		switch user.Role {
-		case models.RoleCustomer:
+		case models.RoleCustomer, models.RoleCorporate:
 			counts["customers"]++
+			if models.CustomerAccountType(user) == models.AccountTypeCorporate && (user.CorporateStatus == models.CorporateStatusPending || user.CorporateStatus == "") {
+				counts["pendingCorporate"]++
+			}
 		case models.RoleDriver:
 			counts["drivers"]++
 			if driverVerificationStatus(user) == models.VerificationVerified {
@@ -306,22 +277,75 @@ func buildDailyStats(users []models.User, loads []models.Load, complaints []mode
 	return result
 }
 
+func (a *API) adminDashboard(w http.ResponseWriter, r *http.Request) {
+	users, err := a.store.ListAllUsers()
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	loads, err := a.store.ListAllLoads()
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	complaints, err := a.store.ListComplaints()
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	counts := dashboardCounts(users, loads, complaints)
+	queue := make([]map[string]any, 0)
+	for _, user := range users {
+		if user.Role == models.RoleDriver && driverVerificationStatus(user) == models.VerificationPending {
+			queue = append(queue, a.adminUserView(user))
+			if len(queue) == 5 {
+				break
+			}
+		}
+	}
+	activity, _ := a.store.ListActivityEvents(8)
+	jsonResponse(w, http.StatusOK, map[string]any{
+		"counts":            counts,
+		"verificationQueue": queue,
+		"recentActivity":    activity,
+		"daily":             buildDailyStats(users, loads, complaints, 7),
+	})
+}
+
 func (a *API) adminUsers(w http.ResponseWriter, r *http.Request) {
 	users, err := a.store.ListAllUsers()
 	if err != nil {
 		serverError(w, err)
 		return
 	}
-	query, role, status := r.URL.Query().Get("q"), r.URL.Query().Get("role"), r.URL.Query().Get("status")
-	filtered := make([]map[string]any, 0, len(users))
+	role, status, query, accountType := r.URL.Query().Get("role"), r.URL.Query().Get("status"), r.URL.Query().Get("q"), r.URL.Query().Get("accountType")
+	filtered := make([]map[string]any, 0)
 	for _, user := range users {
-		if role != "" && user.Role != role || status != "" && accountStatus(user) != status {
+		if role != "" && role != "all" {
+			if role == "corporate" {
+				if models.CustomerAccountType(user) != models.AccountTypeCorporate && user.CorporateStatus == "" {
+					continue
+				}
+			} else if user.Role != role {
+				continue
+			}
+		}
+		if accountType != "" && accountType != "all" {
+			if models.CustomerAccountType(user) != accountType {
+				continue
+			}
+		} else if role != "corporate" && accountType != "all" {
+			if models.CustomerAccountType(user) == models.AccountTypeCorporate {
+				continue
+			}
+		}
+		if status != "" && status != "all" && accountStatus(user) != status {
 			continue
 		}
 		if query != "" && !containsFold(strings.Join([]string{user.ID, user.Name, user.Email, user.Phone}, " "), query) {
 			continue
 		}
-		filtered = append(filtered, adminUserView(user))
+		filtered = append(filtered, a.adminUserView(user))
 	}
 	offset, limit := pagination(r.URL.Query())
 	jsonResponse(w, http.StatusOK, map[string]any{"items": page(filtered, offset, limit), "total": len(filtered), "offset": offset, "limit": limit})
@@ -333,7 +357,7 @@ func (a *API) adminUser(w http.ResponseWriter, r *http.Request) {
 		notFound(w)
 		return
 	}
-	view := adminUserView(user)
+	view := a.adminUserView(user)
 	loads, _ := a.store.ListAllLoads()
 	owned := make([]models.Load, 0)
 	assigned := make([]models.Load, 0)
@@ -368,6 +392,9 @@ func (a *API) adminUser(w http.ResponseWriter, r *http.Request) {
 				view["walletSummary"] = summary
 				view["walletTransactions"] = transactions
 			}
+		}
+		if docs, docsErr := a.store.ListDriverDocuments(user.ID); docsErr == nil {
+			view["documents"] = docs
 		}
 	}
 	jsonResponse(w, http.StatusOK, view)
@@ -404,12 +431,172 @@ func (a *API) adminUserStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.adminAudit("user.status_changed", r, user.ID, map[string]any{"from": accountStatus(previous), "to": request.Status, "reason": request.Reason})
-	jsonResponse(w, http.StatusOK, adminUserView(user))
+	jsonResponse(w, http.StatusOK, a.adminUserView(user))
+}
+
+func (a *API) corporateAccountView(user models.User, company models.Company) map[string]any {
+	corporateID := company.ID
+	if corporateID == "" {
+		corporateID = user.ID
+	}
+	userStatus := models.CanonicalCorporateStatus(user.CorporateStatus)
+	if userStatus == "" && company.Status != "" {
+		userStatus = models.CanonicalCorporateStatus(company.Status)
+	}
+	if userStatus == "" {
+		userStatus = models.CorporateStatusPending
+	}
+	view := map[string]any{
+		"id":                corporateID,
+		"corporate_id":      corporateID,
+		"corporateId":       corporateID,
+		"user_id":           user.ID,
+		"userId":            user.ID,
+		"company_name":      company.Name,
+		"companyName":       company.Name,
+		"authorized_person": company.AuthorizedPerson,
+		"authorizedPerson":  company.AuthorizedPerson,
+		"tax_number":        company.TaxNumber,
+		"taxNumber":         company.TaxNumber,
+		"tax_office":        company.TaxOffice,
+		"taxOffice":         company.TaxOffice,
+		"company_address":   company.Address,
+		"companyAddress":    company.Address,
+		"phone":             company.Phone,
+		"email":             company.Email,
+		"status":            userStatus,
+		"corporateStatus":   userStatus,
+		"created_at":        user.CreatedAt,
+		"createdAt":         user.CreatedAt,
+		"account_status":    accountStatus(user),
+		"accountStatus":     accountStatus(user),
+		"name":              user.Name,
+	}
+	if view["phone"] == "" {
+		view["phone"] = user.Phone
+	}
+	if view["email"] == "" {
+		view["email"] = user.Email
+	}
+	if view["company_name"] == "" {
+		view["company_name"] = user.Name
+		view["companyName"] = user.Name
+	}
+	if view["authorized_person"] == "" {
+		view["authorized_person"] = user.Name
+		view["authorizedPerson"] = user.Name
+	}
+	if user.CorporateApprovedAt != nil {
+		view["approved_at"] = user.CorporateApprovedAt
+		view["approvedAt"] = user.CorporateApprovedAt
+		view["corporateApprovedAt"] = user.CorporateApprovedAt
+	} else {
+		view["approved_at"] = nil
+		view["approvedAt"] = nil
+	}
+	if user.CorporateApprovedBy != "" {
+		view["approved_by"] = user.CorporateApprovedBy
+		view["approvedBy"] = user.CorporateApprovedBy
+		view["corporateApprovedBy"] = user.CorporateApprovedBy
+	}
+	if user.CorporateRejectionReason != "" {
+		view["rejected_at"] = nil
+		view["rejection_reason"] = user.CorporateRejectionReason
+		view["rejectionReason"] = user.CorporateRejectionReason
+		view["corporateRejectionReason"] = user.CorporateRejectionReason
+	} else {
+		view["rejected_at"] = nil
+		view["rejection_reason"] = nil
+	}
+	if company.ID != "" {
+		view["company"] = company
+	}
+	view["user"] = a.adminUserView(user)
+	return view
+}
+
+func (a *API) adminCorporateTarget(r *http.Request) (models.User, models.Company, error) {
+	targetID := r.PathValue("id")
+	if strings.HasPrefix(r.URL.Path, "/api/admin/corporate-accounts/") {
+		company, err := a.store.GetCompany(targetID)
+		if err == nil {
+			if company.OwnerCustomerID == "" {
+				return models.User{}, models.Company{}, redis.Nil
+			}
+			user, userErr := a.store.GetUser(company.OwnerCustomerID)
+			return user, company, userErr
+		}
+		if !errors.Is(err, redis.Nil) {
+			return models.User{}, models.Company{}, err
+		}
+
+		legacyUser, userErr := a.store.GetUser(targetID)
+		if userErr != nil {
+			return models.User{}, models.Company{}, userErr
+		}
+		if models.CustomerAccountType(legacyUser) != models.AccountTypeCorporate {
+			return models.User{}, models.Company{}, redis.Nil
+		}
+		if indexedCompany, indexErr := a.store.GetCompanyByUser(legacyUser.ID); indexErr == nil && indexedCompany.ID != "" {
+			return models.User{}, models.Company{}, redis.Nil
+		} else if indexErr != nil && !errors.Is(indexErr, redis.Nil) {
+			return models.User{}, models.Company{}, indexErr
+		}
+		return legacyUser, models.Company{}, nil
+	}
+
+	user, err := a.store.GetUser(targetID)
+	if err == nil {
+		company, _ := a.store.GetCompanyByUser(user.ID)
+		return user, company, nil
+	}
+	company, companyErr := a.store.GetCompany(targetID)
+	if companyErr != nil || company.OwnerCustomerID == "" {
+		return models.User{}, models.Company{}, err
+	}
+	user, err = a.store.GetUser(company.OwnerCustomerID)
+	return user, company, err
 }
 
 func (a *API) adminCorporateApplications(w http.ResponseWriter, r *http.Request) {
+	targetID := r.PathValue("id")
+	if targetID != "" && r.Method == http.MethodGet {
+		log.Printf("CORPORATE DETAIL REQUEST id=%s", targetID)
+		log.Printf("CORPORATE DETAIL QUERY id=%s", targetID)
+		user, company, err := a.adminCorporateTarget(r)
+		if err != nil && !errors.Is(err, redis.Nil) {
+			log.Printf("CORPORATE DETAIL DB ERROR id=%s error=%v", targetID, err)
+		}
+		if err != nil {
+			log.Printf("CORPORATE DETAIL NOT FOUND id=%s", targetID)
+			notFound(w)
+			return
+		}
+		if models.CustomerAccountType(user) != models.AccountTypeCorporate {
+			forbidden(w)
+			return
+		}
+		view := a.corporateAccountView(user, company)
+		log.Printf("CORPORATE DETAIL FOUND corporate_id=%v user_id=%v status=%v", company.ID, user.ID, view["status"])
+		if company.ID != "" {
+			if wallet, walletErr := a.store.GetCorporateWallet(company.ID); walletErr == nil {
+				view["wallet"] = wallet
+				transactions, summaryErr := a.store.ListWalletTransactions(wallet.ID)
+				if summaryErr == nil {
+					summary, _ := a.store.WalletSummary(company, transactions)
+					view["walletSummary"] = summary
+					view["walletTransactions"] = transactions
+				}
+			}
+		}
+		if docs, docsErr := a.store.ListDriverDocuments(user.ID); docsErr == nil {
+			view["documents"] = docs
+		}
+		jsonResponse(w, http.StatusOK, view)
+		return
+	}
 	if r.Method == http.MethodPatch {
-		user, err := a.store.GetUser(r.PathValue("id"))
+		user, company, err := a.adminCorporateTarget(r)
 		if err != nil {
 			notFound(w)
 			return
@@ -422,6 +609,7 @@ func (a *API) adminCorporateApplications(w http.ResponseWriter, r *http.Request)
 		if !decode(w, r, &req) {
 			return
 		}
+		req.Status = models.CanonicalCorporateStatus(req.Status)
 		if req.Status != models.CorporateStatusApproved && req.Status != models.CorporateStatusRejected {
 			badRequest(w, "geçerli kurumsal başvuru durumu zorunludur")
 			return
@@ -429,14 +617,17 @@ func (a *API) adminCorporateApplications(w http.ResponseWriter, r *http.Request)
 		previous := user
 		user.CorporateStatus = req.Status
 		user.CorporateRejectionReason = strings.TrimSpace(req.RejectionReason)
+		company.Status = req.Status
 		if req.Status == models.CorporateStatusApproved {
 			now := time.Now().UTC()
 			user.CorporateApprovedAt = &now
 			user.CorporateApprovedBy = currentAdmin(r).Email
 			user.CorporateRejectionReason = ""
+			company.ApprovedAt = &now
 		} else {
 			user.CorporateApprovedAt = nil
 			user.CorporateApprovedBy = ""
+			company.ApprovedAt = nil
 			if user.CorporateRejectionReason == "" {
 				badRequest(w, "red gerekçesi zorunludur")
 				return
@@ -446,8 +637,11 @@ func (a *API) adminCorporateApplications(w http.ResponseWriter, r *http.Request)
 			serverError(w, err)
 			return
 		}
+		if company.ID != "" {
+			_ = a.store.SaveCompany(company)
+		}
 		a.adminAudit("corporate.application_"+req.Status, r, user.ID, map[string]any{"reason": user.CorporateRejectionReason})
-		jsonResponse(w, http.StatusOK, adminUserView(user))
+		jsonResponse(w, http.StatusOK, a.corporateAccountView(user, company))
 		return
 	}
 	users, err := a.store.ListAllUsers()
@@ -455,16 +649,116 @@ func (a *API) adminCorporateApplications(w http.ResponseWriter, r *http.Request)
 		serverError(w, err)
 		return
 	}
-	items := make([]map[string]any, 0)
-	for _, user := range users {
-		if models.CustomerAccountType(user) != models.AccountTypeCorporate {
+	companies, _ := a.store.ListAllCompanies()
+
+	type corpRecord struct {
+		user    models.User
+		company models.Company
+	}
+	records := make([]corpRecord, 0)
+	seenUsers := make(map[string]bool)
+	seenCompanies := make(map[string]bool)
+
+	// First pass: add all companies
+	for _, company := range companies {
+		if company.ID == "" {
 			continue
 		}
-		view := adminUserView(user)
-		if company, e := a.store.GetCompanyByUser(user.ID); e == nil {
-			view["company"] = company
+		seenCompanies[company.ID] = true
+		var u models.User
+		if company.OwnerCustomerID != "" {
+			if user, userErr := a.store.GetUser(company.OwnerCustomerID); userErr == nil {
+				u = user
+				seenUsers[user.ID] = true
+			}
+		}
+		if u.ID == "" {
+			log.Printf("[CORPORATE ORPHAN COMPANY] corporateId=%s ownerCustomerId=%s", company.ID, company.OwnerCustomerID)
+			u = models.User{
+				ID:          company.OwnerCustomerID,
+				Name:        company.AuthorizedPerson,
+				Email:       company.Email,
+				Phone:       company.Phone,
+				Role:        models.RoleCustomer,
+				AccountType: models.AccountTypeCorporate,
+			}
+		}
+		records = append(records, corpRecord{user: u, company: company})
+	}
+
+	// Second pass: add any corporate users not covered by company list
+	for _, user := range users {
+		if seenUsers[user.ID] {
+			continue
+		}
+		if models.CustomerAccountType(user) != models.AccountTypeCorporate && user.CorporateStatus == "" {
+			continue
+		}
+		var company models.Company
+		if comp, compErr := a.store.GetCompanyByUser(user.ID); compErr == nil && comp.ID != "" {
+			company = comp
+			seenCompanies[comp.ID] = true
+		} else {
+			company = models.Company{
+				ID:               user.ID,
+				OwnerCustomerID:  user.ID,
+				Name:             user.Name,
+				AuthorizedPerson: user.Name,
+				Phone:            user.Phone,
+				Email:            user.Email,
+				CreatedAt:        user.CreatedAt,
+			}
+		}
+		seenUsers[user.ID] = true
+		records = append(records, corpRecord{user: user, company: company})
+	}
+
+	status := strings.TrimSpace(r.URL.Query().Get("status"))
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	items := make([]map[string]any, 0)
+
+	for _, rec := range records {
+		user := rec.user
+		company := rec.company
+
+		canonicalStatus := models.CanonicalCorporateStatus(user.CorporateStatus)
+		if canonicalStatus == "" && company.Status != "" {
+			canonicalStatus = models.CanonicalCorporateStatus(company.Status)
+		}
+		if canonicalStatus == "" {
+			log.Printf("[CORPORATE INVALID STATUS] corporateId=%s userId=%s rawUserStatus=%s rawCompanyStatus=%s", company.ID, user.ID, user.CorporateStatus, company.Status)
+			canonicalStatus = models.CorporateStatusPending
+		}
+		user.CorporateStatus = canonicalStatus
+
+		if status != "" && status != "all" {
+			if status == models.CorporateStatusPending && canonicalStatus != models.CorporateStatusPending {
+				continue
+			}
+			if status == models.CorporateStatusApproved && canonicalStatus != models.CorporateStatusApproved {
+				continue
+			}
+			if status == models.CorporateStatusRejected && canonicalStatus != models.CorporateStatusRejected {
+				continue
+			}
+		}
+
+		view := a.corporateAccountView(user, company)
+		if docs, docsErr := a.store.ListDriverDocuments(user.ID); docsErr == nil {
+			view["documents"] = docs
+		}
+		if query != "" {
+			searchTerms := []string{
+				user.ID, user.Name, user.Email, user.Phone,
+				company.ID, company.Name, company.AuthorizedPerson, company.TaxNumber, company.TaxOffice,
+				company.Address, company.Email, company.Phone,
+			}
+			if !containsFold(strings.Join(searchTerms, " "), query) {
+				continue
+			}
 		}
 		items = append(items, view)
+		log.Printf("CORPORATE LIST ROW corporate_id=%v user_id=%v application_id=%v status=%v", company.ID, user.ID, user.ID, canonicalStatus)
 	}
 	jsonResponse(w, http.StatusOK, map[string]any{"items": items})
 }
@@ -484,7 +778,7 @@ func (a *API) adminDrivers(w http.ResponseWriter, r *http.Request) {
 		if query != "" && !containsFold(strings.Join([]string{user.Name, user.Email, user.Phone, user.DriverProfile.LicensePlate}, " "), query) {
 			continue
 		}
-		view := adminUserView(user)
+		view := a.adminUserView(user)
 		vehicles, _ := a.store.ListVehicles(user.ID)
 		documents, _ := a.store.ListDriverDocuments(user.ID)
 		view["vehicleCount"], view["documentCount"] = len(vehicles), len(documents)
@@ -516,7 +810,7 @@ func (a *API) adminDriver(w http.ResponseWriter, r *http.Request) {
 		vehicles[index].VerificationStatus = vehicleVerificationStatus(vehicles[index])
 	}
 	documents, _ := a.store.ListDriverDocuments(user.ID)
-	jsonResponse(w, http.StatusOK, map[string]any{"user": adminUserView(user), "vehicles": vehicles, "documents": documents})
+	jsonResponse(w, http.StatusOK, map[string]any{"user": a.adminUserView(user), "vehicles": vehicles, "documents": documents})
 }
 
 func (a *API) adminDriverVerification(w http.ResponseWriter, r *http.Request) {
@@ -553,11 +847,12 @@ func (a *API) adminDriverVerification(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.adminAudit("driver.verification_changed", r, user.ID, map[string]any{"status": request.Status, "note": request.Note})
-	jsonResponse(w, http.StatusOK, adminUserView(user))
+	jsonResponse(w, http.StatusOK, a.adminUserView(user))
 }
 
 var allowedDocumentKinds = map[string]bool{
 	"identity": true, "driver_license": true, "vehicle_registration": true,
+	"src": true, "src_document": true, "psychotechnic": true, "psychotechnical": true,
 	"insurance": true, "criminal_record": true, "other": true,
 }
 
@@ -670,11 +965,11 @@ func (a *API) adminLoads(w http.ResponseWriter, r *http.Request) {
 		}
 		item := map[string]any{"load": load}
 		if customer, getErr := a.store.GetUser(load.CustomerID); getErr == nil {
-			item["customer"] = adminUserView(customer)
+			item["customer"] = a.adminUserView(customer)
 		}
 		if load.AssignedDriver != "" {
 			if driver, getErr := a.store.GetUser(load.AssignedDriver); getErr == nil {
-				item["driver"] = adminUserView(driver)
+				item["driver"] = a.adminUserView(driver)
 			}
 		}
 		items = append(items, item)
@@ -697,11 +992,11 @@ func (a *API) adminLoad(w http.ResponseWriter, r *http.Request) {
 	offers, _ := a.store.ListOffers(load.ID, "")
 	response := map[string]any{"load": load, "statusHistory": history, "offers": a.offerViews(offers)}
 	if customer, getErr := a.store.GetUser(load.CustomerID); getErr == nil {
-		response["customer"] = adminUserView(customer)
+		response["customer"] = a.adminUserView(customer)
 	}
 	if load.AssignedDriver != "" {
 		if driver, getErr := a.store.GetUser(load.AssignedDriver); getErr == nil {
-			response["driver"] = adminUserView(driver)
+			response["driver"] = a.adminUserView(driver)
 		}
 	}
 	jsonResponse(w, http.StatusOK, response)
@@ -987,10 +1282,10 @@ func (a *API) complaintView(complaint models.MessageComplaint) map[string]any {
 		view["conversation"] = a.conversationRecord(load)
 	}
 	if reporter, err := a.store.GetUser(complaint.ReporterID); err == nil {
-		view["reporter"] = adminUserView(reporter)
+		view["reporter"] = a.adminUserView(reporter)
 	}
 	if reported, err := a.store.GetUser(complaint.ReportedUserID); err == nil {
-		view["reportedUser"] = adminUserView(reported)
+		view["reportedUser"] = a.adminUserView(reported)
 	}
 	return view
 }

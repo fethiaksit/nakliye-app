@@ -125,7 +125,7 @@ function FavoriteDriversPage({ items, loading, error, onRetry, onBack, onRemove 
   </>;
 }
 
-export default function CorporateAccountScreens({ page, onPageChange, account, form, setForm, changePassword, passwordLoading, logout, onOpenLoad, onPermissionGranted }) {
+export default function CorporateAccountScreens({ page, onPageChange, account, form, setForm, changePassword, passwordLoading, logout, onOpenLoad, onPermissionGranted, retry }) {
 	const { showToast } = useToast();
   const [dashboard, setDashboard] = useState(null);
   const [company, setCompany] = useState(null);
@@ -205,13 +205,46 @@ export default function CorporateAccountScreens({ page, onPageChange, account, f
   };
 	const removeFavorite = async driverId => { try { await corporate.removeFavorite(driverId); await fetchFavorites(); showToast('Şoför favorilerden çıkarıldı.', { type: 'success' }); } catch (error) { showToast(apiError(error), { type: 'error', title: 'Favori güncellenemedi' }); } };
 
+  if (page === 'password') return <PasswordPage form={form} setForm={setForm} loading={passwordLoading} onSubmit={changePassword} onBack={() => onPageChange('home')} />;
+  if (page === 'notifications') return <DeviceNotificationsPage onBack={() => onPageChange('home')} onPermissionGranted={onPermissionGranted} />;
+  if (page === 'privacy') return <LegalPage type="privacy" onBack={() => onPageChange('home')} />;
+  if (page === 'terms') return <LegalPage type="terms" onBack={() => onPageChange('home')} />;
+
+  if (account?.corporateStatus && account.corporateStatus !== 'approved') {
+    return (
+      <>
+        <AccountProfileCard
+          account={account}
+          roleLabel="Kurumsal müşteri hesabı"
+          meta={`NakliyeGo kurumsal üyesi · ${account.createdAt ? new Date(account.createdAt).toLocaleDateString('tr-TR') : 'Kayıtlı kullanıcı'}`}
+        />
+        <ScreenState
+          title={account.corporateStatus === 'rejected' ? 'Kurumsal başvuru reddedildi' : 'Kurumsal başvuru beklemede'}
+          message={
+            account.corporateStatus === 'rejected'
+              ? (account.rejectionReason ? `Ret Gerekçesi: ${account.rejectionReason}` : 'Kurumsal başvurunuz yönetici tarafından reddedildi.')
+              : 'Kurumsal hesabınız yönetici onayı bekliyor. Onaylandığında tüm kurumsal özelliklere erişebilirsiniz.'
+          }
+          onRetry={retry}
+        />
+        <AccountMenuSection title="Hesap ve Güvenlik">
+          <AccountMenuItem icon="lock-closed-outline" label="Şifre Değiştir" description="Hesap şifrenizi güncelleyin" onPress={() => onPageChange('password')} />
+          <AccountMenuItem icon="notifications-outline" label="Bildirim Ayarları" onPress={() => onPageChange('notifications')} />
+          <AccountMenuItem icon="shield-checkmark-outline" label="Gizlilik Politikası" onPress={() => onPageChange('privacy')} />
+          <AccountMenuItem icon="document-text-outline" label="Kullanım Koşulları" last onPress={() => onPageChange('terms')} />
+        </AccountMenuSection>
+        <AccountMenuSection title="Oturum">
+          <AccountMenuItem icon="log-out-outline" label="Çıkış Yap" danger last onPress={logout} />
+        </AccountMenuSection>
+      </>
+    );
+  }
+
   if (state.error && !['company-edit', 'support-new', 'password'].includes(page)) return <ScreenState type="error" title="Kurumsal hesap yüklenemedi" message={state.error} onRetry={page === 'home' ? fetchDashboard : page === 'company' ? fetchCompany : page === 'wallet' ? fetchWallet : page === 'favorites' ? fetchFavorites : fetchLoads} />;
-  if (account?.corporateStatus && account.corporateStatus !== 'approved') return <ScreenState title="Kurumsal başvuru beklemede" message={account.corporateStatus === 'rejected' ? 'Kurumsal başvurunuz reddedildi.' : 'Kurumsal hesabınız yönetici onayı bekliyor.'} />;
   if (state.loading && page !== 'password' && !dashboard && !company && !accountLoads.length) return <ListSkeleton count={3} />;
 
   if (page === 'company') return <CompanyPage company={company} onBack={() => onPageChange('home')} onEdit={() => { setCompanyForm(companyFormFor(company)); onPageChange('company-edit'); }} />;
   if (page === 'company-edit') return <CompanyEditPage form={companyForm} setForm={setCompanyForm} loading={saving} onSave={saveCompany} onBack={() => onPageChange('company')} />;
-  if (page === 'password') return <PasswordPage form={form} setForm={setForm} loading={passwordLoading} onSubmit={changePassword} onBack={() => onPageChange('home')} />;
   if (page === 'active-jobs') return <AccountJobsPage title="Aktif Nakliyeler" subtitle="Devam eden kurumsal nakliyeler" items={accountLoads.filter(load => !['draft', 'completed', 'cancelled'].includes(load.status))} loading={state.loading} error={state.error} onRetry={fetchLoads} onBack={() => onPageChange('home')} onOpen={onOpenLoad} statusLabel={loadStatusLabel} formatMoney={formatMoney} resolveMediaUrl={resolveMediaUrl} emptyMessage="Aktif nakliye bulunmuyor." />;
   if (page === 'history-jobs') return <AccountJobsPage title="Geçmiş Nakliyeler" subtitle="Tamamlanan ve iptal edilen kurumsal işler" items={accountLoads.filter(load => ['completed', 'cancelled'].includes(load.status))} loading={state.loading} error={state.error} onRetry={fetchLoads} onBack={() => onPageChange('home')} onOpen={onOpenLoad} statusLabel={loadStatusLabel} formatMoney={formatMoney} resolveMediaUrl={resolveMediaUrl} emptyMessage="Geçmiş nakliye bulunmuyor." />;
   if (page === 'monthly-jobs') return <MonthlyCompletedPage items={accountLoads} loading={state.loading} error={state.error} onRetry={fetchLoads} onBack={() => onPageChange('home')} onOpen={onOpenLoad} />;
@@ -220,9 +253,6 @@ export default function CorporateAccountScreens({ page, onPageChange, account, f
   if (page === 'support') return <SupportListPage items={tickets} loading={state.loading} error={state.error} onRetry={fetchTickets} onBack={() => onPageChange('home')} onNew={() => { setSupportForm(initialSupportForm()); onPageChange('support-new'); }} onOpen={openTicket} />;
   if (page === 'support-new') return <SupportNewPage form={supportForm} setForm={setSupportForm} loads={accountLoads.filter(load => load.assignedDriverId)} loading={saving} onSubmit={submitSupport} onBack={() => onPageChange('support')} />;
   if (page === 'support-detail') return <SupportDetailPage item={selectedTicket} onBack={() => onPageChange('support')} />;
-  if (page === 'notifications') return <DeviceNotificationsPage onBack={() => onPageChange('home')} onPermissionGranted={onPermissionGranted} />;
-  if (page === 'privacy') return <LegalPage type="privacy" onBack={() => onPageChange('home')} />;
-  if (page === 'terms') return <LegalPage type="terms" onBack={() => onPageChange('home')} />;
 
   const counts = dashboard?.counts || {};
   const profileAccount = { ...account, name: dashboard?.company?.name || company?.name || account?.name, phone: dashboard?.company?.phone || account?.phone, email: dashboard?.company?.email || account?.email };

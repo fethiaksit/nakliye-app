@@ -14,7 +14,7 @@ import (
 
 func (a *API) corporateContext(w http.ResponseWriter, r *http.Request) (models.User, models.Company, bool) {
 	principal := current(r)
-	if principal.Role != models.RoleCustomer {
+	if principal.Role != models.RoleCustomer && principal.Role != models.RoleCorporate {
 		forbidden(w)
 		return models.User{}, models.Company{}, false
 	}
@@ -337,7 +337,7 @@ func (a *API) favoriteDrivers(w http.ResponseWriter, r *http.Request) {
 		if getErr != nil || driver.Role != models.RoleDriver {
 			continue
 		}
-		item := map[string]any{"favorite": favorite, "driver": publicUser(driver)}
+		item := map[string]any{"favorite": favorite, "driver": a.publicUser(driver)}
 		if vehicle, vehicleErr := a.store.GetActiveVehicle(driver.ID); vehicleErr == nil {
 			item["vehicle"] = vehicle
 		}
@@ -380,7 +380,7 @@ func (a *API) addFavoriteDriver(w http.ResponseWriter, r *http.Request) {
 		serverError(w, err)
 		return
 	}
-	item := map[string]any{"favorite": favorite, "driver": publicUser(driver)}
+	item := map[string]any{"favorite": favorite, "driver": a.publicUser(driver)}
 	if vehicle, vehicleErr := a.store.GetActiveVehicle(driver.ID); vehicleErr == nil {
 		item["vehicle"] = vehicle
 	}

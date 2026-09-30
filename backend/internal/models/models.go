@@ -65,6 +65,34 @@ type Dimensions struct {
 	WeightKG float64 `json:"weightKg"`
 }
 
+type StopType string
+
+const (
+	StopTypePickup   StopType = "pickup"
+	StopTypeDelivery StopType = "delivery"
+	StopTypeBoth     StopType = "both"
+)
+
+func ValidStopType(value StopType) bool {
+	switch value {
+	case StopTypePickup, StopTypeDelivery, StopTypeBoth:
+		return true
+	default:
+		return false
+	}
+}
+
+type Stop struct {
+	ID        string   `json:"id"`
+	Order     int      `json:"order"`
+	Address   string   `json:"address"`
+	Latitude  float64  `json:"latitude"`
+	Longitude float64  `json:"longitude"`
+	PlaceID   string   `json:"placeId,omitempty"`
+	StopType  StopType `json:"stopType"`
+	Note      string   `json:"note,omitempty"`
+}
+
 type Load struct {
 	ID                   string           `json:"id"`
 	CustomerID           string           `json:"customerId"`
@@ -73,7 +101,9 @@ type Load struct {
 	PhotoURLs            []string         `json:"photoUrls"`
 	Dimensions           Dimensions       `json:"dimensions"`
 	Pickup               Location         `json:"pickup"`
+	Stops                []Stop           `json:"stops,omitempty"`
 	Delivery             Location         `json:"delivery"`
+	CargoDetails         map[string]any   `json:"cargoDetails,omitempty"`
 	RouteDistanceMeters  int              `json:"routeDistanceMeters"`
 	RouteDurationSeconds int              `json:"routeDurationSeconds"`
 	PricePerKM           float64          `json:"pricePerKm"`

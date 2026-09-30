@@ -86,7 +86,7 @@ tbody tr:hover { background: #fbfcfb; }
 .person small, .cell-sub, .muted { color: #8a938d; font-size: 9px; margin-top: 4px; }
 .status { display: inline-flex; align-items: center; gap: 5px; border-radius: 20px; padding: 5px 8px; font-size: 9px; font-weight: 800; white-space: nowrap; }
 .status::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
-.status-active, .status-verified, .status-completed, .status-resolved { color: #26704a; background: #eaf6ee; }
+.status-active, .status-verified, .status-approved, .status-completed, .status-resolved { color: #26704a; background: #eaf6ee; }
 .status-blocked, .status-rejected, .status-cancelled, .status-open { color: #ae4037; background: #fff0ee; }
 .status-pending, .status-reviewing, .status-offers_received { color: var(--amber); background: #fff5df; }
 .status-published, .status-in_transit, .status-driver_selected { color: #3d659b; background: #edf4fd; }

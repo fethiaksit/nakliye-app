@@ -38,7 +38,13 @@ func (a *API) adminWalletSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) walletCompanyForAdmin(w http.ResponseWriter, r *http.Request) (models.Company, bool) {
-	user, err := a.store.GetUser(r.PathValue("id"))
+	targetID := r.PathValue("id")
+	user, err := a.store.GetUser(targetID)
+	if err != nil {
+		if comp, compErr := a.store.GetCompany(targetID); compErr == nil && comp.OwnerCustomerID != "" {
+			user, err = a.store.GetUser(comp.OwnerCustomerID)
+		}
+	}
 	if err != nil {
 		notFound(w)
 		return models.Company{}, false
@@ -53,8 +59,12 @@ func (a *API) walletCompanyForAdmin(w http.ResponseWriter, r *http.Request) (mod
 	}
 	company, err := a.store.GetCompanyByUser(user.ID)
 	if err != nil {
-		serverError(w, err)
-		return company, false
+		if comp, compErr := a.store.GetCompany(targetID); compErr == nil {
+			company = comp
+		} else {
+			serverError(w, err)
+			return company, false
+		}
 	}
 	return company, true
 }

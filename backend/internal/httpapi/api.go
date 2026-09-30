@@ -49,7 +49,7 @@ type mapsService interface {
 	Autocomplete(context.Context, string, string, *models.Coordinate) ([]service.PlaceSuggestion, error)
 	PlaceDetails(context.Context, string, string) (service.SearchResult, error)
 	Reverse(context.Context, models.Coordinate) (service.SearchResult, error)
-	Calculate(context.Context, models.Coordinate, models.Coordinate) (service.RouteResult, error)
+	Calculate(context.Context, models.Coordinate, models.Coordinate, ...models.Coordinate) (service.RouteResult, error)
 }
 type principal struct{ ID, Role string }
 type contextKey string
@@ -141,7 +141,12 @@ func (a *API) Routes() http.Handler {
 	mux.Handle("PATCH /api/admin/complaints/{id}", a.adminAuth(http.HandlerFunc(a.adminUpdateComplaint)))
 	mux.Handle("GET /api/admin/activity", a.adminAuth(http.HandlerFunc(a.adminActivity)))
 	mux.Handle("GET /api/admin/stats", a.adminAuth(http.HandlerFunc(a.adminStats)))
+	mux.Handle("GET /api/admin/corporate-accounts", a.adminAuth(http.HandlerFunc(a.adminCorporateApplications)))
+	mux.Handle("GET /api/admin/corporate-accounts/{id}", a.adminAuth(http.HandlerFunc(a.adminCorporateApplications)))
+	mux.Handle("PATCH /api/admin/corporate-accounts/{id}", a.adminAuth(http.HandlerFunc(a.adminCorporateApplications)))
+	mux.Handle("PATCH /api/admin/corporate-accounts/{id}/status", a.adminAuth(http.HandlerFunc(a.adminCorporateApplications)))
 	mux.Handle("GET /api/admin/corporate-applications", a.adminAuth(http.HandlerFunc(a.adminCorporateApplications)))
+	mux.Handle("GET /api/admin/corporate-applications/{id}", a.adminAuth(http.HandlerFunc(a.adminCorporateApplications)))
 	mux.Handle("PATCH /api/admin/corporate-applications/{id}", a.adminAuth(http.HandlerFunc(a.adminCorporateApplications)))
 	mux.Handle("GET /api/admin/corporate-wallets/settings", a.adminAuth(http.HandlerFunc(a.adminWalletSettings)))
 	mux.Handle("PUT /api/admin/corporate-wallets/settings", a.adminAuth(http.HandlerFunc(a.adminWalletSettings)))
@@ -223,6 +228,7 @@ func (a *API) Routes() http.Handler {
 	mux.Handle("DELETE /api/driver/vehicles/{id}", a.auth(http.HandlerFunc(a.deleteVehicle)))
 	mux.Handle("PATCH /api/driver/vehicles/{id}/activate", a.auth(http.HandlerFunc(a.activateVehicle)))
 	mux.Handle("GET /api/driver/documents", a.auth(http.HandlerFunc(a.listDriverDocuments)))
+	mux.Handle("POST /api/driver/documents", a.auth(http.HandlerFunc(a.uploadDriverDocument)))
 	mux.Handle("GET /api/driver/documents/{id}", a.auth(http.HandlerFunc(a.driverDocument)))
 	return requestID(logging(cors(mux)))
 }
@@ -243,35 +249,53 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 	if req.Role == models.RoleCustomer && strings.TrimSpace(req.AccountType) == "" {
 		req.AccountType = models.AccountTypeIndividual
 	}
+	log.Printf("[REGISTER START]\nemail=%s\nphone=%s", req.Email, req.Phone)
+
 	// Public registration intentionally permits only the two mobile roles.
 	// A corporate customer remains a customer role and uses the same auth flow.
 	if strings.TrimSpace(req.Name) == "" || !strings.Contains(req.Email, "@") || !validTurkishPhone(req.Phone) || len(req.Password) < 8 || (req.Role != models.RoleCustomer && req.Role != models.RoleDriver) {
+		log.Printf("[REGISTER DB ERROR]\nstep=validation\nerror=ad, gecerli e-posta ve telefon, en az 8 karakter sifre ve rol zorunludur")
 		badRequest(w, "ad, geçerli e-posta ve telefon, en az 8 karakter şifre ve rol zorunludur")
 		return
 	}
 	if req.Role == models.RoleCustomer && !models.ValidCustomerAccountType(req.AccountType) || req.Role == models.RoleDriver && req.AccountType != "" {
+		log.Printf("[REGISTER DB ERROR]\nstep=validation\nerror=gecerli hesap turu zorunludur")
 		badRequest(w, "geçerli hesap türü zorunludur")
 		return
 	}
 	if req.AccountType == models.AccountTypeCorporate && strings.TrimSpace(req.CompanyName) == "" {
+		log.Printf("[REGISTER DB ERROR]\nstep=validation\nerror=kurumsal hesap icin firma adi zorunludur")
 		badRequest(w, "kurumsal hesap için firma adı zorunludur")
 		return
 	}
 	if _, e := a.store.GetUserByEmail(req.Email); e == nil {
+		log.Printf("[REGISTER DB ERROR]\nstep=check_email\nerror=bu e-posta zaten kayitli")
 		conflict(w, "bu e-posta zaten kayıtlı")
 		return
 	}
 	if _, e := a.store.GetUserByPhone(req.Phone); e == nil {
+		log.Printf("[REGISTER DB ERROR]\nstep=check_phone\nerror=bu telefon numarasi zaten kayitli")
 		conflict(w, "bu telefon numarası zaten kayıtlı")
 		return
 	}
 	hash, err := hashPassword(req.Password)
 	if err != nil {
+		log.Printf("[REGISTER DB ERROR]\nstep=hash_password\nerror=%v", err)
 		serverError(w, err)
 		return
 	}
 	now := time.Now().UTC()
-	u := models.User{ID: uuid.NewString(), Name: strings.TrimSpace(req.Name), Email: req.Email, Phone: req.Phone, Role: req.Role, AccountType: req.AccountType, PasswordHash: hash, AccountStatus: models.AccountStatusActive, CreatedAt: now}
+	u := models.User{
+		ID:            uuid.NewString(),
+		Name:          strings.TrimSpace(req.Name),
+		Email:         req.Email,
+		Phone:         req.Phone,
+		Role:          req.Role,
+		AccountType:   req.AccountType,
+		PasswordHash:  hash,
+		AccountStatus: models.AccountStatusActive,
+		CreatedAt:     now,
+	}
 	if models.CustomerAccountType(u) == models.AccountTypeCorporate {
 		u.CorporateStatus = models.CorporateStatusPending
 	}
@@ -282,21 +306,40 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 	var createErr error
 	if u.Role == models.RoleCustomer && models.CustomerAccountType(u) == models.AccountTypeCorporate {
 		company := models.Company{
-			ID: uuid.NewString(), OwnerCustomerID: u.ID, Name: strings.TrimSpace(req.CompanyName), AuthorizedPerson: u.Name,
-			Phone: u.Phone, Email: u.Email, CreatedAt: now, UpdatedAt: now,
+			ID:               uuid.NewString(),
+			OwnerCustomerID:  u.ID,
+			Name:             strings.TrimSpace(req.CompanyName),
+			AuthorizedPerson: u.Name,
+			Phone:            u.Phone,
+			Email:            u.Email,
+			Status:           models.CorporateStatusPending,
+			CreatedAt:        now,
+			UpdatedAt:        now,
 		}
-		wallet := models.CorporateWallet{ID: uuid.NewString(), CompanyID: company.ID, CreatedAt: now, UpdatedAt: now}
+		wallet := models.CorporateWallet{
+			ID:        uuid.NewString(),
+			CompanyID: company.ID,
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
 		createErr = a.store.CreateCorporateAccount(u, company, wallet)
 	} else {
 		createErr = a.store.CreateUser(u)
 	}
 	if errors.Is(createErr, store.ErrUserExists) {
+		log.Printf("[REGISTER DB ERROR]\nstep=db_insert\nerror=user already exists")
 		conflict(w, "e-posta veya telefon numarası zaten kayıtlı")
 		return
 	} else if createErr != nil {
+		log.Printf("[REGISTER DB ERROR]\nstep=db_insert\nerror=%v", createErr)
 		serverError(w, createErr)
 		return
 	}
+
+	log.Printf("[REGISTER USER CREATED]\nuser_id=%s", u.ID)
+	log.Printf("[REGISTER PROFILE CREATED]\nuser_id=%s", u.ID)
+	log.Printf("[REGISTER COMMIT SUCCESS]\nuser_id=%s", u.ID)
+
 	a.session(w, u)
 }
 func (a *API) login(w http.ResponseWriter, r *http.Request) {
@@ -353,7 +396,7 @@ func (a *API) session(w http.ResponseWriter, u models.User) {
 		serverError(w, e)
 		return
 	}
-	user := publicUser(u)
+	user := a.publicUser(u)
 	if u.Role == models.RoleDriver {
 		if vehicle, err := a.store.GetActiveVehicle(u.ID); err == nil {
 			user["activeVehicle"] = vehicle
@@ -405,7 +448,7 @@ func (a *API) me(w http.ResponseWriter, r *http.Request) {
 		notFound(w)
 		return
 	}
-	user := publicUser(u)
+	user := a.publicUser(u)
 	if p.Role == models.RoleDriver {
 		if vehicle, err := a.store.GetActiveVehicle(p.ID); err == nil {
 			user["activeVehicle"] = vehicle
@@ -469,7 +512,7 @@ func (a *API) updateMe(w http.ResponseWriter, r *http.Request) {
 		serverError(w, err)
 		return
 	}
-	jsonResponse(w, http.StatusOK, publicUser(updated))
+	jsonResponse(w, http.StatusOK, a.publicUser(updated))
 }
 func (a *API) updatePassword(w http.ResponseWriter, r *http.Request) {
 	user, err := a.store.GetUser(current(r).ID)
@@ -924,13 +967,19 @@ func (a *API) mapCalculateRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request struct {
-		Pickup  models.Coordinate `json:"pickup"`
-		Dropoff models.Coordinate `json:"dropoff"`
+		Pickup        models.Coordinate   `json:"pickup"`
+		Dropoff       models.Coordinate   `json:"dropoff"`
+		Intermediates []models.Coordinate `json:"intermediates,omitempty"`
+		Stops         []models.Coordinate `json:"stops,omitempty"`
 	}
 	if !decode(w, r, &request) {
 		return
 	}
-	route, err := a.maps.Calculate(r.Context(), request.Pickup, request.Dropoff)
+	intermediates := request.Intermediates
+	if len(intermediates) == 0 && len(request.Stops) > 0 {
+		intermediates = request.Stops
+	}
+	route, err := a.maps.Calculate(r.Context(), request.Pickup, request.Dropoff, intermediates...)
 	if err != nil {
 		writeRouteError(w, err, "routes")
 		return
@@ -939,12 +988,14 @@ func (a *API) mapCalculateRoute(w http.ResponseWriter, r *http.Request) {
 }
 
 type loadRequest struct {
-	Title                     string
-	Description               string
+	Title                     string             `json:"title"`
+	Description               string             `json:"description"`
 	PhotoURLs                 []string           `json:"photoUrls"`
 	Dimensions                models.Dimensions  `json:"dimensions"`
 	Pickup                    models.Location    `json:"pickup"`
+	Stops                     []models.Stop      `json:"stops,omitempty"`
 	Delivery                  models.Location    `json:"delivery"`
+	CargoDetails              map[string]any     `json:"cargoDetails,omitempty"`
 	UrgencyType               models.UrgencyType `json:"urgencyType"`
 	ScheduledAt               *time.Time         `json:"scheduledAt"`
 	CargoType                 models.CargoType   `json:"cargoType"`
@@ -963,6 +1014,29 @@ func normalizeLoadRequest(req *loadRequest) {
 	req.Title = strings.TrimSpace(req.Title)
 	req.Description = strings.TrimSpace(req.Description)
 	req.CargoTypeNote = strings.TrimSpace(req.CargoTypeNote)
+	if req.VehicleType == "" {
+		req.VehicleType = models.VehicleTypeFarketmez
+	}
+	if req.PickupFloor == nil {
+		zero := 0
+		req.PickupFloor = &zero
+	}
+	if req.DeliveryFloor == nil {
+		zero := 0
+		req.DeliveryFloor = &zero
+	}
+	if req.Dimensions.WeightKG <= 0 {
+		req.Dimensions.WeightKG = 50
+	}
+	if req.Dimensions.LengthCM <= 0 {
+		req.Dimensions.LengthCM = 100
+	}
+	if req.Dimensions.WidthCM <= 0 {
+		req.Dimensions.WidthCM = 100
+	}
+	if req.Dimensions.HeightCM <= 0 {
+		req.Dimensions.HeightCM = 100
+	}
 	if req.ScheduledAt != nil {
 		scheduledAt := req.ScheduledAt.UTC()
 		req.ScheduledAt = &scheduledAt
@@ -972,6 +1046,18 @@ func normalizeLoadRequest(req *loadRequest) {
 	}
 	if !req.HelperNeeded {
 		req.HelperCount = 0
+	}
+	for i := range req.Stops {
+		req.Stops[i].Address = strings.TrimSpace(req.Stops[i].Address)
+		req.Stops[i].PlaceID = strings.TrimSpace(req.Stops[i].PlaceID)
+		req.Stops[i].Note = strings.TrimSpace(req.Stops[i].Note)
+		req.Stops[i].Order = i + 1
+		if req.Stops[i].ID == "" {
+			req.Stops[i].ID = uuid.NewString()
+		}
+		if req.Stops[i].StopType == "" {
+			req.Stops[i].StopType = models.StopTypePickup
+		}
 	}
 }
 
@@ -987,6 +1073,20 @@ func validLoad(req loadRequest, now time.Time) error {
 	}
 	if !service.ValidCoordinate(models.Coordinate{Latitude: req.Pickup.Latitude, Longitude: req.Pickup.Longitude}) || !service.ValidCoordinate(models.Coordinate{Latitude: req.Delivery.Latitude, Longitude: req.Delivery.Longitude}) {
 		return service.ErrInvalidCoordinates
+	}
+	if len(req.Stops) > 5 {
+		return errors.New("en fazla 5 ara durak eklenebilir")
+	}
+	for _, stop := range req.Stops {
+		if strings.TrimSpace(stop.Address) == "" {
+			return errors.New("ara durak adresi zorunludur")
+		}
+		if !service.ValidCoordinate(models.Coordinate{Latitude: stop.Latitude, Longitude: stop.Longitude}) {
+			return errors.New("geçersiz ara durak koordinatı")
+		}
+		if !models.ValidStopType(stop.StopType) {
+			return errors.New("geçersiz ara durak türü")
+		}
 	}
 	if req.Dimensions.WeightKG < models.MinWeightKG || req.Dimensions.WeightKG > models.MaxWeightKG {
 		return fmt.Errorf("ağırlık %.1f ile %.0f kg arasında olmalıdır", models.MinWeightKG, models.MaxWeightKG)
@@ -1071,9 +1171,14 @@ func (a *API) createLoad(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, 201, l)
 }
 func (a *API) newLoad(ctx context.Context, customerID string, req loadRequest, status string) (models.Load, error) {
+	var intermediateCoords []models.Coordinate
+	for _, stop := range req.Stops {
+		intermediateCoords = append(intermediateCoords, models.Coordinate{Latitude: stop.Latitude, Longitude: stop.Longitude})
+	}
 	route, e := a.maps.Calculate(ctx,
 		models.Coordinate{Latitude: req.Pickup.Latitude, Longitude: req.Pickup.Longitude},
 		models.Coordinate{Latitude: req.Delivery.Latitude, Longitude: req.Delivery.Longitude},
+		intermediateCoords...,
 	)
 	if e != nil {
 		return models.Load{}, e
@@ -1107,7 +1212,9 @@ func (a *API) newLoad(ctx context.Context, customerID string, req loadRequest, s
 		PhotoURLs:                 req.PhotoURLs,
 		Dimensions:                req.Dimensions,
 		Pickup:                    normalizeLocation(req.Pickup),
+		Stops:                     req.Stops,
 		Delivery:                  normalizeLocation(req.Delivery),
+		CargoDetails:              req.CargoDetails,
 		RouteDistanceMeters:       route.DistanceMeters,
 		RouteDurationSeconds:      route.DurationSeconds,
 		PricePerKM:                pricing.PricePerKM,
@@ -1429,7 +1536,7 @@ func (a *API) offerViews(offers []models.Offer) []map[string]any {
 	for _, offer := range offers {
 		view := map[string]any{"offer": offer}
 		if driver, err := a.store.GetUser(offer.DriverID); err == nil {
-			view["driver"] = publicUser(driver)
+			view["driver"] = a.publicUser(driver)
 			if vehicle, err := a.store.GetActiveVehicle(offer.DriverID); err == nil {
 				view["vehicle"] = vehicle
 			}
@@ -1802,6 +1909,80 @@ func (a *API) listDriverDocuments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, http.StatusOK, map[string]any{"items": documents})
+}
+func (a *API) uploadDriverDocument(w http.ResponseWriter, r *http.Request) {
+	p := current(r)
+	if p.Role != models.RoleDriver {
+		forbidden(w)
+		return
+	}
+	var request struct {
+		Kind    string `json:"kind"`
+		Title   string `json:"title"`
+		FileURL string `json:"fileUrl"`
+	}
+	if !decode(w, r, &request) {
+		return
+	}
+	request.Kind = strings.TrimSpace(request.Kind)
+	request.Title = strings.TrimSpace(request.Title)
+	request.FileURL = strings.TrimSpace(request.FileURL)
+	validURL := strings.HasPrefix(request.FileURL, "/api/photos/") || strings.HasPrefix(request.FileURL, "https://") || strings.HasPrefix(request.FileURL, "http://")
+	if !allowedDocumentKinds[request.Kind] || request.Title == "" || !validURL {
+		badRequest(w, "geçerli belge türü, başlık ve güvenli dosya adresi zorunludur")
+		return
+	}
+
+	now := time.Now().UTC()
+	existingDocs, err := a.store.ListDriverDocuments(p.ID)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+
+	var document models.DriverDocument
+	var found bool
+	for _, doc := range existingDocs {
+		if doc.Kind == request.Kind {
+			document = doc
+			found = true
+			break
+		}
+	}
+
+	if found {
+		document.Title = request.Title
+		document.FileURL = request.FileURL
+		document.Status = models.VerificationPending
+		document.ReviewNote = ""
+		document.ReviewedAt = nil
+		document.ReviewedBy = ""
+		document.UpdatedAt = now
+	} else {
+		document = models.DriverDocument{
+			ID:        uuid.NewString(),
+			DriverID:  p.ID,
+			Kind:      request.Kind,
+			Title:     request.Title,
+			FileURL:   request.FileURL,
+			Status:    models.VerificationPending,
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+	}
+
+	if err = a.store.SaveDriverDocument(document); err != nil {
+		serverError(w, err)
+		return
+	}
+
+	_ = a.store.RecordAdminActivity("driver.document_uploaded", p.ID, document.ID, map[string]any{
+		"driverId": p.ID,
+		"kind":     document.Kind,
+		"status":   document.Status,
+	})
+
+	jsonResponse(w, http.StatusOK, document)
 }
 func (a *API) driverDocument(w http.ResponseWriter, r *http.Request) {
 	p := current(r)
@@ -2385,14 +2566,17 @@ func (a *API) deleteLoadPhoto(w http.ResponseWriter, r *http.Request) {
 func (a *API) photo(w http.ResponseWriter, r *http.Request) {
 	raw := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if raw == "" {
+		raw = r.URL.Query().Get("token")
+	}
+	if raw == "" {
 		unauthorized(w, "oturum gerekli")
 		return
 	}
-	
+
 	isAdmin := false
 	var userID string
 	var u models.User
-	
+
 	_, adminErr := a.verifyAdmin(raw)
 	if adminErr == nil {
 		isAdmin = true
@@ -2412,13 +2596,13 @@ func (a *API) photo(w http.ResponseWriter, r *http.Request) {
 		notFound(w)
 		return
 	}
-	
+
 	if !isAdmin {
 		authorized := false
 		if ownerID == userID {
 			authorized = true
 		}
-		
+
 		if !authorized && loadID != "" {
 			l, err := a.store.GetLoad(loadID)
 			if err == nil {
@@ -2429,7 +2613,7 @@ func (a *API) photo(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		
+
 		if !authorized {
 			claim, err := a.store.MessageAttachmentClaim(photoID)
 			if err == nil && claim != "" {
@@ -2446,7 +2630,7 @@ func (a *API) photo(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		
+
 		if !authorized && ownerID == "" && loadID == "" {
 			if u.Role == models.RoleDriver {
 				docs, _ := a.store.ListDriverDocuments(userID)
@@ -2491,7 +2675,7 @@ func (a *API) photo(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		
+
 		if !authorized {
 			forbidden(w)
 			return
@@ -2583,18 +2767,110 @@ func verifyPassword(encoded, value string) bool {
 	actual := argon2.IDKey([]byte(value), salt, iterations, memory, parallelism, uint32(len(expected)))
 	return hmac.Equal(expected, actual)
 }
-func publicUser(u models.User) map[string]any {
-	user := map[string]any{"id": u.ID, "name": u.Name, "email": u.Email, "phone": u.Phone, "role": u.Role, "accountStatus": accountStatus(u), "createdAt": u.CreatedAt}
+func (a *API) publicUser(u models.User) map[string]any {
+	user := map[string]any{
+		"id":            u.ID,
+		"name":          u.Name,
+		"email":         u.Email,
+		"phone":         u.Phone,
+		"role":          u.Role,
+		"accountStatus": accountStatus(u),
+		"createdAt":     u.CreatedAt,
+	}
 	if !u.LastSeenAt.IsZero() {
 		user["lastSeenAt"] = u.LastSeenAt
 	}
 	if u.Role == models.RoleDriver {
 		user["driverProfile"] = u.DriverProfile
-	} else if u.Role == models.RoleCustomer {
+		user["corporate"] = nil
+		user["company"] = nil
+	} else if u.Role == models.RoleCustomer || u.Role == models.RoleCorporate || models.CustomerAccountType(u) == models.AccountTypeCorporate {
 		user["accountType"] = models.CustomerAccountType(u)
 		if models.CustomerAccountType(u) == models.AccountTypeCorporate {
-			user["corporateStatus"] = u.CorporateStatus
+			var comp models.Company
+			var hasCompany bool
+			if a != nil && a.store != nil {
+				if c, err := a.store.GetCompanyByUser(u.ID); err == nil && c.ID != "" {
+					comp = c
+					hasCompany = true
+				} else if all, lErr := a.store.ListAllCompanies(); lErr == nil {
+					for _, c := range all {
+						if c.OwnerCustomerID == u.ID {
+							comp = c
+							hasCompany = true
+							break
+						}
+					}
+				}
+			}
+			if hasCompany {
+				status := models.CanonicalCorporateStatus(comp.Status)
+				if status == "" {
+					status = models.CanonicalCorporateStatus(u.CorporateStatus)
+				}
+				if status == "" {
+					status = models.CorporateStatusPending
+				}
+				user["corporateStatus"] = status
+				user["status"] = status
+				user["corporateId"] = comp.ID
+				user["corporate_id"] = comp.ID
+
+				var approvedAt *time.Time
+				if comp.ApprovedAt != nil {
+					approvedAt = comp.ApprovedAt
+				} else if u.CorporateApprovedAt != nil {
+					approvedAt = u.CorporateApprovedAt
+				}
+
+				if approvedAt != nil {
+					user["approvedAt"] = approvedAt
+					user["corporateApprovedAt"] = approvedAt
+				}
+				if u.CorporateApprovedBy != "" {
+					user["approvedBy"] = u.CorporateApprovedBy
+					user["corporateApprovedBy"] = u.CorporateApprovedBy
+				}
+				if u.CorporateRejectionReason != "" {
+					user["rejectionReason"] = u.CorporateRejectionReason
+					user["corporateRejectionReason"] = u.CorporateRejectionReason
+				}
+
+				corporateObj := map[string]any{
+					"id":               comp.ID,
+					"user_id":          u.ID,
+					"userId":           u.ID,
+					"status":           status,
+					"name":             comp.Name,
+					"authorizedPerson": comp.AuthorizedPerson,
+					"taxNumber":        comp.TaxNumber,
+					"taxOffice":        comp.TaxOffice,
+					"address":          comp.Address,
+					"phone":            comp.Phone,
+					"email":            comp.Email,
+					"approved_at":      approvedAt,
+					"approvedAt":       approvedAt,
+					"rejected_at":      nil,
+					"rejectedAt":       nil,
+					"rejectionReason":  u.CorporateRejectionReason,
+				}
+				user["corporate"] = corporateObj
+				user["company"] = corporateObj
+			} else {
+				if u.CorporateStatus != "" {
+					user["corporateStatus"] = models.CanonicalCorporateStatus(u.CorporateStatus)
+					user["status"] = models.CanonicalCorporateStatus(u.CorporateStatus)
+				}
+				user["corporate"] = nil
+				user["company"] = nil
+			}
+		} else {
+			user["corporate"] = nil
+			user["company"] = nil
 		}
+	} else {
+		user["corporate"] = nil
+		user["company"] = nil
 	}
 	return user
 }
