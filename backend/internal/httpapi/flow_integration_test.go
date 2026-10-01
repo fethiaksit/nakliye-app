@@ -34,11 +34,14 @@ func (stubMaps) Reverse(_ context.Context, coordinate models.Coordinate) (servic
 	return service.SearchResult{FormattedAddress: "İzmir", Coordinate: coordinate}, nil
 }
 
-func (stubMaps) Calculate(_ context.Context, pickup, dropoff models.Coordinate) (service.RouteResult, error) {
+func (stubMaps) Calculate(_ context.Context, pickup, dropoff models.Coordinate, intermediates ...models.Coordinate) (service.RouteResult, error) {
+	coords := []models.Coordinate{pickup}
+	coords = append(coords, intermediates...)
+	coords = append(coords, dropoff)
 	return service.RouteResult{
 		DistanceMeters: 18000, DistanceKM: 18, DurationSeconds: 1800, DurationMinutes: 30,
 		PricePerKM: 50, EstimatedPriceTL: 2400, Currency: "TRY", EncodedPolyline: "encoded",
-		RouteProvider: "test", RouteCoordinates: []models.Coordinate{pickup, dropoff},
+		RouteProvider: "test", RouteCoordinates: coords,
 	}, nil
 }
 
@@ -58,7 +61,10 @@ func newFlowTestAPI(t *testing.T) (http.Handler, *store.RedisStore) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	api := NewWithOptions(redisStore, Options{Secret: integrationTestSecret, PricePerKM: 50, MaxUploadMB: 1})
+	api := NewWithOptions(redisStore, Options{
+		Secret: integrationTestSecret, PricePerKM: 50, MaxUploadMB: 1,
+		AdminEmail: adminTestEmail, AdminPassword: adminTestPassword, AdminSecret: adminTestSecret,
+	})
 	api.maps = stubMaps{}
 	return api.Routes(), redisStore
 }
@@ -375,4 +381,83 @@ type typeofNormalizedError struct {
 		Code string `json:"code"`
 	} `json:"error"`
 	RequestID string `json:"requestId"`
+}
+
+func TestMultiStopLoadCreationAndRouting(t *testing.T) {
+	handler, _ := newFlowTestAPI(t)
+	customer := registerTestUser(t, handler, "multistop_cust", models.RoleCustomer)
+
+	stops := []models.Stop{
+		{
+			Order:     1,
+			Address:   "Bornova, İzmir",
+			Latitude:  38.46,
+			Longitude: 27.22,
+			StopType:  models.StopTypePickup,
+			Note:      "2 koltuk alınacak",
+		},
+		{
+			Order:     2,
+			Address:   "Bayraklı, İzmir",
+			Latitude:  38.45,
+			Longitude: 27.17,
+			StopType:  models.StopTypeDelivery,
+			Note:      "1 masa bırakılacak",
+		},
+	}
+
+	payload := map[string]any{
+		"title":       "2+1 Ev Taşıma · Kemalpaşa → Karşıyaka",
+		"description": "Ara duraklı komple ev taşıma",
+		"pickup": map[string]any{
+			"address": "Kemalpaşa, İzmir", "latitude": 38.42, "longitude": 27.41,
+		},
+		"stops": stops,
+		"delivery": map[string]any{
+			"address": "Karşıyaka, İzmir", "latitude": 38.45, "longitude": 27.11,
+		},
+		"cargoDetails": map[string]any{
+			"moveType":            "komple",
+			"homeSize":            "2+1",
+			"packingRequired":     true,
+			"disassemblyRequired": true,
+		},
+		"urgencyType":  models.UrgencyImmediate,
+		"cargoType":    models.CargoTypeEvEsyasi,
+		"vehicleType":  models.VehicleTypeFarketmez,
+		"helperNeeded": true,
+		"helperCount":  2,
+	}
+
+	createRes := requestJSON(t, handler, http.MethodPost, "/api/loads", customer.AccessToken, payload)
+	if createRes.Code != http.StatusCreated {
+		t.Fatalf("create multi-stop load failed status=%d body=%s", createRes.Code, createRes.Body.String())
+	}
+
+	load := decodeResponse[models.Load](t, createRes)
+	if len(load.Stops) != 2 {
+		t.Fatalf("expected 2 stops, got %d", len(load.Stops))
+	}
+	if load.Stops[0].Note != "2 koltuk alınacak" || load.Stops[0].StopType != models.StopTypePickup {
+		t.Fatalf("unexpected stop 0: %#v", load.Stops[0])
+	}
+	if load.CargoDetails == nil || load.CargoDetails["homeSize"] != "2+1" {
+		t.Fatalf("cargoDetails not preserved: %#v", load.CargoDetails)
+	}
+	if len(load.RouteCoordinates) != 4 {
+		t.Fatalf("expected 4 route coordinates (pickup + 2 stops + dropoff), got %d", len(load.RouteCoordinates))
+	}
+
+	// Test route calculate endpoint with stops
+	routeRes := requestJSON(t, handler, http.MethodPost, "/api/maps/routes/calculate", customer.AccessToken, map[string]any{
+		"pickup":  map[string]float64{"latitude": 38.42, "longitude": 27.41},
+		"dropoff": map[string]float64{"latitude": 38.45, "longitude": 27.11},
+		"stops": []map[string]float64{
+			{"latitude": 38.46, "longitude": 27.22},
+			{"latitude": 38.45, "longitude": 27.17},
+		},
+	})
+	if routeRes.Code != http.StatusOK {
+		t.Fatalf("calculate route with stops failed status=%d body=%s", routeRes.Code, routeRes.Body.String())
+	}
 }

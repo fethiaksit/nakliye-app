@@ -118,6 +118,17 @@ export default function RoutePicker({ value, onLocationsChange, onRouteChange })
   const pickupSearch = useAddressSearch(pickupQuery, pickupFocused, placesSessionsRef.current.pickup, locationBias);
   const dropoffSearch = useAddressSearch(dropoffQuery, dropoffFocused, placesSessionsRef.current.dropoff, locationBias);
 
+  const lastCalculatedCoordsRef = useRef('');
+  const routeRef = useRef(value?.route || null);
+
+  const sameLocation = (a, b) => {
+    if (!a && !b) return true;
+    if (!a || !b) return false;
+    if (a.placeId && b.placeId && a.placeId === b.placeId) return true;
+    if (a.coordinate && b.coordinate && samePoint(a.coordinate, b.coordinate) && (a.formattedAddress || '') === (b.formattedAddress || '')) return true;
+    return false;
+  };
+
   useEffect(() => () => {
     reverseControllersRef.current.pickup?.abort();
     reverseControllersRef.current.dropoff?.abort();
@@ -126,7 +137,10 @@ export default function RoutePicker({ value, onLocationsChange, onRouteChange })
   }, []);
 
   useEffect(() => {
-    if (value?.pickup === locationsRef.current.pickup && value?.dropoff === locationsRef.current.dropoff) return;
+    const samePickup = sameLocation(value?.pickup, locationsRef.current.pickup);
+    const sameDropoff = sameLocation(value?.dropoff, locationsRef.current.dropoff);
+    if (samePickup && sameDropoff && value?.route === routeRef.current) return;
+
     reverseControllersRef.current.pickup?.abort();
     reverseControllersRef.current.dropoff?.abort();
     detailsControllersRef.current.pickup?.abort();
@@ -134,6 +148,7 @@ export default function RoutePicker({ value, onLocationsChange, onRouteChange })
     ++requestSequenceRef.current.pickup;
     ++requestSequenceRef.current.dropoff;
     locationsRef.current = { pickup: value?.pickup || null, dropoff: value?.dropoff || null };
+    routeRef.current = value?.route || null;
     setPickupLocation(value?.pickup || null);
     setDropoffLocation(value?.dropoff || null);
     setPickupQuery(value?.pickup?.formattedAddress || '');
@@ -142,8 +157,11 @@ export default function RoutePicker({ value, onLocationsChange, onRouteChange })
   }, [value?.dropoff, value?.pickup, value?.route]);
 
   const setRouteEmpty = useCallback(() => {
-    setRoute(null);
-    onRouteChange(null);
+    if (routeRef.current !== null) {
+      routeRef.current = null;
+      setRoute(null);
+      onRouteChange(null);
+    }
   }, [onRouteChange]);
 
   const updateLocation = useCallback((field, location) => {
@@ -230,36 +248,42 @@ export default function RoutePicker({ value, onLocationsChange, onRouteChange })
     setRouteEmpty();
   }, [onLocationsChange, setRouteEmpty]);
 
-  const pickupLatitude = pickupLocation?.coordinate.latitude;
-  const pickupLongitude = pickupLocation?.coordinate.longitude;
-  const dropoffLatitude = dropoffLocation?.coordinate.latitude;
-  const dropoffLongitude = dropoffLocation?.coordinate.longitude;
+  const pickupLat = pickupLocation?.coordinate?.latitude;
+  const pickupLng = pickupLocation?.coordinate?.longitude;
+  const dropoffLat = dropoffLocation?.coordinate?.latitude;
+  const dropoffLng = dropoffLocation?.coordinate?.longitude;
+  const pickupResolving = Boolean(pickupLocation?.resolvingAddress);
+  const dropoffResolving = Boolean(dropoffLocation?.resolvingAddress);
+  const pickupGeocodeError = Boolean(pickupLocation?.geocodeError);
+  const dropoffGeocodeError = Boolean(dropoffLocation?.geocodeError);
+  const coordsKey = (pickupLat && pickupLng && dropoffLat && dropoffLng) ? `${pickupLat},${pickupLng}->${dropoffLat},${dropoffLng}` : '';
 
   useEffect(() => {
-    if (!pickupLocation && !dropoffLocation) {
-      setRouteState('Önce başlangıç, sonra varış konumunu seçin.');
+    if (!pickupLat || !pickupLng || !dropoffLat || !dropoffLng) {
+      if (!pickupLat && !dropoffLat) setRouteState('Önce başlangıç, sonra varış konumunu seçin.');
+      else if (!pickupLat) setRouteState('Başlangıç konumunu seçin.');
+      else setRouteState('Varış konumunu seçin.');
+      lastCalculatedCoordsRef.current = '';
       return undefined;
     }
-    if (!pickupLocation) {
-      setRouteState('Başlangıç konumunu seçin.');
-      return undefined;
-    }
-    if (!dropoffLocation) {
-      setRouteState('Varış konumunu seçin.');
-      return undefined;
-    }
-    if (pickupLocation.resolvingAddress || dropoffLocation.resolvingAddress) {
+    if (pickupResolving || dropoffResolving) {
       setRouteState('Adres bilgisi alınıyor…');
       return undefined;
     }
-    if (pickupLocation.geocodeError || dropoffLocation.geocodeError) {
+    if (pickupGeocodeError || dropoffGeocodeError) {
       setRouteState('Seçilen konumun açık adresi alınamadı. Tekrar deneyin.');
       setRouteEmpty();
+      lastCalculatedCoordsRef.current = '';
       return undefined;
     }
-    if (samePoint(pickupLocation.coordinate, dropoffLocation.coordinate)) {
+    if (samePoint({ latitude: pickupLat, longitude: pickupLng }, { latitude: dropoffLat, longitude: dropoffLng })) {
       setRouteState('Başlangıç ve varış konumları aynı olamaz.');
       setRouteEmpty();
+      lastCalculatedCoordsRef.current = '';
+      return undefined;
+    }
+
+    if (lastCalculatedCoordsRef.current === coordsKey && routeRef.current !== null) {
       return undefined;
     }
 
@@ -268,16 +292,19 @@ export default function RoutePicker({ value, onLocationsChange, onRouteChange })
       setRouteState('Rota hesaplanıyor…');
       try {
         const data = await maps.calculate({
-          pickup: pickupLocation.coordinate,
-          dropoff: dropoffLocation.coordinate,
+          pickup: { latitude: pickupLat, longitude: pickupLng },
+          dropoff: { latitude: dropoffLat, longitude: dropoffLng },
         }, controller.signal);
         if (!controller.signal.aborted) {
+          lastCalculatedCoordsRef.current = coordsKey;
+          routeRef.current = data;
           setRoute(data);
           onRouteChange(data);
           setRouteState('Gerçek araç rotası hazır.');
         }
       } catch (error) {
         if (!controller.signal.aborted) {
+          lastCalculatedCoordsRef.current = '';
           setRouteEmpty();
           setRouteState(mapErrorMessage(error, 'Bu iki konum arasındaki rota hesaplanamadı.'));
         }
@@ -287,7 +314,7 @@ export default function RoutePicker({ value, onLocationsChange, onRouteChange })
       clearTimeout(timer);
       controller.abort();
     };
-  }, [dropoffLatitude, dropoffLocation, dropoffLongitude, onRouteChange, pickupLatitude, pickupLocation, pickupLongitude, setRouteEmpty]);
+  }, [coordsKey, dropoffGeocodeError, dropoffLat, dropoffLng, dropoffResolving, onRouteChange, pickupGeocodeError, pickupLat, pickupLng, pickupResolving, setRouteEmpty]);
 
   useEffect(() => {
     if (route?.routeCoordinates?.length > 1) {

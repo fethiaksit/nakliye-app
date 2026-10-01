@@ -20,12 +20,19 @@ export function formatMoney(value, fallback = 'Fiyat hesaplanamadı') {
   return new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY', maximumFractionDigits: 0 }).format(amount);
 }
 
+import { getAccessToken } from '../services/api';
+
 export function resolveMediaUrl(path) {
   if (!path || typeof path !== 'string') return null;
+  const appendToken = url => {
+    const token = getAccessToken();
+    if (!token || !url.includes('/api/photos/') || url.includes('token=')) return url;
+    return url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token);
+  };
   const loopback = path.match(/^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?(\/.*)?$/i);
-  if (loopback) return `${apiOrigin}${loopback[1] || ''}`;
-  if (/^https?:\/\//i.test(path)) return path;
-  return `${apiOrigin}/${path.replace(/^\/+/, '')}`;
+  if (loopback) return appendToken(`${apiOrigin}${loopback[1] || ''}`);
+  if (/^https?:\/\//i.test(path)) return appendToken(path);
+  return appendToken(`${apiOrigin}/${path.replace(/^\/+/, '')}`);
 }
 
 // Backend photo payloads have existed as strings and object records. Normalize

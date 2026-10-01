@@ -143,7 +143,10 @@ function DriverApp() {
   }, []);
   useEffect(() => {
     if (restoring || !user || user.role !== 'driver') return;
-    if (tab === 'jobs') void fetchJobs();
+    if (tab === 'jobs') {
+      void fetchJobs();
+      void fetchOffers();
+    }
     if (tab === 'offers') void fetchOffers();
     if (tab === 'account') void fetchAccount();
   }, [fetchAccount, fetchJobs, fetchOffers, restoring, tab, user?.id, user?.role]);
@@ -331,19 +334,19 @@ function DriverApp() {
   if (!user) return <AuthFlow auth={auth} saveSession={saveSession} apiError={apiError} onSession={setUser} allowedRole="driver" />;
 
   const body = tab === 'jobs'
-    ? <DriverJobs loading={jobsLoading} error={jobsError} jobs={jobs} selected={selected} form={offerForm} setForm={setOfferForm} formErrors={offerErrors} setFormErrors={setOfferErrors} saving={offerSaving} deliverySaving={deliverySaving} onOpen={openJob} onClose={() => setSelected(null)} onAdjust={adjustOffer} onSaveOffer={saveOffer} onStatus={(load, status) => setConfirmation({ type: 'status', target: load, status })} onCompleteDelivery={performCompleteDelivery} retry={fetchJobs} onShowOffers={() => setTab('offers')} />
+    ? <DriverJobs loading={jobsLoading} error={jobsError} jobs={jobs} selected={selected} selectedOffer={selectedOffer} form={offerForm} setForm={setOfferForm} formErrors={offerErrors} setFormErrors={setOfferErrors} saving={offerSaving} deliverySaving={deliverySaving} onOpen={openJob} onClose={() => setSelected(null)} onAdjust={adjustOffer} onSaveOffer={saveOffer} onStatus={(load, status) => setConfirmation({ type: 'status', target: load, status })} onCompleteDelivery={performCompleteDelivery} retry={fetchJobs} onShowOffers={() => setTab('offers')} myOffers={myOffers} user={user} />
     : tab === 'offers'
       ? <DriverOffers loading={myOffersLoading} error={offersError} items={myOffers} onOpen={(load, offer) => { setTab('jobs'); openJob(load, offer); }} onWithdraw={offer => setConfirmation({ type: 'withdraw', target: offer })} retry={fetchOffers} />
       : tab === 'messages'
         ? <ConversationCenter currentUser={user} api={conversations} apiError={apiError} resolveMediaUrl={resolveMediaUrl} formatMoney={formatMoney} loadStatusLabel={loadStatusLabel} onOpenLoad={openMessageLoad} initialConversationId={pendingConversationId} onInitialConversationHandled={handleInitialConversation} reverseGeocode={maps.reverse} nativeMapsConfigured={nativeGoogleMapsConfigured} nativeMapsMessage={nativeGoogleMapsMessage} bottomInset={control.bottomNavHeight + insets.bottom} />
         : <DriverAccountScreens page={accountPage} onPageChange={setAccountPage} loading={accountLoading} error={accountError} account={account} form={accountForm} setForm={setAccountForm} save={saveAccount} saveLoading={accountSaving} changePassword={changePassword} passwordLoading={passwordSaving} logout={() => setConfirmation({ type: 'logout' })} retry={fetchAccount} onOpenLoad={openAccountLoad} onPermissionGranted={registerPushAfterPermission} notificationSaving={notificationSaving} onNotificationChange={updateNearbyNotifications} />;
 
-  const refresh = tab === 'jobs' ? fetchJobs : tab === 'offers' ? fetchOffers : tab === 'account' && accountPage === 'home' ? fetchAccount : undefined;
+  const refresh = tab === 'jobs' ? () => { void fetchJobs(); void fetchOffers(); } : tab === 'offers' ? fetchOffers : tab === 'account' && accountPage === 'home' ? fetchAccount : undefined;
   const showBottomNav = tab !== 'account' || accountPage === 'home';
   const confirmationAction = confirmation?.type === 'status' ? driverStatusAction(confirmation.target?.status) : null;
   return <View style={styles.screen}>
     <StatusBar style="light" />
-    <AppHeader title="NakliyeGo" subtitle={tab === 'jobs' ? 'Şoför paneli' : tab === 'offers' ? 'Teklif yönetimi' : tab === 'messages' ? 'Mesajlar' : 'Hesabım'} initials={user.name?.split(' ').map(part => part[0]).join('').slice(0, 2).toUpperCase()} topInset={insets.top} />
+    <AppHeader title="NakliyeGo" subtitle={tab === 'jobs' ? 'Şoför' : tab === 'offers' ? 'Tekliflerim' : tab === 'messages' ? 'Mesajlar' : 'Hesabım'} initials={user.name?.split(' ').map(part => part[0]).join('').slice(0, 2).toUpperCase()} topInset={insets.top} />
     {tab === 'messages' ? body : <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}><ScrollView contentContainerStyle={[styles.content, { paddingBottom: (showBottomNav ? control.bottomNavHeight + insets.bottom : insets.bottom) + spacing.xl }]} keyboardShouldPersistTaps="handled" keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'} showsVerticalScrollIndicator={false} refreshControl={refresh ? <RefreshControl refreshing={tab === 'jobs' ? jobsLoading : tab === 'offers' ? myOffersLoading : accountLoading} onRefresh={refresh} tintColor={colors.primary} /> : undefined}>{body}</ScrollView></KeyboardAvoidingView>}
     {showBottomNav ? <BottomNav items={navItems} value={tab} onChange={value => { setTab(value); setAccountPage('home'); if (value !== 'jobs') setSelected(null); }} bottomInset={insets.bottom} /> : null}
     <ConfirmationModal

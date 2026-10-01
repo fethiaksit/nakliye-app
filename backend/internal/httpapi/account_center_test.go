@@ -78,6 +78,43 @@ func TestAccountCenterOwnedDocumentsAndSupport(t *testing.T) {
 		t.Fatalf("other document status=%d body=%s", otherDetail.Code, otherDetail.Body.String())
 	}
 
+	// Driver upload document test
+	if forbiddenUpload := requestJSON(t, handler, http.MethodPost, "/api/driver/documents", customer.AccessToken, map[string]string{
+		"kind": "src", "title": "SRC Belgesi", "fileUrl": "/api/photos/src-123",
+	}); forbiddenUpload.Code != http.StatusForbidden {
+		t.Fatalf("customer upload document status=%d", forbiddenUpload.Code)
+	}
+
+	uploadRes := requestJSON(t, handler, http.MethodPost, "/api/driver/documents", driver.AccessToken, map[string]string{
+		"kind": "src", "title": "SRC-4 Belgesi", "fileUrl": "/api/photos/src-photo",
+	})
+	if uploadRes.Code != http.StatusOK {
+		t.Fatalf("driver upload document status=%d body=%s", uploadRes.Code, uploadRes.Body.String())
+	}
+	uploadedDoc := decodeResponse[models.DriverDocument](t, uploadRes)
+	if uploadedDoc.Kind != "src" || uploadedDoc.Status != models.VerificationPending || uploadedDoc.DriverID != driver.User.ID {
+		t.Fatalf("uploaded document mismatch: %#v", uploadedDoc)
+	}
+
+	// Simulate admin rejecting document with note
+	uploadedDoc.Status = models.VerificationRejected
+	uploadedDoc.ReviewNote = "Belge okunaklı değil, tekrar çekin."
+	if err = redisStore.SaveDriverDocument(uploadedDoc); err != nil {
+		t.Fatal(err)
+	}
+
+	// Driver re-uploads same kind
+	reUploadRes := requestJSON(t, handler, http.MethodPost, "/api/driver/documents", driver.AccessToken, map[string]string{
+		"kind": "src", "title": "SRC-4 Belgesi Yeni", "fileUrl": "/api/photos/src-photo-clear",
+	})
+	if reUploadRes.Code != http.StatusOK {
+		t.Fatalf("driver re-upload document status=%d body=%s", reUploadRes.Code, reUploadRes.Body.String())
+	}
+	reUploadedDoc := decodeResponse[models.DriverDocument](t, reUploadRes)
+	if reUploadedDoc.Status != models.VerificationPending || reUploadedDoc.ReviewNote != "" || reUploadedDoc.FileURL != "/api/photos/src-photo-clear" {
+		t.Fatalf("re-uploaded document status or note not reset: %#v", reUploadedDoc)
+	}
+
 	feedback := requestJSON(t, handler, http.MethodPost, "/api/complaints", customer.AccessToken, map[string]string{
 		"type": models.SupportTypeFeedback, "subject": "Uygulama önerisi", "description": "Rota özetini faydalı buldum.",
 	})

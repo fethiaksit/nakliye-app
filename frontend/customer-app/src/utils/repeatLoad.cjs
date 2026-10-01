@@ -13,18 +13,33 @@ const toDraftLocation = location => location ? {
   countryCode: location.countryCode || '',
 } : null;
 
+function toDraftStop(stop, index) {
+  if (!stop) return null;
+  return {
+    id: stop.id || `stop-${Date.now()}-${index}`,
+    order: stop.order || index + 1,
+    address: stop.address || '',
+    placeId: stop.placeId || '',
+    coordinate: { latitude: Number(stop.latitude), longitude: Number(stop.longitude) },
+    stopType: stop.stopType || 'pickup',
+    note: stop.note || '',
+  };
+}
+
 function buildRepeatDraft(load = {}) {
+  const stops = Array.isArray(load.stops) ? load.stops.map(toDraftStop).filter(Boolean) : [];
   return {
     form: {
       title: load.title || '', description: load.description || '', urgencyType: 'immediate', scheduledDate: '', scheduledTime: '',
       cargoType: load.cargoType || '', cargoTypeNote: load.cargoTypeNote || '', vehicleType: load.vehicleType || 'farketmez',
+      cargoDetails: load.cargoDetails ? JSON.parse(JSON.stringify(load.cargoDetails)) : {},
       weight: String(load.dimensions?.weightKg || ''), length: String(load.dimensions?.lengthCm || ''),
       width: String(load.dimensions?.widthCm || ''), height: String(load.dimensions?.heightCm || ''),
       pickupFloor: String(load.pickupFloor ?? 0), deliveryFloor: String(load.deliveryFloor ?? 0),
       pickupElevatorAvailable: Boolean(load.pickupElevatorAvailable), deliveryElevatorAvailable: Boolean(load.deliveryElevatorAvailable),
       helperNeeded: Boolean(load.helperNeeded), helperCount: String(load.helperCount || 1),
     },
-    routeDraft: { pickup: toDraftLocation(load.pickup), dropoff: toDraftLocation(load.delivery), route: null },
+    routeDraft: { pickup: toDraftLocation(load.pickup), dropoff: toDraftLocation(load.delivery), stops, route: null },
   };
 }
 

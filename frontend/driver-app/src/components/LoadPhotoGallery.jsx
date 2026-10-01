@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Icon from '../../../shared/ui/Icon';
 import { colors, radius, spacing, typography } from '../../../shared/ui/theme';
 import { normalizeLoadPhotos } from '../utils/presentation';
+import { getAuthenticatedImageSource } from '../services/api';
 
 const MAX_ZOOM = 3;
 
@@ -22,7 +23,7 @@ const CachedLoadPhoto = memo(function CachedLoadPhoto({ photo, style, contentFit
   const [retryKey, setRetryKey] = useState(0);
   useEffect(() => { setFailed(false); }, [photo?.url]);
   if (!photo?.url || failed) return <PhotoFallback compact={compact} label={failed ? 'Fotoğraf yüklenemedi' : 'Yük fotoğrafı bulunmuyor'} onRetry={failed ? () => { setFailed(false); setRetryKey(current => current + 1); } : undefined} />;
-  return <Image key={`${photo.id}-${retryKey}`} source={photo.url} style={style} contentFit={contentFit} cachePolicy="memory-disk" transition={160} onError={() => setFailed(true)} accessibilityLabel="İlan yük fotoğrafı" />;
+  return <Image key={`${photo.id}-${retryKey}`} source={getAuthenticatedImageSource(photo.url)} style={style} contentFit={contentFit} cachePolicy="memory-disk" transition={160} onError={() => setFailed(true)} accessibilityLabel="İlan yük fotoğrafı" />;
 });
 
 function FullScreenPhoto({ photo, active, onZoomChange }) {
@@ -114,10 +115,7 @@ export function FullScreenLoadGallery({ photos: rawPhotos, initialIndex = 0, vis
     requestAnimationFrame(() => listRef.current?.scrollToOffset({ offset: next * width, animated: false }));
   }, [initialIndex, photos.length, visible, width]);
   useEffect(() => {
-    if (!visible || !photos[index]?.url) return;
-    [index - 1, index, index + 1].forEach(candidate => {
-      if (photos[candidate]?.url) void Image.prefetch(photos[candidate].url);
-    });
+    // Prefetch temporarily removed since expo-image prefetch does not reliably support auth headers.
   }, [index, photos, visible]);
   if (!visible) return null;
   return <Modal visible transparent animationType="fade" statusBarTranslucent onRequestClose={onClose}>

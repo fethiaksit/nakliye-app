@@ -296,14 +296,14 @@ func TestPhaseNineteenAdminCanReadCorporateProfileAndLedger(t *testing.T) {
 	}
 	api := NewWithOptions(redisStore, Options{
 		Secret: integrationTestSecret, PricePerKM: 50, MaxUploadMB: 1,
-		AdminEmail: "admin@nakliyego.test", AdminPassword: "GucluAdminSifresi123",
-		AdminSecret: "phase-19-admin-secret-at-least-32-characters",
+		AdminEmail: adminTestEmail, AdminPassword: adminTestPassword,
+		AdminSecret: adminTestSecret,
 	})
 	api.maps = stubMaps{}
 	handler := api.Routes()
 	corporate := registerCorporateTestUser(t, handler, "corporate_admin")
 	login := requestJSON(t, handler, http.MethodPost, "/api/admin/auth/login", "", map[string]string{
-		"email": "admin@nakliyego.test", "password": "GucluAdminSifresi123",
+		"email": adminTestEmail, "password": adminTestPassword,
 	})
 	if login.Code != http.StatusOK {
 		t.Fatalf("admin login status=%d body=%s", login.Code, login.Body.String())

@@ -19,6 +19,13 @@ const tokens = async () => memorySession || ({
   accessToken: await SecureStore.getItemAsync('accessToken'),
   refreshToken: await SecureStore.getItemAsync('refreshToken'),
 });
+export const getAccessToken = () => memorySession?.accessToken;
+export const getAuthenticatedImageSource = (url) => {
+  if (!url) return null;
+  const token = getAccessToken();
+  if (!token) return { uri: url };
+  return { uri: url, headers: { Authorization: `Bearer ${token}` } };
+};
 
 const notifySessionExpired = () => {
   sessionExpiredListeners.forEach(listener => listener());
@@ -110,13 +117,14 @@ client.interceptors.response.use(response => response, async error => {
       .then(({ refreshToken }) => {
         if (!refreshToken) throw Object.assign(new Error('Oturum yenileme anahtarı bulunamadı.'), { code: 'SESSION_EXPIRED' });
         return client.post('/api/auth/refresh', { refreshToken });
-      })
-      .finally(() => { refreshing = undefined; });
+      });
     const { data } = await refreshing;
     await saveSession(data);
+    refreshing = undefined;
     request.headers.Authorization = `Bearer ${data.accessToken}`;
     return client(request);
   } catch (refreshError) {
+    refreshing = undefined;
     const terminal = refreshError.code === 'SESSION_EXPIRED' || [400, 401].includes(refreshError.response?.status);
     if (terminal) {
       await clearSession();
@@ -212,6 +220,7 @@ export const push = { register: (token, platform) => client.post('/api/push/toke
 export const documents = {
   list: () => client.get('/api/driver/documents'),
   get: id => client.get(`/api/driver/documents/${id}`),
+  create: data => client.post('/api/driver/documents', data),
 };
 export const vehicles = {
   list: () => client.get('/api/driver/vehicles'),
@@ -223,7 +232,7 @@ export const vehicles = {
 export const media = {
   photo: photo => {
     const formData = new FormData();
-    formData.append('photo', { uri: photo.uri, name: photo.fileName || `vehicle-${Date.now()}.jpg`, type: photo.mimeType || 'image/jpeg' });
+    formData.append('photo', { uri: photo.uri, name: photo.fileName || `upload-${Date.now()}.jpg`, type: photo.mimeType || photo.type || 'image/jpeg' });
     return client.post('/api/photos', formData, { timeout: 60000 });
   },
 };

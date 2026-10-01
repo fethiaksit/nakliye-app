@@ -27,7 +27,7 @@ func (pricingMapsStub) Reverse(_ context.Context, coordinate models.Coordinate) 
 	return service.SearchResult{FormattedAddress: "Test", Coordinate: coordinate}, nil
 }
 
-func (pricingMapsStub) Calculate(_ context.Context, _, _ models.Coordinate) (service.RouteResult, error) {
+func (pricingMapsStub) Calculate(_ context.Context, _, _ models.Coordinate, _ ...models.Coordinate) (service.RouteResult, error) {
 	// Deliberately expose the old 200 TL/km-shaped provider estimate. The API
 	// must ignore it and calculate from the central pricing config.
 	return service.RouteResult{DistanceMeters: 45_000, DistanceKM: 45, DurationSeconds: 3600, DurationMinutes: 60, PricePerKM: 200, EstimatedPriceTL: 10_500, Currency: "TRY", EncodedPolyline: "encoded", RouteProvider: "test"}, nil

@@ -69,7 +69,7 @@ export default function CustomerAccountScreens({ page, onPageChange, loading, er
 
   if (loading && !account) return <ListSkeleton count={3} />;
   if (error || !account) return <ScreenState type="error" title="Hesap yüklenemedi" message={error || 'Profil bulunamadı.'} onRetry={retry} />;
-	if (isCorporate) return <CorporateAccountScreens page={page} onPageChange={onPageChange} account={account} form={form} setForm={setForm} changePassword={changePassword} passwordLoading={passwordLoading} logout={logout} onOpenLoad={onOpenLoad} onPermissionGranted={onPermissionGranted} />;
+	if (isCorporate) return <CorporateAccountScreens page={page} onPageChange={onPageChange} account={account} form={form} setForm={setForm} changePassword={changePassword} passwordLoading={passwordLoading} logout={logout} onOpenLoad={onOpenLoad} onPermissionGranted={onPermissionGranted} retry={retry} />;
 
   const submitSupport = async () => {
     if (!supportForm.subject.trim() || !supportForm.description.trim() || (supportForm.type === 'complaint' && !supportForm.reason)) {

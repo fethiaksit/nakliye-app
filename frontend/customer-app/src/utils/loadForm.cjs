@@ -22,34 +22,165 @@ function scheduledAtISO(dateValue, timeValue) {
   return localDate.toISOString();
 }
 
-function validateLoadFormFields(form, now = new Date()) {
+function validateStep(step, draft, now = new Date()) {
   const errors = {};
-  if (!String(form.title || '').trim()) errors.title = 'Yük başlığı zorunludur.';
-  if (!String(form.description || '').trim()) errors.description = 'Yük açıklaması zorunludur.';
-  if (!['immediate', 'today', 'scheduled'].includes(form.urgencyType)) errors.urgencyType = 'Nakliye zamanını seçin.';
-  if (!['ev_esyasi', 'mobilya', 'beyaz_esya', 'paletli_yuk', 'motosiklet', 'ticari_yuk', 'parsiyel_yuk', 'diger'].includes(form.cargoType)) errors.cargoType = 'Nakliye türünü seçin.';
-  if (form.cargoType === 'diger' && !String(form.cargoTypeNote || '').trim()) errors.cargoTypeNote = 'Diğer nakliye türünü kısaca açıklayın.';
-  if (!['panelvan', 'kamyonet', 'acik_kasa', 'kapali_kasa', 'kamyon', 'tir', 'farketmez'].includes(form.vehicleType)) errors.vehicleType = 'Araç ihtiyacını seçin.';
-  if (form.urgencyType === 'scheduled') {
-    const scheduledAt = scheduledAtISO(form.scheduledDate, form.scheduledTime);
-    if (!scheduledAt) {
-      if (!form.scheduledDate) errors.scheduledDate = 'Nakliye tarihini seçin.';
-      if (!form.scheduledTime) errors.scheduledTime = 'Nakliye saatini seçin.';
-      if (form.scheduledDate && form.scheduledTime) errors.scheduledTime = 'Geçerli bir tarih ve saat seçin.';
-    } else if (new Date(scheduledAt) <= now) errors.scheduledTime = 'Planlı nakliye tarihi ve saati gelecekte olmalıdır.';
+  const form = draft?.form || draft || {};
+  const routeDraft = draft?.routeDraft || draft || {};
+  const cargoDetails = form.cargoDetails || {};
+
+  if (step === 1) {
+    if (!['ev_esyasi', 'mobilya', 'beyaz_esya', 'paletli_yuk', 'motosiklet', 'ticari_yuk', 'parsiyel_yuk', 'diger'].includes(form.cargoType)) {
+      errors.cargoType = 'Devam etmek için yük türünü seçin.';
+    }
+    if (form.cargoType === 'diger' && !String(form.cargoTypeNote || '').trim()) {
+      errors.cargoTypeNote = 'Diğer yük türünü kısaca açıklayın.';
+    }
   }
-  for (const [field, value, label] of [['weight', form.weight, 'Ağırlık'], ['length', form.length, 'Uzunluk'], ['width', form.width, 'Genişlik'], ['height', form.height, 'Yükseklik']]) {
-    if (!(number(value) > 0)) errors[field] = `${label} sıfırdan büyük olmalıdır.`;
+
+  if (step === 2) {
+    switch (form.cargoType) {
+      case 'ev_esyasi':
+        if (!cargoDetails.moveType) {
+          errors.moveType = 'Taşıma tipini seçin (Komple veya Parça).';
+        } else if (cargoDetails.moveType === 'komple' && !cargoDetails.homeSize) {
+          errors.homeSize = 'Ev büyüklüğünü seçin.';
+        } else if (cargoDetails.moveType === 'parca' && !String(cargoDetails.itemSummary || form.description || '').trim()) {
+          errors.itemSummary = 'Taşınacak eşyaları kısaca listeleyin.';
+        }
+        if (cargoDetails.hasSpecialItems && !String(cargoDetails.specialItemsDescription || '').trim()) {
+          errors.specialItemsDescription = 'Özel / ağır eşyaları belirtin (örn. piyano, kasa).';
+        }
+        if (form.pickupFloor !== undefined && form.pickupFloor !== '' && form.pickupFloor !== null && !Number.isInteger(number(form.pickupFloor))) {
+          errors.pickupFloor = 'Çıkış katı tam sayı olmalıdır.';
+        }
+        if (form.deliveryFloor !== undefined && form.deliveryFloor !== '' && form.deliveryFloor !== null && !Number.isInteger(number(form.deliveryFloor))) {
+          errors.deliveryFloor = 'Varış katı tam sayı olmalıdır.';
+        }
+        if (form.helperNeeded && (!Number.isInteger(number(form.helperCount)) || number(form.helperCount) < 1)) {
+          errors.helperCount = 'Yardımcı personel sayısı en az 1 olmalıdır.';
+        }
+        break;
+
+      case 'mobilya':
+        if ((!cargoDetails.items || cargoDetails.items.length === 0) && !String(form.description || '').trim()) {
+          errors.furnitureItems = 'En az bir mobilya seçin veya açıklama ekleyin.';
+        }
+        if (form.pickupFloor !== undefined && form.pickupFloor !== '' && form.pickupFloor !== null && !Number.isInteger(number(form.pickupFloor))) {
+          errors.pickupFloor = 'Çıkış katı tam sayı olmalıdır.';
+        }
+        if (form.deliveryFloor !== undefined && form.deliveryFloor !== '' && form.deliveryFloor !== null && !Number.isInteger(number(form.deliveryFloor))) {
+          errors.deliveryFloor = 'Varış katı tam sayı olmalıdır.';
+        }
+        if (form.helperNeeded && (!Number.isInteger(number(form.helperCount)) || number(form.helperCount) < 1)) {
+          errors.helperCount = 'Yardımcı personel sayısı en az 1 olmalıdır.';
+        }
+        break;
+
+      case 'beyaz_esya':
+        if ((!cargoDetails.items || cargoDetails.items.length === 0) && !String(form.description || '').trim()) {
+          errors.applianceItems = 'En az bir beyaz eşya seçin veya açıklama ekleyin.';
+        }
+        if (form.pickupFloor !== undefined && form.pickupFloor !== '' && form.pickupFloor !== null && !Number.isInteger(number(form.pickupFloor))) {
+          errors.pickupFloor = 'Çıkış katı tam sayı olmalıdır.';
+        }
+        if (form.deliveryFloor !== undefined && form.deliveryFloor !== '' && form.deliveryFloor !== null && !Number.isInteger(number(form.deliveryFloor))) {
+          errors.deliveryFloor = 'Varış katı tam sayı olmalıdır.';
+        }
+        if (form.helperNeeded && (!Number.isInteger(number(form.helperCount)) || number(form.helperCount) < 1)) {
+          errors.helperCount = 'Yardımcı personel sayısı en az 1 olmalıdır.';
+        }
+        break;
+
+      case 'motosiklet':
+        if (!cargoDetails.motorcycleType) {
+          errors.motorcycleType = 'Motosiklet türünü seçin.';
+        }
+        break;
+
+      case 'paletli_yuk':
+        if (!(number(cargoDetails.palletCount) > 0)) {
+          errors.palletCount = 'Palet sayısı en az 1 olmalıdır.';
+        }
+        break;
+
+      case 'ticari_yuk':
+        if (!String(cargoDetails.commercialType || form.description || '').trim()) {
+          errors.commercialType = 'Ticari yük tipini belirtin.';
+        }
+        break;
+
+      case 'parsiyel_yuk':
+        if (!(number(cargoDetails.pieceCount) > 0) && !String(form.description || '').trim()) {
+          errors.pieceCount = 'Parça sayısını girin veya açıklama ekleyin.';
+        }
+        break;
+
+      case 'diger':
+        if (!String(form.cargoTypeNote || form.description || '').trim()) {
+          errors.cargoTypeNote = 'Yük hakkında bilgi verin.';
+        }
+        break;
+
+      default:
+        break;
+    }
   }
-  for (const [field, value, label] of [['pickupFloor', form.pickupFloor, 'Çıkış katı'], ['deliveryFloor', form.deliveryFloor, 'Varış katı']]) {
-    if (!Number.isInteger(number(value))) errors[field] = `${label} tam sayı olmalıdır.`;
+
+  if (step === 3) {
+    if (!routeDraft.pickup) errors.pickup = 'Yükün alınacağı başlangıç adresini seçin.';
+    if (!routeDraft.dropoff) errors.dropoff = 'Yükün teslim edileceği varış adresini seçin.';
+    if (Array.isArray(routeDraft.stops)) {
+      routeDraft.stops.forEach((stop, index) => {
+        if (!stop.address || (!stop.coordinate && stop.latitude === undefined)) {
+          errors[`stop_${index}`] = `${index + 1}. ara durak adresini seçin.`;
+        }
+      });
+    }
+    if (routeDraft.pickup && routeDraft.dropoff && !routeDraft.route) {
+      errors.route = 'Rota hesaplanıyor, lütfen bekleyin.';
+    }
   }
-  if (form.helperNeeded && (!Number.isInteger(number(form.helperCount)) || number(form.helperCount) < 1)) errors.helperCount = 'Yardımcı personel sayısı en az 1 olmalıdır.';
+
+  if (step === 4) {
+    if (!['immediate', 'today', 'scheduled'].includes(form.urgencyType)) {
+      errors.urgencyType = 'Nakliye zamanını seçin.';
+    }
+    if (form.urgencyType === 'scheduled') {
+      const scheduledAt = scheduledAtISO(form.scheduledDate, form.scheduledTime);
+      if (!scheduledAt) {
+        if (!form.scheduledDate) errors.scheduledDate = 'Nakliye tarihini seçin.';
+        if (!form.scheduledTime) errors.scheduledTime = 'Nakliye saatini seçin.';
+        if (form.scheduledDate && form.scheduledTime) errors.scheduledTime = 'Geçerli bir tarih ve saat seçin.';
+      } else if (new Date(scheduledAt) <= now) {
+        errors.scheduledTime = 'Planlı nakliye tarihi ve saati gelecekte olmalıdır.';
+      }
+    }
+  }
+
+  if (step === 5) {
+    if (form.vehicleType && !['panelvan', 'kamyonet', 'acik_kasa', 'kapali_kasa', 'kamyon', 'tir', 'farketmez'].includes(form.vehicleType)) {
+      errors.vehicleType = 'Geçerli bir araç tipi seçin.';
+    }
+  }
+
   return errors;
 }
 
-function validateLoadForm(form, now = new Date()) {
-  return Object.values(validateLoadFormFields(form, now))[0] || '';
+function validateLoadFormFields(draft, now = new Date()) {
+  const errors = {};
+  for (let s = 1; s <= 5; s++) {
+    const stepErrors = validateStep(s, draft, now);
+    if (stepErrors) {
+      Object.assign(errors, stepErrors);
+    }
+  }
+  return errors;
 }
 
-module.exports = { number, scheduledAtISO, validateLoadForm, validateLoadFormFields };
+function validateLoadForm(draft, now = new Date()) {
+  return Object.values(validateLoadFormFields(draft, now))[0] || '';
+}
+
+module.exports = { number, scheduledAtISO, validateLoadForm, validateLoadFormFields, validateStep };
+
+

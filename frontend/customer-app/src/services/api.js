@@ -9,6 +9,7 @@ let memorySession;
 let shouldPersistSession = false;
 const sessionExpiredListeners = new Set();
 const tokens = async () => memorySession || ({ accessToken: await SecureStore.getItemAsync('accessToken'), refreshToken: await SecureStore.getItemAsync('refreshToken') });
+export const getAccessToken = () => memorySession?.accessToken;
 export const restoreSession = async () => {
   const [accessToken, refreshToken, rawUser] = await Promise.all(['accessToken', 'refreshToken', 'user'].map(key => SecureStore.getItemAsync(key)));
   if (!rawUser || (!accessToken && !refreshToken)) { await clearSession(); return null; }
@@ -41,7 +42,7 @@ export const updateStoredUser = async user => {
   if (memorySession) memorySession = { ...memorySession, user };
   if (shouldPersistSession) await SecureStore.setItemAsync('user', JSON.stringify(user));
 };
-export const clearSession = async () => { memorySession = undefined; shouldPersistSession = false; await Promise.all(['accessToken', 'refreshToken', 'user'].map(key => SecureStore.deleteItemAsync(key))); };
+export const clearSession = async () => { memorySession = undefined; shouldPersistSession = false; await Promise.all(['accessToken', 'refreshToken', 'user', 'profile', 'corporate'].map(key => SecureStore.deleteItemAsync(key).catch(() => {}))); };
 export const subscribeSessionExpired = listener => { sessionExpiredListeners.add(listener); return () => sessionExpiredListeners.delete(listener); };
 export const logApiError = (scope, error) => { if (__DEV__) console.warn(`[${scope}] request failed`, { method: error.config?.method, baseURL: error.config?.baseURL, url: error.config?.url, status: error.response?.status, code: error.code, message: error.message, requestId: error.response?.headers?.['x-request-id'] }); };
 if (__DEV__ && apiOrigin) console.info(`[API] Base URL: ${apiOrigin}`);
@@ -50,8 +51,15 @@ client.interceptors.response.use(response => response, async error => {
   const request = error.config;
   if (error.response?.status !== 401 || request?._retried || request?.url?.includes('/auth/')) return Promise.reject(error);
   request._retried = true;
-  try { refreshing ??= tokens().then(({ refreshToken }) => { if (!refreshToken) throw Object.assign(new Error('Oturum yenileme anahtarı bulunamadı.'), { code: 'SESSION_EXPIRED' }); return client.post('/api/auth/refresh', { refreshToken }); }).finally(() => { refreshing = undefined; }); const { data } = await refreshing; await saveSession(data); request.headers.Authorization = `Bearer ${data.accessToken}`; return client(request); }
-  catch (refreshError) { const terminal = refreshError.code === 'SESSION_EXPIRED' || [400, 401].includes(refreshError.response?.status); if (terminal) { await clearSession(); sessionExpiredListeners.forEach(listener => listener()); } return Promise.reject(refreshError); }
+  try {
+    refreshing ??= tokens().then(({ refreshToken }) => { if (!refreshToken) throw Object.assign(new Error('Oturum yenileme anahtarı bulunamadı.'), { code: 'SESSION_EXPIRED' }); return client.post('/api/auth/refresh', { refreshToken }); });
+    const { data } = await refreshing;
+    await saveSession(data);
+    refreshing = undefined;
+    request.headers.Authorization = `Bearer ${data.accessToken}`;
+    return client(request);
+  }
+  catch (refreshError) { refreshing = undefined; const terminal = refreshError.code === 'SESSION_EXPIRED' || [400, 401].includes(refreshError.response?.status); if (terminal) { await clearSession(); sessionExpiredListeners.forEach(listener => listener()); } return Promise.reject(refreshError); }
 });
 export const auth = { login: data => client.post('/api/auth/login', data), register: data => client.post('/api/auth/register', data), reset: data => client.post('/api/auth/password-reset', data), logout: async () => { const { refreshToken } = await tokens(); try { await client.post('/api/auth/logout', { refreshToken }); } finally { await clearSession(); } } };
 // Health deliberately uses the same Axios instance, but targets the backend
