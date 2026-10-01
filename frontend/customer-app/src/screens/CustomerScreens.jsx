@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { formatWalletCents, walletUsagePreview } from '../../../shared/walletMoney.mjs';
 import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import {
@@ -234,6 +235,9 @@ export function CustomerLoads({
   deliveryCodeLoading,
   deliveryCodeError,
   walletInfo,
+  walletError,
+  walletLoading,
+  onRetryWallet,
   walletSaving,
   onApplyWallet,
   isCorporate,
@@ -251,7 +255,7 @@ export function CustomerLoads({
   useEffect(() => {
     setWalletAmount(walletInfo?.maxUsableCents > 0 ? String(walletInfo.maxUsableCents / 100) : '');
   }, [selected?.id, walletInfo?.maxUsableCents]);
-  const requestedWalletCents = Math.round(toFiniteNumber(walletAmount) * 100);
+  const walletPreview = walletUsagePreview(walletAmount, walletInfo?.maxUsableCents, walletInfo?.agreedAmountCents);
 
   if (selected) {
     return (
@@ -345,15 +349,15 @@ export function CustomerLoads({
         {isCorporate && walletInfo ? (
           <SectionCard
             title="Kurumsal cüzdan"
-            description="Kredi kullanımı şoförün anlaşılan taşıma tutarını değiştirmez."
+            description="Bakiyenizi bu nakliyede kullanmak isteğe bağlıdır. Şoförün anlaşılan taşıma tutarı korunur."
             icon="wallet-outline"
           >
-            <DetailRow icon="wallet-outline" label="Kullanılabilir bakiye" value={formatMoney(Number(walletInfo.wallet?.balanceCents || 0) / 100)} />
-            <DetailRow icon="pricetag-outline" label="Kesinleşen nakliye tutarı" value={formatMoney(Number(walletInfo.agreedAmountCents || 0) / 100)} />
+            <DetailRow icon="wallet-outline" label="Kullanılabilir bakiye" value={formatWalletCents(walletInfo.wallet?.balanceCents)} />
+            <DetailRow icon="pricetag-outline" label="Kesinleşen nakliye tutarı" value={formatWalletCents(walletInfo.agreedAmountCents)} />
             {walletInfo.allocation ? (
               <>
-                <DetailRow icon="remove-circle-outline" label="Kullanılan kredi" value={formatMoney(Number(walletInfo.usedCents || 0) / 100)} />
-                <DetailRow icon="cash-outline" label="Kalan müşteri tutarı" value={formatMoney(Number(walletInfo.customerPayableCents || 0) / 100)} />
+                <DetailRow icon="remove-circle-outline" label={walletInfo.allocation.usageReversalTransactionId ? 'İade edilen kredi' : 'Kullanılan kredi'} value={formatWalletCents(walletInfo.usedCents)} />
+                {!walletInfo.allocation.usageReversalTransactionId ? <DetailRow icon="cash-outline" label="Ödenecek kalan tutar" value={formatWalletCents(walletInfo.customerPayableCents)} /> : null}
               </>
             ) : selected.status === 'driver_selected' && walletInfo.maxUsableCents > 0 ? (
               <>
@@ -363,24 +367,35 @@ export function CustomerLoads({
                   onChangeText={setWalletAmount}
                   keyboardType="decimal-pad"
                   leftIcon="wallet-outline"
-                  helper={`En fazla ${formatMoney(walletInfo.maxUsableCents / 100)} kullanabilirsiniz.`}
+                  helper={`En fazla ${formatWalletCents(walletInfo.maxUsableCents)} kullanabilirsiniz. Tutarı azaltabilir veya kullanmadan devam edebilirsiniz.`}
                 />
+                <DetailRow icon="remove-circle-outline" label="Cüzdandan düşülecek" value={formatWalletCents(walletPreview.valid ? walletPreview.amountCents : 0)} />
+                <DetailRow icon="cash-outline" label="Ödenecek kalan tutar" value={formatWalletCents(walletPreview.payableCents)} />
+                {walletAmount && !walletPreview.valid ? <Text style={styles.walletMessage}>Kullanım sınırı içinde, en fazla iki ondalıklı pozitif bir tutar girin.</Text> : null}
                 <AppButton
-                  label="Cüzdan Kredisini Kullan"
+                  label="Cüzdan Bakiyemi Kullan"
                   icon="checkmark-circle-outline"
                   loading={walletSaving}
-                  disabled={requestedWalletCents <= 0 || requestedWalletCents > walletInfo.maxUsableCents}
-                  onPress={() => onApplyWallet(requestedWalletCents)}
+                  disabled={!walletPreview.valid || walletSaving}
+                  onPress={() => onApplyWallet(walletPreview.amountCents)}
                   style={styles.cardAction}
                 />
               </>
             ) : (
               <Text style={styles.walletMessage}>
-                {selected.status === 'driver_selected'
-                  ? 'Kullanılabilir cüzdan bakiyesi bulunmuyor.'
+                {walletInfo.enabled === false
+                  ? 'Cüzdan kullanımı şu anda kapalıdır. Mevcut bakiyeniz korunur.'
+                  : selected.status === 'driver_selected'
+                  ? walletInfo.wallet?.balanceCents > 0 ? 'Bu nakliyede cüzdan kullanımı için izin verilen tutar sıfırdır.' : 'Kullanılabilir cüzdan bakiyesi bulunmuyor.'
                   : 'Cüzdan kredisi yalnız teklif kabul edildikten ve taşıma başlamadan önce uygulanabilir.'}
               </Text>
             )}
+          </SectionCard>
+        ) : null}
+
+        {isCorporate && !walletInfo ? (
+          <SectionCard title="Kurumsal cüzdan" icon="wallet-outline">
+            {walletLoading ? <Text style={styles.walletMessage}>Cüzdan yükleniyor…</Text> : walletError ? <><Text style={styles.walletMessage}>{walletError}</Text><AppButton label="Cüzdanı yeniden yükle" onPress={onRetryWallet} /></> : null}
           </SectionCard>
         ) : null}
 

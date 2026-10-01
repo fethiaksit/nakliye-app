@@ -9,3 +9,11 @@ export function parseWalletUnits(text) {
 export function formatWalletCents(cents = 0) {
   return new Intl.NumberFormat('tr-TR', {style: 'currency', currency: 'TRY', minimumFractionDigits: 2, maximumFractionDigits: 2}).format(Number(cents || 0) / 100);
 }
+
+export function walletUsagePreview(text, maxUsableCents, agreedAmountCents) {
+  const amountCents = parseWalletUnits(text);
+  const valid = amountCents !== null && amountCents > 0 &&
+    Number.isSafeInteger(maxUsableCents) && Number.isSafeInteger(agreedAmountCents) &&
+    amountCents <= maxUsableCents && amountCents <= agreedAmountCents;
+  return { amountCents, payableCents: valid ? agreedAmountCents - amountCents : agreedAmountCents, valid };
+}

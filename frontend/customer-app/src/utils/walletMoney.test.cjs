@@ -10,3 +10,16 @@ test('wallet amounts retain kuruş on screen',async()=>{
  assert.match(formatWalletCents(12345),/123,45/);
  assert.match(formatWalletCents(0),/0,00/);
 });
+test('wallet usage preview deducts decimal-comma amounts in kuruş', async () => {
+ const {walletUsagePreview}=await walletModule;
+ assert.deepEqual(walletUsagePreview('1000,25', 100025, 750050), {amountCents:100025, payableCents:650025, valid:true});
+});
+test('wallet usage preview rejects invalid, excessive and negative amounts', async () => {
+ const {walletUsagePreview}=await walletModule;
+ for(const text of ['', '0', '-1', '1.005', '1e3', '1000.26']) {
+  const preview=walletUsagePreview(text,100025,750050);
+  assert.equal(preview.valid,false,text);
+  assert.equal(preview.payableCents,750050,text);
+ }
+ assert.equal(walletUsagePreview('10',10000,500).valid,false);
+});
