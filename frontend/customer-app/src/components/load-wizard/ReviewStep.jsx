@@ -18,6 +18,7 @@ import { colors, radius, shadows, spacing, typography } from '../../../../shared
 import { formatMoney, resolveMediaUrl } from '../../utils/presentation';
 
 const { buildPricingFields } = require('../../utils/loadForm.cjs');
+const { verifyPricingEstimate } = require('../../utils/pricingEstimate.cjs');
 
 export default function ReviewStep({
   form = {},
@@ -78,7 +79,7 @@ export default function ReviewStep({
     const controller = new AbortController();
     setEstimateState({ key: requestKey });
     loads.estimate(JSON.parse(requestKey), controller.signal)
-      .then(({ data }) => { if (active) setEstimateState({ key: requestKey, data }); })
+      .then(({ data }) => { if (active) setEstimateState({ key: requestKey, data: verifyPricingEstimate(data) }); })
       .catch(() => { if (active) setEstimateState({ key: requestKey, error: 'Fiyat tahmini hesaplanamadı. Lütfen yeniden deneyin.' }); });
     return () => { active = false; controller.abort(); };
   }, [requestKey, retry]);
@@ -300,7 +301,7 @@ export default function ReviewStep({
       <View style={styles.priceEstimateCard}>
         <View style={styles.priceHeader}>
           <Icon name="pricetag" size={20} color={colors.primary} />
-          <Text style={styles.priceTitle}>Tahmini Fiyat Beklentisi</Text>
+          <Text style={styles.priceTitle}>Önerilen Nakliye Fiyatı</Text>
         </View>
         {pricing ? pricing.manualQuoteRequired ? (
           <Text style={styles.priceDisclaimer}>Bu taşıma için özel teklif gerekli. Komple ev, TIR ve standart kapasiteyi aşan işler şoförün değerlendirmesiyle fiyatlanır.</Text>
@@ -309,6 +310,11 @@ export default function ReviewStep({
             <Text style={styles.priceRange}>{formatMoney(pricing.recommendedPrice)}</Text>
             <Text style={styles.priceDisclaimer}>Tahmini aralık: {formatMoney(pricing.minPrice)} – {formatMoney(pricing.maxPrice)}</Text>
             <Text style={styles.priceDisclaimer}>Önerilen araç: {vehicleTypeLabel(pricing.vehicleType)} · İlk 5 km dahil</Text>
+            <Text style={styles.priceDisclaimer}>Araç taban ücreti: {formatMoney(pricing.baseDriverFee)}</Text>
+            <Text style={styles.priceDisclaimer}>Mesafe farkı: {formatMoney(pricing.distanceFee)} · {pricing.pricePerKm} TL/km</Text>
+            {pricing.loadMultiplier > 1 ? <Text style={styles.priceDisclaimer}>Doluluk katsayısı: ×{pricing.loadMultiplier}</Text> : null}
+            {pricing.nightMultiplier > 1 ? <Text style={styles.priceDisclaimer}>Saat katsayısı: ×{pricing.nightMultiplier}</Text> : null}
+            {pricing.urgentMultiplier > 1 ? <Text style={styles.priceDisclaimer}>Aciliyet katsayısı: ×{pricing.urgentMultiplier}</Text> : null}
             {pricing.loadingFee > 0 ? <Text style={styles.priceDisclaimer}>Yükleme / boşaltma yardımı: {formatMoney(pricing.loadingFee)}</Text> : null}
             {pricing.pickupFloorFee + pricing.deliveryFloorFee > 0 ? <Text style={styles.priceDisclaimer}>Kat ücreti: {formatMoney(pricing.pickupFloorFee + pricing.deliveryFloorFee)}</Text> : null}
             <Text style={styles.priceDisclaimer}>Kesin fiyat, kabul edeceğiniz şoför teklifiyle belirlenir. Paketleme, montaj, forklift ve özel taşıma hizmetleri ayrıca teklif edilir.</Text>
