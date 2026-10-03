@@ -70,3 +70,5 @@ Yazılmazlarsa tabloda belirtilen değerler kullanılır.
 - 35 km kamyonet, 2.000 kg, müşteri taşır: (2.100 + 30 × 60) × 1.08 = 4.212 → **4.200 TL**.
 
 Doğrulama: `cd backend && go test ./... && go vet ./...`; `cd frontend/customer-app && npm test`; iki uygulama için `npx expo export --platform ios` JavaScript paket kontrolü. iOS native imzalama/cihaz derlemesi bu Linux ortamında çalıştırılmaz.
+
+Saat dilimi verisi `time/tzdata` ile uygulamaya gömülür. Böylece OS `tzdata` paketi veya Go SDK bulunmayan runtime container'larında da `Europe/Istanbul` tarifesi hesaplanır. Sistem saat dilimi paketinin eksik olması fiyat önizlemesini ve ilan oluşturmayı durdurmaz.

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"time"
+	_ "time/tzdata" // Keep IANA timezone data available in minimal runtime images.
 
 	"nakliye-api/internal/models"
 )
