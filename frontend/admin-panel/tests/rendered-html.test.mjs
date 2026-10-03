@@ -52,3 +52,37 @@ test("includes corporate accounts management with filters and review workflow", 
   assert.match(panel, /REDDET/);
   assert.match(panel, /rejectionReason/);
 });
+
+async function walletAccountsHTML(data) {
+  const { createRequire } = await import("node:module");
+  const require = createRequire(import.meta.url);
+  const { build } = require("esbuild");
+  const result = await build({ entryPoints: [new URL("../app/DriverWalletAccounts.tsx", import.meta.url).pathname], bundle: true, platform: "node", format: "cjs", jsx: "automatic", external: ["react", "react/jsx-runtime"], write: false });
+  const module = { exports: {} };
+  new Function("require", "module", "exports", result.outputFiles[0].text)(require, module, module.exports);
+  const { createElement } = require("react");
+  const { renderToStaticMarkup } = require("react-dom/server");
+  return renderToStaticMarkup(createElement(module.exports.default, { data, onOpenDriver() {}, onPage() {} }));
+}
+
+test("renders exact driver balances and disables pagination at the boundaries", async () => {
+  const html = await walletAccountsHTML({ items: [{ driver: { id: "driver-1", name: "Test Şoför", phone: "05551234567" }, wallet: { balanceCents: 123456, reservedCents: 3456, availableCents: 120000 } }], total: 1, offset: 0, limit: 50, summary: { fundedCount: 1, reservedCount: 1 } });
+  assert.match(html, /Test Şoför/);
+  assert.match(html, /1\.234,56/);
+  assert.match(html, /34,56/);
+  assert.match(html, /1\.200,00/);
+  assert.match(html, /Hesabı yönet/);
+  assert.match(html, /disabled="">Önceki/);
+  assert.match(html, /disabled="">Sonraki/);
+});
+
+test("renders an empty wallet filter without inventing accounts", async () => {
+  const html = await walletAccountsHTML({ items: [], total: 0, offset: 0, limit: 50, summary: { fundedCount: 0, reservedCount: 0 } });
+  assert.match(html, /Bu filtreye uygun şoför hesabı yok/);
+  assert.doesNotMatch(html, /Hesabı yönet/);
+});
+
+test("rejects a previous tab payload instead of crashing wallet accounts", async () => {
+  const html = await walletAccountsHTML({ counts: { drivers: 4 } });
+  assert.match(html, /Hesaplar yüklenemedi/);
+});

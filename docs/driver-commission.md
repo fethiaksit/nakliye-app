@@ -15,7 +15,7 @@
 
 Şoför: **Hesabım → Cüzdanım**. Toplam, bloke, kullanılabilir bakiye ve `TOPUP`, `RESERVE`, `RELEASE`, `COMMISSION` hareketleri gösterilir. Teklif formunda canlı %10 hizmet bedeli ve kullanılabilir bakiye görünür.
 
-Admin: **Şoförler → şoför detayı → Şoför cüzdanı**. Doğrulanmış ödeme, tutar ve benzersiz banka/dekont referansı ile yüklenir. Aynı referansla tekrar gönderim ikinci kredi yaratmaz; farklı tutarla tekrar kullanım reddedilir. Kartla yükleme/ödeme sağlayıcısı bu değişikliğin kapsamına dahil değildir.
+Admin: **Şoför Hesapları → Hesabı yönet → Şoför cüzdanı**. Ad, telefon, e-posta veya ID ile arama; bakiyesi olan, blokesi olan ve bakiyesi olmayan hesapları filtreleme; sayfalar arasında gezinme desteklenir. Sıfır bakiyeli şoförler de listelenir. Hesap detayı kapatıldığında liste bakiyeleri yenilenir. Doğrulanmış ödeme, tutar ve benzersiz banka/dekont referansı ile yüklenir. Aynı referansla tekrar gönderim ikinci kredi yaratmaz; farklı tutarla tekrar kullanım reddedilir. Kartla yükleme/ödeme sağlayıcısı bu değişikliğin kapsamına dahil değildir.
 
 API:
 
@@ -32,7 +32,7 @@ Redis kalıcılığı/yedekleme mevcut dağıtım ayarlarına bağlıdır; yeni 
 ## Doğrulama
 
 - `cd backend && go test -race ./...`: tüm backend paketleri geçti.
-- Admin `npm test`: üretim derlemesi ve üç mevcut test geçti.
+- Admin `npm test`: üretim derlemesi ve altı test geçti.
 - Şoför uygulaması: esbuild ile yerel importlar ve JSX derlemesi geçti; iOS/Android cihaz derlemesi bu Linux ortamında çalıştırılmadı.
 - Tam proje `tsc --noEmit` kontrolünde ana dalda da bulunan eksik Cloudflare worker tipleri (`cloudflare:workers`, `Fetcher`, `D1Database`) mevcut. Değişen admin bileşenleri ayrıca kontrol edilir.
 

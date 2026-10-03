@@ -87,3 +87,45 @@ func (a *API) checkDriverOfferBalance(w http.ResponseWriter, id string, amountTL
 	}
 	return true
 }
+
+// Admin account overview includes unfunded drivers, not only persisted wallets.
+func (a *API) adminDriverWalletAccounts(w http.ResponseWriter, r *http.Request) {
+	users, err := a.store.ListAllUsers()
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	status := r.URL.Query().Get("walletStatus")
+	if status != "" && status != "funded" && status != "reserved" && status != "empty" {
+		badRequest(w, "Geçersiz hesap filtresi.")
+		return
+	}
+	items := make([]map[string]any, 0)
+	fundedCount, reservedCount := 0, 0
+	for _, user := range users {
+		if user.Role != models.RoleDriver {
+			continue
+		}
+		if query != "" && !containsFold(strings.Join([]string{user.ID, user.Name, user.Email, user.Phone}, " "), query) {
+			continue
+		}
+		wallet, err := a.store.GetDriverWallet(user.ID)
+		if err != nil {
+			serverError(w, err)
+			return
+		}
+		if status == "funded" && wallet.BalanceCents == 0 || status == "reserved" && wallet.ReservedCents == 0 || status == "empty" && wallet.BalanceCents != 0 {
+			continue
+		}
+		if wallet.BalanceCents > 0 {
+			fundedCount++
+		}
+		if wallet.ReservedCents > 0 {
+			reservedCount++
+		}
+		items = append(items, map[string]any{"driver": a.adminUserView(user), "wallet": wallet})
+	}
+	offset, limit := pagination(r.URL.Query())
+	jsonResponse(w, 200, map[string]any{"items": page(items, offset, limit), "total": len(items), "offset": offset, "limit": limit, "summary": map[string]int{"fundedCount": fundedCount, "reservedCount": reservedCount}})
+}

@@ -1,10 +1,11 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import DriverWalletAccounts from "./DriverWalletAccounts";
 import DriverWalletAdmin from "./DriverWalletAdmin";
 import CorporateWalletAdmin, { WalletCustomer } from "./CorporateWalletAdmin";
 
-type Tab = "dashboard" | "corporate-applications" | "users" | "drivers" | "loads" | "complaints" | "corporate-wallets" | "activity";
+type Tab = "dashboard" | "corporate-applications" | "users" | "drivers" | "loads" | "complaints" | "corporate-wallets" | "driver-wallets" | "activity";
 type DetailKind = "corporate-application" | "user" | "driver" | "load" | "complaint";
 type AnyRecord = Record<string, any>;
 
@@ -17,6 +18,7 @@ const navigation: { id: Tab; label: string; mark: string }[] = [
   { id: "drivers", label: "Şoför doğrulama", mark: "04" },
   { id: "loads", label: "İlanlar", mark: "05" },
   { id: "complaints", label: "Şikâyetler", mark: "06" },
+  { id: "driver-wallets", label: "Şoför Hesapları", mark: "09" },
   { id: "corporate-wallets", label: "Kurumsal Cüzdan Yönetimi", mark: "07" },
   { id: "activity", label: "Hareketler", mark: "08" },
 ];
@@ -63,6 +65,7 @@ function Status({ value }: { value?: string }) {
 }
 
 export default function AdminPanel() {
+  const loadGeneration = useRef(0);
   const [hydrated, setHydrated] = useState(false);
   const [token, setToken] = useState("");
   const [adminEmail, setAdminEmail] = useState("");
@@ -108,11 +111,13 @@ export default function AdminPanel() {
     return body;
   }, [token]);
 
-  const pathForTab = useCallback((target: Tab) => {
+  const pathForTab = useCallback((target: Tab, offset = 0) => {
     const params = new URLSearchParams();
+    if (target === "driver-wallets") { params.set("offset", String(offset)); params.set("limit", "50"); }
     if (query && target !== "dashboard" && target !== "activity") params.set("q", query);
     if (filter) {
-      if (target === "drivers") params.set("verificationStatus", filter);
+      if (target === "driver-wallets") params.set("walletStatus", filter);
+      else if (target === "drivers") params.set("verificationStatus", filter);
       else if (target === "corporate-applications") params.set("status", filter);
       else if (target === "users" || target === "loads" || target === "complaints") params.set("status", filter);
     }
@@ -126,20 +131,24 @@ export default function AdminPanel() {
       : `/${target}${suffix}`;
   }, [filter, query]);
 
-  const loadTab = useCallback(async (target: Tab) => {
+  const loadTab = useCallback(async (target: Tab, offset = 0) => {
     if (!token) return;
+    const generation = ++loadGeneration.current;
     setLoading(true); setError(""); setNotice(""); setDetail(null); setDetailKind(null);
-    if (target === "corporate-wallets") setData(null);
+    if (target === "corporate-wallets" || target === "driver-wallets") setData(null);
     try {
       if (target === "activity") {
-        const [activity, stats] = await Promise.all([request(pathForTab(target)), request("/stats?days=14")]);
+        const [activity, stats] = await Promise.all([request(pathForTab(target, offset)), request("/stats?days=14")]);
+        if (generation !== loadGeneration.current) return;
         setData({ ...activity, stats });
       } else if (target === "corporate-wallets") {
-        const result = await request(pathForTab(target));
+        const result = await request(pathForTab(target, offset));
+        if (generation !== loadGeneration.current) return;
         if (!result || !Array.isArray(result.items)) throw new Error("Kurumsal müşteri listesi API yanıtı geçersiz veya boş.");
         setData(result);
       } else {
-        const res = await request(pathForTab(target));
+        const res = await request(pathForTab(target, offset));
+        if (generation !== loadGeneration.current) return;
         setData(res);
         if (target === "corporate-applications") {
           console.log("CORPORATE LIST RESPONSE", res);
@@ -149,8 +158,8 @@ export default function AdminPanel() {
         }
       }
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Veriler alınamadı.");
-    } finally { setLoading(false); }
+      if (generation === loadGeneration.current) setError(reason instanceof Error ? reason.message : "Veriler alınamadı.");
+    } finally { if (generation === loadGeneration.current) setLoading(false); }
   }, [pathForTab, request, token]);
 
   // Initial load of dashboard stats in background for counts if on another tab
@@ -245,9 +254,13 @@ export default function AdminPanel() {
               key={item.id}
               className={tab === item.id ? "active" : ""}
               onClick={() => {
+                loadGeneration.current++;
+                setData(null);
+                setLoading(true);
                 setQuery("");
                 setFilter(item.id === "corporate-applications" ? "pending" : "");
                 setTab(item.id);
+                if (item.id === tab) void loadTab(item.id);
               }}
             >
               <i>{item.mark}</i>
@@ -267,9 +280,9 @@ export default function AdminPanel() {
         {error && <div className="alert error-alert" role="alert">{error}<button onClick={() => setError("")}>Kapat</button></div>}
         {notice && <div className="alert success-alert" role="status">{notice}<button onClick={() => setNotice("")}>Kapat</button></div>}
         {tab !== "corporate-wallets" && tab !== "dashboard" && tab !== "activity" && <Toolbar tab={tab} query={query} setQuery={setQuery} filter={filter} setFilter={setFilter} search={() => void loadTab(tab)} />}
-        {loading ? <LoadingRows /> : tab === "corporate-wallets" ? <CorporateWalletAdmin request={request} items={data?.items || []} /> : <PanelContent tab={tab} data={data} openDetail={openDetail} />}
+        {loading ? <LoadingRows /> : tab === "corporate-wallets" ? <CorporateWalletAdmin request={request} items={data?.items || []} /> : tab === "driver-wallets" ? <DriverWalletAccounts data={data as any} onOpenDriver={id => void openDetail("driver", id)} onPage={offset => void loadTab(tab, offset)} /> : <PanelContent tab={tab} data={data} openDetail={openDetail} />}
       </section>
-      {detail && detailKind && <DetailDrawer kind={detailKind} data={detail} close={() => setDetail(null)} note={actionNote} setNote={setActionNote} busy={actionBusy} mutate={mutate} request={request} refresh={() => void openDetail(detailKind, detailId(detailKind, detail))} />}
+      {detail && detailKind && <DetailDrawer kind={detailKind} data={detail} close={() => { setDetail(null); if (tab === "driver-wallets") void loadTab(tab, data?.offset || 0); }} note={actionNote} setNote={setActionNote} busy={actionBusy} mutate={mutate} request={request} refresh={() => void openDetail(detailKind, detailId(detailKind, detail))} />}
     </main>
   );
 }
@@ -311,7 +324,7 @@ function Toolbar({ tab, query, setQuery, filter, setFilter, search }: { tab: Tab
     );
   }
 
-  const options = tab === "drivers" ? ["pending", "verified", "rejected"] : tab === "users" ? ["active", "blocked"] : tab === "complaints" ? ["open", "reviewing", "resolved", "rejected"] : ["draft", "published", "driver_selected", "driver_en_route", "at_pickup", "picked_up", "en_route_to_delivery", "delivered", "completed", "cancelled"];
+  const options = tab === "driver-wallets" ? ["funded", "reserved", "empty"] : tab === "drivers" ? ["pending", "verified", "rejected"] : tab === "users" ? ["active", "blocked"] : tab === "complaints" ? ["open", "reviewing", "resolved", "rejected"] : ["draft", "published", "driver_selected", "driver_en_route", "at_pickup", "picked_up", "en_route_to_delivery", "delivered", "completed", "cancelled"];
   return (
     <form className="toolbar" onSubmit={event => { event.preventDefault(); search(); }}>
       <label>
@@ -319,7 +332,7 @@ function Toolbar({ tab, query, setQuery, filter, setFilter, search }: { tab: Tab
         <input
           value={query}
           onChange={event => setQuery(event.target.value)}
-          placeholder={tab === "users" ? "Ad, e-posta, telefon veya ID" : "Kayıtlarda ara"}
+          placeholder={tab === "driver-wallets" ? "Şoför adı, telefon, e-posta veya ID" : tab === "users" ? "Ad, e-posta, telefon veya ID" : "Kayıtlarda ara"}
         />
       </label>
       <label>
@@ -328,7 +341,7 @@ function Toolbar({ tab, query, setQuery, filter, setFilter, search }: { tab: Tab
           <option value="">Tüm durumlar</option>
           {options.map(value => (
             <option key={value} value={value}>
-              {label(value)}
+              {tab === "driver-wallets" ? ({ funded: "Bakiyesi olan", reserved: "Blokesi olan", empty: "Bakiyesi olmayan" } as Record<string, string>)[value] : label(value)}
             </option>
           ))}
         </select>
@@ -640,7 +653,7 @@ function CorporateApplicationDetail({ data, note, setNote, busy, mutate, request
 
 function UserDetail({ user, request, note, setNote, busy, mutate }: any) { const blocked = user.accountStatus === "blocked"; return <><Person user={user} /><InfoGrid items={[["Rol", label(user.role)], ["Hesap türü", user.role === "customer" ? label(user.accountType) : "—"], ["Telefon", user.phone], ["Kayıt", formatDate(user.createdAt)], ["Son görülme", formatDate(user.lastSeenAt)], ["Hesap", label(user.accountStatus)]]} />{user.accountType === "corporate" && user.company ? <section><h3>Kurumsal hesap</h3><InfoGrid items={[["Firma", user.company.name], ["Yetkili", user.company.authorizedPerson], ["Vergi no", user.company.taxNumber || "Tamamlanmadı"], ["Vergi dairesi", user.company.taxOffice || "Tamamlanmadı"], ["Firma telefonu", user.company.phone]]} /><p className="muted">{user.company.address || "Firma adresi tamamlanmadı."}</p><WalletCustomer customerId={user.id} request={request} /></section> : null}<section className="action-box"><h3>{blocked ? "Hesabı yeniden aktifleştir" : "Hesabı engelle"}</h3><p>{blocked ? "Kullanıcı yeniden oturum açabilir ve mobil akışlara erişebilir." : "Mevcut tokenlar anında geçersiz olur; yeni giriş engellenir."}</p>{!blocked && <textarea value={note} onChange={event => setNote(event.target.value)} placeholder="Engelleme nedeni (zorunlu)" />}<button className={blocked ? "primary-button" : "danger-button"} disabled={busy || (!blocked && !note.trim())} onClick={() => void mutate(`/users/${user.id}/status`, { status: blocked ? "active" : "blocked", reason: note }, blocked ? "Kullanıcı yeniden aktifleştirildi." : "Kullanıcı engellendi.")}>{blocked ? "Yeniden aktifleştir" : "Hesabı engelle"}</button></section></>; }
 
-function DriverDetail({ data, note, setNote, busy, mutate, request, refresh }: any) { const user = data.user; const [docForm, setDocForm] = useState({ kind: "driver_license", title: "", fileURL: "" }); async function addDocument(event: FormEvent) { event.preventDefault(); try { await request(`/drivers/${user.id}/documents`, { method: "POST", body: JSON.stringify(docForm) }); setDocForm({ kind: "driver_license", title: "", fileURL: "" }); refresh(); } catch { /* parent surfaces API state on next action */ } } return <><Person user={user} /><DriverWalletAdmin driverId={user.id} request={request} /><InfoGrid items={[["Telefon", user.phone], ["Plaka", user.driverProfile?.licensePlate || "—"], ["Hizmet bölgesi", user.driverProfile?.serviceArea || "—"], ["Tamamlanan", user.driverProfile?.completedJobs || 0], ["Puan", user.driverProfile?.rating || "—"], ["Doğrulama", label(user.verificationStatus)]]} /><section><h3>Şoför doğrulaması</h3><textarea value={note} onChange={event => setNote(event.target.value)} placeholder="İnceleme notu / ret gerekçesi" /><div className="button-row"><button className="primary-button" disabled={busy} onClick={() => void mutate(`/drivers/${user.id}/verification`, { status: "verified", note }, "Şoför doğrulandı.", ["driver", user.id])}>Doğrula</button><button className="danger-button" disabled={busy || !note.trim()} onClick={() => void mutate(`/drivers/${user.id}/verification`, { status: "rejected", note }, "Şoför doğrulaması reddedildi.", ["driver", user.id])}>Reddet</button></div></section><section><h3>Belgeler</h3>{(data.documents || []).map((document: AnyRecord) => { const fileHref = document.fileUrl?.startsWith("/") ? `${API_BASE.replace("/api/admin", "")}${document.fileUrl}` : document.fileUrl; return <div className="review-card" key={document.id}><div><b>{document.title}</b><small>{label(document.kind)} · <a href={fileHref} target="_blank" rel="noreferrer">Belgeyi aç</a></small>{document.status === "rejected" && document.reviewNote ? <small style={{ display: "block", color: "var(--danger, #dc2626)", marginTop: 4 }}>Ret nedeni: {document.reviewNote}</small> : null}</div><Status value={document.status} /><div className="review-actions"><button onClick={() => void mutate(`/driver-documents/${document.id}`, { status: "verified", note }, "Belge doğrulandı.", ["driver", user.id])}>Onayla</button><button disabled={!note.trim()} onClick={() => void mutate(`/driver-documents/${document.id}`, { status: "rejected", note }, "Belge reddedildi.", ["driver", user.id])}>Reddet</button></div></div>; })}{data.documents?.length === 0 ? <p className="muted">Henüz yüklenmiş belge bulunmuyor.</p> : null}<form className="document-form" onSubmit={addDocument}><select value={docForm.kind} onChange={event => setDocForm({ ...docForm, kind: event.target.value })}>{["identity", "driver_license", "vehicle_registration", "src", "psychotechnic", "insurance", "criminal_record", "other"].map(kind => <option key={kind} value={kind}>{label(kind)}</option>)}</select><input required placeholder="Belge başlığı" value={docForm.title} onChange={event => setDocForm({ ...docForm, title: event.target.value })} /><input required type="url" placeholder="https:// veya /api/photos/ güvenli belge adresi" value={docForm.fileURL} onChange={event => setDocForm({ ...docForm, fileURL: event.target.value })} /><button className="outline-button">Belge ekle</button></form></section><section><h3>Araçlar</h3>{(data.vehicles || []).map((vehicle: AnyRecord) => <div className="review-card" key={vehicle.id}><div><b>{vehicle.brand} {vehicle.model}</b><small>{vehicle.licensePlate} · {vehicle.capacityKg} kg</small></div><Status value={vehicle.verificationStatus} /><div className="review-actions"><button onClick={() => void mutate(`/vehicles/${vehicle.id}/verification`, { status: "verified", note }, "Araç doğrulandı.", ["driver", user.id])}>Onayla</button><button disabled={!note.trim()} onClick={() => void mutate(`/vehicles/${vehicle.id}/verification`, { status: "rejected", note }, "Araç reddedildi.", ["driver", user.id])}>Reddet</button></div></div>)}</section></>; }
+function DriverDetail({ data, note, setNote, busy, mutate, request, refresh }: any) { const user = data.user; const [docForm, setDocForm] = useState({ kind: "driver_license", title: "", fileURL: "" }); async function addDocument(event: FormEvent) { event.preventDefault(); try { await request(`/drivers/${user.id}/documents`, { method: "POST", body: JSON.stringify(docForm) }); setDocForm({ kind: "driver_license", title: "", fileURL: "" }); refresh(); } catch { /* parent surfaces API state on next action */ } } return <><Person user={user} /><DriverWalletAdmin key={user.id} driverId={user.id} request={request} /><InfoGrid items={[["Telefon", user.phone], ["Plaka", user.driverProfile?.licensePlate || "—"], ["Hizmet bölgesi", user.driverProfile?.serviceArea || "—"], ["Tamamlanan", user.driverProfile?.completedJobs || 0], ["Puan", user.driverProfile?.rating || "—"], ["Doğrulama", label(user.verificationStatus)]]} /><section><h3>Şoför doğrulaması</h3><textarea value={note} onChange={event => setNote(event.target.value)} placeholder="İnceleme notu / ret gerekçesi" /><div className="button-row"><button className="primary-button" disabled={busy} onClick={() => void mutate(`/drivers/${user.id}/verification`, { status: "verified", note }, "Şoför doğrulandı.", ["driver", user.id])}>Doğrula</button><button className="danger-button" disabled={busy || !note.trim()} onClick={() => void mutate(`/drivers/${user.id}/verification`, { status: "rejected", note }, "Şoför doğrulaması reddedildi.", ["driver", user.id])}>Reddet</button></div></section><section><h3>Belgeler</h3>{(data.documents || []).map((document: AnyRecord) => { const fileHref = document.fileUrl?.startsWith("/") ? `${API_BASE.replace("/api/admin", "")}${document.fileUrl}` : document.fileUrl; return <div className="review-card" key={document.id}><div><b>{document.title}</b><small>{label(document.kind)} · <a href={fileHref} target="_blank" rel="noreferrer">Belgeyi aç</a></small>{document.status === "rejected" && document.reviewNote ? <small style={{ display: "block", color: "var(--danger, #dc2626)", marginTop: 4 }}>Ret nedeni: {document.reviewNote}</small> : null}</div><Status value={document.status} /><div className="review-actions"><button onClick={() => void mutate(`/driver-documents/${document.id}`, { status: "verified", note }, "Belge doğrulandı.", ["driver", user.id])}>Onayla</button><button disabled={!note.trim()} onClick={() => void mutate(`/driver-documents/${document.id}`, { status: "rejected", note }, "Belge reddedildi.", ["driver", user.id])}>Reddet</button></div></div>; })}{data.documents?.length === 0 ? <p className="muted">Henüz yüklenmiş belge bulunmuyor.</p> : null}<form className="document-form" onSubmit={addDocument}><select value={docForm.kind} onChange={event => setDocForm({ ...docForm, kind: event.target.value })}>{["identity", "driver_license", "vehicle_registration", "src", "psychotechnic", "insurance", "criminal_record", "other"].map(kind => <option key={kind} value={kind}>{label(kind)}</option>)}</select><input required placeholder="Belge başlığı" value={docForm.title} onChange={event => setDocForm({ ...docForm, title: event.target.value })} /><input required type="url" placeholder="https:// veya /api/photos/ güvenli belge adresi" value={docForm.fileURL} onChange={event => setDocForm({ ...docForm, fileURL: event.target.value })} /><button className="outline-button">Belge ekle</button></form></section><section><h3>Araçlar</h3>{(data.vehicles || []).map((vehicle: AnyRecord) => <div className="review-card" key={vehicle.id}><div><b>{vehicle.brand} {vehicle.model}</b><small>{vehicle.licensePlate} · {vehicle.capacityKg} kg</small></div><Status value={vehicle.verificationStatus} /><div className="review-actions"><button onClick={() => void mutate(`/vehicles/${vehicle.id}/verification`, { status: "verified", note }, "Araç doğrulandı.", ["driver", user.id])}>Onayla</button><button disabled={!note.trim()} onClick={() => void mutate(`/vehicles/${vehicle.id}/verification`, { status: "rejected", note }, "Araç reddedildi.", ["driver", user.id])}>Reddet</button></div></div>)}</section></>; }
 
 function LoadDetail({ data, note, setNote, busy, mutate }: any) { const load = data.load; const options = adminLoadStatusOptions(load); const [status, setStatus] = useState(options[0] || ""); const selectedStatus = options.includes(status) ? status : options[0] || ""; return <><InfoGrid items={[["Müşteri", data.customer?.name || "—"], ["Şoför", data.driver?.name || "Atanmadı"], ["Rota", `${load.pickup?.address} → ${load.delivery?.address}`], ["Mesafe", `${load.estimatedKm || 0} km`], ["Tutar", formatMoney(load.agreedPriceTl || load.basePriceTl)], ["Durum", label(load.status)]]} /><section><h3>Durum geçmişi</h3>{(data.statusHistory || []).length ? <div className="timeline">{data.statusHistory.map((event: AnyRecord) => <div key={event.id}><i /><span><b>{label(event.toStatus)}</b><small>{formatDate(event.changedAt || event.createdAt)} · {label(event.changedByRole || event.actorRole)} · {label(event.source)}</small>{event.note && <p>{event.note}</p>}</span></div>)}</div> : <p className="muted">Bu eski kayıt için doğrulanabilir durum geçmişi bulunmuyor.</p>}</section><section className="action-box"><h3>Yönetici durum güncellemesi</h3><p>Operasyonel akış yalnızca bir sonraki adıma veya iptale geçirilebilir.</p>{options.length ? <select value={selectedStatus} onChange={event => setStatus(event.target.value)}>{options.map(value => <option key={value} value={value}>{label(value)}</option>)}</select> : <p className="muted">Bu durum terminaldir; başka bir duruma geçirilemez.</p>}<textarea value={note} onChange={event => setNote(event.target.value)} placeholder="İşlem notu (zorunlu)" /><button className={selectedStatus === "cancelled" ? "danger-button" : "primary-button"} disabled={busy || !selectedStatus || !note.trim()} onClick={() => void mutate(`/loads/${load.id}/status`, { status: selectedStatus, note }, "İlan durumu güncellendi.")}>Durumu güncelle</button></section></>; }
 

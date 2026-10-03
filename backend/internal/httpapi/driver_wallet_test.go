@@ -304,3 +304,60 @@ func TestPhotoUploadCannotOverwriteAcceptedCommission(t *testing.T) {
 	}
 	assertDriverBalance(t, h, d, 100000, 100000)
 }
+
+func TestAdminDriverWalletAccountsList(t *testing.T) {
+	h, _ := newFlowTestAPI(t)
+	c := registerTestUser(t, h, "accounts_customer", models.RoleCustomer)
+	funded := registerTestUser(t, h, "commission_empty_accounts_funded", models.RoleDriver)
+	empty := registerTestUser(t, h, "commission_empty_accounts_zero", models.RoleDriver)
+	fundDriver(t, h, funded, 200000, "accounts-payment")
+	acceptOfferAmount(t, h, c, funded, createPublishedStatusTestLoad(t, h, c, "Hesap kontrolü"), 10000)
+	admin := adminLoginForTest(t, h)
+	for _, token := range []string{"", c.AccessToken, funded.AccessToken} {
+		r := requestJSON(t, h, http.MethodGet, "/api/admin/driver-wallets", token, nil)
+		if r.Code == 200 {
+			t.Fatal("non-admin read wallet accounts")
+		}
+	}
+	r := requestJSON(t, h, http.MethodGet, "/api/admin/driver-wallets?limit=1", admin.AccessToken, nil)
+	if r.Code != 200 {
+		t.Fatalf("wallet list %d: %s", r.Code, r.Body.String())
+	}
+	var result struct {
+		Items []struct {
+			Driver map[string]any      `json:"driver"`
+			Wallet models.DriverWallet `json:"wallet"`
+		} `json:"items"`
+		Total int `json:"total"`
+	}
+	result = decodeResponse[struct {
+		Items []struct {
+			Driver map[string]any      `json:"driver"`
+			Wallet models.DriverWallet `json:"wallet"`
+		} `json:"items"`
+		Total int `json:"total"`
+	}](t, r)
+	if result.Total != 2 || len(result.Items) != 1 {
+		t.Fatalf("pagination failed: %#v", result)
+	}
+	r = requestJSON(t, h, http.MethodGet, "/api/admin/driver-wallets?walletStatus=reserved", admin.AccessToken, nil)
+	filtered := decodeResponse[map[string]any](t, r)
+	items := filtered["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("reserved filter: %#v", filtered)
+	}
+	item := items[0].(map[string]any)
+	wallet := item["wallet"].(map[string]any)
+	if wallet["driverId"] != funded.User.ID || wallet["balanceCents"] != float64(200000) || wallet["reservedCents"] != float64(100000) || wallet["availableCents"] != float64(100000) {
+		t.Fatalf("incorrect account: %#v", wallet)
+	}
+	r = requestJSON(t, h, http.MethodGet, "/api/admin/driver-wallets?q="+empty.User.ID, admin.AccessToken, nil)
+	searched := decodeResponse[map[string]any](t, r)
+	if searched["total"] != float64(1) {
+		t.Fatalf("search: %#v", searched)
+	}
+	r = requestJSON(t, h, http.MethodGet, "/api/admin/driver-wallets?walletStatus=empty", admin.AccessToken, nil)
+	if decodeResponse[map[string]any](t, r)["total"] != float64(1) {
+		t.Fatal("empty accounts omitted")
+	}
+}
