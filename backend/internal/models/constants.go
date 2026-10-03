@@ -73,6 +73,7 @@ func ValidCargoType(value CargoType) bool {
 type VehicleType string
 
 const (
+	VehicleTypeMinivan    VehicleType = "minivan"
 	VehicleTypePanelvan   VehicleType = "panelvan"
 	VehicleTypeKamyonet   VehicleType = "kamyonet"
 	VehicleTypeAcikKasa   VehicleType = "acik_kasa"
@@ -92,7 +93,7 @@ const (
 
 func ValidVehicleType(value VehicleType) bool {
 	switch value {
-	case VehicleTypePanelVan, VehicleTypePickup, VehicleTypeOpenBody, VehicleTypeClosedBody,
+	case VehicleTypeMinivan, VehicleTypePanelVan, VehicleTypePickup, VehicleTypeOpenBody, VehicleTypeClosedBody,
 		VehicleTypeTruck, VehicleTypeSemi, VehicleTypeAny:
 		return true
 	default:

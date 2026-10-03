@@ -204,6 +204,17 @@ export default function CargoDetailsStep({ form, onFormChange, onDetailChange, o
       <Text style={styles.title}>Yük Detayları</Text>
       <Text style={styles.subtitle}>Taşıma ekibinin hazırlıklı gelmesi için operasyonel detayları belirleyin.</Text>
 
+      <SectionCard title="Fiyat ve Araç İçin Yük Bilgileri" description="Toplam hacim ve ağırlık araç seçimini belirler. Boş bırakırsanız 50 kg / 1 m³ küçük yük varsayılır; gerçek yükünüzü belirtmeniz tahmini iyileştirir." icon="cube-outline">
+        {['ev_esyasi', 'mobilya', 'beyaz_esya'].includes(cargoType) ? <TextField label="Toplam Ağırlık (kg)" value={String(form.weight || '')} onChangeText={v => formChange('weight', v)} keyboardType="decimal-pad" error={errors.weight} /> : null}
+        <TextField label="Toplam Hacim (m³)" value={String(form.volume || '')} onChangeText={v => formChange('volume', v)} placeholder="Örn: 5 · 1 m³ = 1 × 1 × 1 metre" keyboardType="decimal-pad" error={errors.volume} />
+        <SegmentedControl label="Yüklemeyi kim yapacak?" options={responsibilityOptions} value={cargoDetails.loadingResponsibility || (form.helperNeeded ? 'driver' : 'customer')} onChange={v => detailChange('loadingResponsibility', v)} />
+        <SegmentedControl label="Boşaltmayı kim yapacak?" options={responsibilityOptions} value={cargoDetails.unloadingResponsibility || (form.helperNeeded ? 'driver' : 'customer')} onChange={v => detailChange('unloadingResponsibility', v)} />
+        {!['ev_esyasi', 'mobilya', 'beyaz_esya'].includes(cargoType) ? <>
+          <SegmentedControl label="Yardımcı personel gerekiyor mu?" options={helperOptions} value={form.helperNeeded} onChange={v => formChange('helperNeeded', v)} />
+          {form.helperNeeded ? <TextField label="Yardımcı sayısı" value={String(form.helperCount || '1')} onChangeText={v => formChange('helperCount', v)} keyboardType="number-pad" error={errors.helperCount} /> : null}
+        </> : null}
+      </SectionCard>
+
       {/* EV EŞYASI */}
       {cargoType === 'ev_esyasi' && (
         <>
@@ -541,18 +552,6 @@ export default function CargoDetailsStep({ form, onFormChange, onDetailChange, o
             options={yesNoOptions}
             value={Boolean(cargoDetails.forkliftNeeded)}
             onChange={v => onDetailChange('forkliftNeeded', v)}
-          />
-          <SegmentedControl
-            label="Yükleme sorumluluğu kime ait?"
-            options={responsibilityOptions}
-            value={cargoDetails.loadingResponsibility || 'customer'}
-            onChange={v => onDetailChange('loadingResponsibility', v)}
-          />
-          <SegmentedControl
-            label="Boşaltma sorumluluğu kime ait?"
-            options={responsibilityOptions}
-            value={cargoDetails.unloadingResponsibility || 'customer'}
-            onChange={v => onDetailChange('unloadingResponsibility', v)}
           />
         </SectionCard>
       )}

@@ -143,7 +143,7 @@ export default function DriverJobCard({ load, onPress }) {
       <View style={styles.footerRow}>
         <View style={styles.priceWrap}>
           <Text style={styles.priceLabel}>TAHMİNİ</Text>
-          <Text style={styles.priceValue}>{formatMoney(price)}</Text>
+          <Text style={styles.priceValue}>{load.pricing?.manualQuoteRequired ? 'Özel teklif gerekli' : formatMoney(price)}</Text>
         </View>
 
         <View style={styles.actionBtn}>

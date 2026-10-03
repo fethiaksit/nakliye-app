@@ -26,6 +26,26 @@ paths:
       responses:
         '200': { description: Auth session }
         '401': { description: Invalid credentials }
+  /api/pricing/estimate:
+    post:
+      summary: Calculate a non-binding city freight reference without saving a listing
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateListingRequest' }
+      responses:
+        '200':
+          description: Server estimate; manualQuoteRequired means a special driver quote is needed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PricingSnapshot' }
+        '400': { description: Invalid listing attributes }
+        '401': { description: Authentication required }
+        '403': { description: Customer role required }
+        '429': { description: Route request rate exceeded }
+        '503': { description: Routing unavailable }
   /api/listings:
     get:
       security: [{ bearerAuth: [] }]
@@ -289,7 +309,7 @@ components:
       enum: [ev_esyasi, mobilya, beyaz_esya, paletli_yuk, motosiklet, ticari_yuk, parsiyel_yuk, diger]
     VehicleType:
       type: string
-      enum: [panelvan, kamyonet, acik_kasa, kapali_kasa, kamyon, tir, farketmez]
+      enum: [minivan, panelvan, kamyonet, acik_kasa, kapali_kasa, kamyon, tir, farketmez]
     Location:
       type: object
       required: [address, latitude, longitude]
@@ -315,6 +335,7 @@ components:
         widthCm: { type: number, minimum: 1, maximum: 5000 }
         heightCm: { type: number, minimum: 1, maximum: 5000 }
         weightKg: { type: number, minimum: 0.1, maximum: 100000 }
+        volumeM3: { type: number, minimum: 0, maximum: 125000, description: Total cargo volume; positive values take precedence over box dimensions }
     CreateListingRequest:
       type: object
       required: [title, description, pickup, delivery, urgencyType, cargoType, vehicleType, dimensions, pickupFloor, deliveryFloor, pickupElevatorAvailable, deliveryElevatorAvailable, helperNeeded]
@@ -345,6 +366,16 @@ components:
         deliveryElevatorAvailable: { type: boolean }
         helperNeeded: { type: boolean }
         helperCount: { type: integer, minimum: 0, maximum: 20 }
+        waitingMinutes: { type: integer, minimum: 0 }
+        cargoDetails:
+          type: object
+          additionalProperties: true
+          properties:
+            moveType: { type: string, description: komple requires a manual quote }
+            loadingResponsibility: { type: string, enum: [customer, driver] }
+            unloadingResponsibility: { type: string, enum: [customer, driver] }
+            pickupElevatorSuitable: { type: boolean }
+            deliveryElevatorSuitable: { type: boolean }
     Listing:
       allOf:
         - { $ref: '#/components/schemas/CreateListingRequest' }
@@ -354,14 +385,26 @@ components:
             id: { type: string, format: uuid }
             customerId: { type: string, format: uuid }
             status: { $ref: '#/components/schemas/LoadStatus' }
+            requestedVehicleType: { $ref: '#/components/schemas/VehicleType' }
+            agreedPriceTl: { type: number, description: Zero until a driver offer is accepted }
             pricing:
               $ref: '#/components/schemas/PricingSnapshot'
             createdAt: { type: string, format: date-time }
             updatedAt: { type: string, format: date-time }
     PricingSnapshot:
       type: object
-      description: Server-calculated price snapshot kept with the listing for auditability.
+      description: Non-binding server estimate; prices are zero when manualQuoteRequired is true.
       properties:
+        vehicleType: { $ref: '#/components/schemas/VehicleType' }
+        includedKm: { type: number, example: 5 }
+        occupancyRatio: { type: number }
+        loadingFee: { type: number }
+        pickupFloorFee: { type: number }
+        deliveryFloorFee: { type: number }
+        minPrice: { type: number }
+        maxPrice: { type: number }
+        manualQuoteRequired: { type: boolean }
+        algorithmVersion: { type: string, example: city-v2 }
         distanceKm: { type: number }
         baseDriverFee: { type: number }
         pricePerKm: { type: number }

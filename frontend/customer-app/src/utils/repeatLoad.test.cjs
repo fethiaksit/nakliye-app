@@ -25,3 +25,10 @@ test('repeat load copies only listing form fields and forces a fresh schedule an
   assert.equal('walletUsedCents' in draft.form, false);
   assert.equal('agreedPriceTl' in draft.form, false);
 });
+
+test('repeat respects original auto-selection instead of locking the previously calculated class', () => {
+ const draft = buildRepeatDraft({ vehicleType: 'kamyonet', requestedVehicleType: 'farketmez', dimensions: { volumeM3: 12, weightKg: 2000 } });
+ assert.equal(draft.form.vehicleType, 'farketmez');
+ assert.equal(draft.form.volume, '12');
+ assert.equal(buildRepeatDraft({ vehicleType: 'panelvan' }).form.vehicleType, 'panelvan');
+});

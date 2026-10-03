@@ -59,6 +59,7 @@ type Coordinate struct {
 }
 
 type Dimensions struct {
+	VolumeM3 float64 `json:"volumeM3,omitempty"`
 	LengthCM float64 `json:"lengthCm"`
 	WidthCM  float64 `json:"widthCm"`
 	HeightCM float64 `json:"heightCm"`
@@ -127,9 +128,10 @@ type Load struct {
 	UrgencyType UrgencyType `json:"urgencyType"`
 	ScheduledAt *time.Time  `json:"scheduledAt,omitempty"`
 
-	CargoType     CargoType   `json:"cargoType"`
-	CargoTypeNote string      `json:"cargoTypeNote,omitempty"`
-	VehicleType   VehicleType `json:"vehicleType"`
+	CargoType            CargoType   `json:"cargoType"`
+	CargoTypeNote        string      `json:"cargoTypeNote,omitempty"`
+	VehicleType          VehicleType `json:"vehicleType"`
+	RequestedVehicleType VehicleType `json:"requestedVehicleType,omitempty"`
 
 	// Pickup and delivery access can differ, so their operational attributes
 	// are kept independently rather than in one ambiguous "floor" field.
@@ -149,6 +151,17 @@ type Load struct {
 // PricingSnapshot records the server-side inputs and result used when a load
 // was priced. It is optional so older Redis load records remain compatible.
 type PricingSnapshot struct {
+	VehicleType         VehicleType `json:"vehicleType,omitempty"`
+	IncludedKM          float64     `json:"includedKm,omitempty"`
+	OccupancyRatio      float64     `json:"occupancyRatio,omitempty"`
+	LoadingFee          float64     `json:"loadingFee,omitempty"`
+	PickupFloorFee      float64     `json:"pickupFloorFee,omitempty"`
+	DeliveryFloorFee    float64     `json:"deliveryFloorFee,omitempty"`
+	MinPrice            float64     `json:"minPrice,omitempty"`
+	MaxPrice            float64     `json:"maxPrice,omitempty"`
+	ManualQuoteRequired bool        `json:"manualQuoteRequired,omitempty"`
+	AlgorithmVersion    string      `json:"algorithmVersion,omitempty"`
+
 	DistanceKM        float64 `json:"distanceKm"`
 	BaseDriverFee     float64 `json:"baseDriverFee"`
 	PricePerKM        float64 `json:"pricePerKm"`

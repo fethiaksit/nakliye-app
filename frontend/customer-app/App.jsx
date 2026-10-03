@@ -19,7 +19,7 @@ import { CustomerHome, CustomerLoads } from './src/screens/CustomerScreens';
 import CustomerAccountScreens from './src/screens/CustomerAccountScreens';
 import { formatMoney, loadStatusLabel, resolveMediaUrl } from './src/utils/presentation';
 
-const { number, scheduledAtISO, validateLoadFormFields } = require('./src/utils/loadForm.cjs');
+const { buildPricingFields, validateLoadFormFields } = require('./src/utils/loadForm.cjs');
 const { buildRepeatDraft } = require('./src/utils/repeatLoad.cjs');
 
 const initialLoadForm = () => ({
@@ -32,6 +32,7 @@ const initialLoadForm = () => ({
   cargoTypeNote: '',
   vehicleType: 'farketmez',
   weight: '',
+  volume: '',
   length: '',
   width: '',
   height: '',
@@ -295,14 +296,6 @@ function CustomerApp() {
         form,
       );
 
-      const safeWeight = number(form.weight);
-      const safeLength = number(form.length);
-      const safeWidth = number(form.width);
-      const safeHeight = number(form.height);
-      const safePickupFloor = number(form.pickupFloor);
-      const safeDeliveryFloor = number(form.deliveryFloor);
-      const safeHelperCount = number(form.helperCount);
-
       const payload = {
         title: autoTitle,
         description: autoDescription,
@@ -340,24 +333,7 @@ function CustomerApp() {
             countryCode: String(s.countryCode || '').trim().toUpperCase(),
           };
         }),
-        urgencyType: form.urgencyType || 'immediate',
-        ...(form.urgencyType === 'scheduled' ? { scheduledAt: scheduledAtISO(form.scheduledDate, form.scheduledTime) } : {}),
-        cargoType: form.cargoType,
-        cargoTypeNote: form.cargoType === 'diger' ? (form.cargoTypeNote || '').trim() : '',
-        cargoDetails: form.cargoDetails || {},
-        vehicleType: form.vehicleType || 'farketmez',
-        dimensions: {
-          lengthCm: Number.isFinite(safeLength) && safeLength > 0 ? safeLength : 100,
-          widthCm: Number.isFinite(safeWidth) && safeWidth > 0 ? safeWidth : 100,
-          heightCm: Number.isFinite(safeHeight) && safeHeight > 0 ? safeHeight : 100,
-          weightKg: Number.isFinite(safeWeight) && safeWeight > 0 ? safeWeight : 50,
-        },
-        pickupFloor: Number.isInteger(safePickupFloor) ? safePickupFloor : 0,
-        deliveryFloor: Number.isInteger(safeDeliveryFloor) ? safeDeliveryFloor : 0,
-        pickupElevatorAvailable: Boolean(form.pickupElevatorAvailable),
-        deliveryElevatorAvailable: Boolean(form.deliveryElevatorAvailable),
-        helperNeeded: Boolean(form.helperNeeded),
-        helperCount: form.helperNeeded ? (Number.isInteger(safeHelperCount) && safeHelperCount >= 1 ? safeHelperCount : 1) : 0,
+        ...buildPricingFields(form),
       };
 
       let draftId = pendingDraftId;

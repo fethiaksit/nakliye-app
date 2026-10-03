@@ -156,11 +156,7 @@ export default function DriverLoadDetails({ load }) {
             {details.forkliftNeeded ? (
               <DetailRow icon="hardware-chip-outline" label="Ekipman" value="Forklift gerekiyor" />
             ) : null}
-            <DetailRow
-              icon="people-outline"
-              label="Yükleme / Boşaltma"
-              value={`Yükleme: ${details.loadingResponsibility === 'driver' ? 'Şoför' : 'Müşteri'} · Boşaltma: ${details.unloadingResponsibility === 'driver' ? 'Şoför' : 'Müşteri'}`}
-            />
+
           </>
         );
 
@@ -224,6 +220,11 @@ export default function DriverLoadDetails({ load }) {
           ) : null}
 
           {renderCategorySpecificRows()}
+          <DetailRow
+            icon="people-outline"
+            label="Yükleme / Boşaltma"
+            value={`Yükleme: ${(details.loadingResponsibility || (load.helperNeeded ? 'driver' : 'customer')) === 'driver' ? 'Şoför / Ekip' : 'Müşteri'} · Boşaltma: ${(details.unloadingResponsibility || (load.helperNeeded ? 'driver' : 'customer')) === 'driver' ? 'Şoför / Ekip' : 'Müşteri'}`}
+          />
 
           {isBuildingRelevant ? (
             <>
@@ -254,11 +255,13 @@ export default function DriverLoadDetails({ load }) {
               label="Ağırlık & Ölçüler"
               value={[
                 totalWeight > 0 ? `${totalWeight} kg` : null,
-                dimensions.lengthCm ? `${dimensions.lengthCm}×${dimensions.widthCm || '-'}×${dimensions.heightCm || '-'} cm` : null,
+                !dimensions.volumeM3 && dimensions.lengthCm ? `${dimensions.lengthCm}×${dimensions.widthCm || '-'}×${dimensions.heightCm || '-'} cm` : null,
               ].filter(Boolean).join(' · ')}
             />
           ) : null}
 
+          {dimensions.volumeM3 > 0 ? <DetailRow icon="cube-outline" label="Toplam Yük Hacmi" value={`${dimensions.volumeM3} m³`} /> : null}
+          {load.pricing?.vehicleType && !load.pricing.manualQuoteRequired ? <DetailRow icon="car-outline" label="Önerilen Araç Sınıfı" value={vehicleTypeLabel(load.pricing.vehicleType)} /> : null}
           <DetailRow icon="car-outline" label="Araç İhtiyacı" value={vehicleTypeLabel(load.vehicleType)} />
 
           {load.description ? (

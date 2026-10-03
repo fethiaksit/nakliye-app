@@ -23,6 +23,7 @@ export const STOP_TYPE_OPTIONS = [
 
 export const VEHICLE_TYPE_OPTIONS = [
   { value: 'farketmez', label: 'Uygun aracı sistem önersin', description: 'Yükünüze en uygun araçlar teklif verir' },
+  { value: 'minivan', label: 'Minivan', description: '500 kg ve 4 m³ kapasiteye kadar küçük yükler' },
   { value: 'panelvan', label: 'Panelvan', description: 'Hafif yükler ve küçük eşyalar için' },
   { value: 'kamyonet', label: 'Kamyonet', description: 'Ev eşyası ve mobilyalar için' },
   { value: 'acik_kasa', label: 'Açık kasa', description: 'Açık kasa taşımaya uygun yükler' },

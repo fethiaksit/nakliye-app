@@ -3,6 +3,8 @@ package config
 import (
 	"errors"
 	"fmt"
+	"math"
+	"nakliye-api/internal/models"
 	"nakliye-api/internal/service"
 	"os"
 	"strconv"
@@ -43,16 +45,23 @@ func Load() Config {
 	}
 	secret := strings.TrimSpace(os.Getenv("JWT_SECRET"))
 	pricing := service.DefaultPricingConfig()
-	if rawBase := strings.TrimSpace(os.Getenv("BASE_DRIVER_FEE")); rawBase != "" {
-		if parsed, err := strconv.ParseFloat(rawBase, 64); err == nil && parsed > 0 {
-			pricing.BaseDriverFee = parsed
+	// Old global keys intentionally no longer override the city tariff.
+	for _, entry := range []struct {
+		vehicle models.VehicleType
+		prefix  string
+	}{
+		{models.VehicleTypeMinivan, "MINIVAN"}, {models.VehicleTypePanelvan, "PANELVAN"}, {models.VehicleTypeKamyonet, "KAMYONET"}, {models.VehicleTypeKamyon, "KAMYON"},
+	} {
+		tariff := pricing.VehicleTariffs[entry.vehicle]
+		for key, target := range map[string]*float64{entry.prefix + "_BASE_FEE": &tariff.BaseFee, entry.prefix + "_PRICE_PER_KM": &tariff.PerKM} {
+			if value, err := strconv.ParseFloat(strings.TrimSpace(os.Getenv(key)), 64); err == nil && value > 0 && !math.IsInf(value, 0) && !math.IsNaN(value) {
+				*target = value
+			}
 		}
+		pricing.VehicleTariffs[entry.vehicle] = tariff
 	}
-	if rawPrice := strings.TrimSpace(os.Getenv("PRICE_PER_KM")); rawPrice != "" {
-		if parsed, err := strconv.ParseFloat(rawPrice, 64); err == nil && parsed > 0 {
-			pricing.PricePerKM = parsed
-		}
-	}
+	pricing.BaseDriverFee = pricing.VehicleTariffs[models.VehicleTypeMinivan].BaseFee
+	pricing.PricePerKM = pricing.VehicleTariffs[models.VehicleTypeMinivan].PerKM
 	lanHost := os.Getenv("LAN_HOST")
 	maxUploadMB := 10
 	if rawMaxUpload := strings.TrimSpace(os.Getenv("MAX_UPLOAD_MB")); rawMaxUpload != "" {

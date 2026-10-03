@@ -72,7 +72,7 @@ func TestGoogleMapsClientNormalizesGoogleResponses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if route.DistanceMeters != 18420 || route.DurationSeconds != 1920 || route.EstimatedPriceTL != 2421 || route.RouteProvider != "google" || len(route.RouteCoordinates) != 3 {
+	if route.DistanceMeters != 18420 || route.DurationSeconds != 1920 || route.EstimatedPriceTL != 1921 || route.RouteProvider != "google" || len(route.RouteCoordinates) != 3 {
 		t.Fatalf("unexpected normalized route: %#v", route)
 	}
 }

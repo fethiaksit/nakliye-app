@@ -62,7 +62,7 @@ type Options struct {
 	MapsKeyError           string
 	Pricing                service.PricingConfig
 	// PricePerKM is retained for source compatibility with older test and
-	// integration callers. Active pricing uses Pricing and its 50 TL/km default.
+	// integration callers. Active pricing uses vehicle-specific Pricing tariffs.
 	PricePerKM        float64
 	MaxUploadMB       int
 	AdminEmail        string
@@ -181,6 +181,7 @@ func (a *API) Routes() http.Handler {
 	mux.Handle("POST /api/routes/calculate", a.auth(http.HandlerFunc(a.calculateRoute)))
 	mux.Handle("GET /api/loads", a.auth(http.HandlerFunc(a.loads)))
 	mux.Handle("GET /api/loads/mine", a.auth(http.HandlerFunc(a.myLoads)))
+	mux.Handle("POST /api/pricing/estimate", a.auth(http.HandlerFunc(a.estimatePricing)))
 	mux.Handle("POST /api/loads", a.auth(http.HandlerFunc(a.createLoad)))
 	mux.Handle("GET /api/loads/{id}", a.auth(http.HandlerFunc(a.load)))
 	mux.Handle("PUT /api/loads/{id}", a.auth(http.HandlerFunc(a.updateLoad)))
@@ -943,8 +944,8 @@ type mapRouteResponse struct {
 
 func (a *API) normalizeRoutePricing(route service.RouteResult) service.RouteResult {
 	route.PricePerKM = a.pricing.PricePerKM
-	if price, err := service.CalculateBasePrice(a.pricing, route.DistanceKM); err == nil {
-		route.EstimatedPriceTL = price
+	if pricing, err := service.CalculateEstimatedPrice(a.pricing, service.PricingInput{DistanceKM: route.DistanceKM}); err == nil {
+		route.EstimatedPriceTL = pricing.RecommendedPrice
 	}
 	return route
 }
@@ -1096,6 +1097,14 @@ func validLoad(req loadRequest, now time.Time) error {
 			return fmt.Errorf("her ölçü %.0f ile %.0f cm arasında olmalıdır", models.MinDimensionCM, models.MaxDimensionCM)
 		}
 	}
+	if req.Dimensions.VolumeM3 < 0 || req.Dimensions.VolumeM3 > 125000 {
+		return errors.New("yük hacmi geçerli bir değer olmalıdır")
+	}
+	for _, key := range []string{"loadingResponsibility", "unloadingResponsibility"} {
+		if v, ok := req.CargoDetails[key]; ok && v != "customer" && v != "driver" {
+			return errors.New("yükleme ve boşaltma sorumluluğu müşteri veya şoför olmalıdır")
+		}
+	}
 	if !models.ValidUrgencyType(req.UrgencyType) {
 		return errors.New("nakliye zamanı hemen, bugün veya planlı olmalıdır")
 	}
@@ -1143,6 +1152,52 @@ func normalizeLocation(location models.Location) models.Location {
 	return location
 }
 
+// Estimate uses the same route and calculation as creation without persisting
+// a draft, photos, or status events. Client prices/multipliers are never inputs.
+func (a *API) estimatePricing(w http.ResponseWriter, r *http.Request) {
+	p := current(r)
+	if p.Role != models.RoleCustomer {
+		forbidden(w)
+		return
+	}
+	if !a.mapsAvailable(w, r, "routes") || !a.allowLocationRequest(w, r) {
+		return
+	}
+	var req loadRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	normalizeLoadRequest(&req)
+	if err := validLoad(req, time.Now().UTC()); err != nil {
+		badRequest(w, err.Error())
+		return
+	}
+	load, err := a.newLoad(r.Context(), p.ID, req, models.LoadStatusDraft)
+	if err != nil {
+		writeRouteError(w, err)
+		return
+	}
+	jsonResponse(w, http.StatusOK, load.Pricing)
+}
+
+func (a *API) priceLoad(distanceKM float64, req loadRequest, now time.Time) (service.PricingBreakdown, error) {
+	// Helper selection supplies handling at either end unless the customer
+	// explicitly takes responsibility there. Unsuitable elevators mean stairs.
+	handling := func(key string) bool {
+		v, _ := req.CargoDetails[key].(string)
+		return v == "driver" || (v == "" && req.HelperNeeded)
+	}
+	suitable := func(key string) bool { v, ok := req.CargoDetails[key].(bool); return !ok || v }
+	return service.CalculateEstimatedPrice(a.pricing, service.PricingInput{
+		DistanceKM: distanceKM, Dimensions: req.Dimensions, VolumeM3: req.Dimensions.VolumeM3, VehicleType: req.VehicleType,
+		HelperCount: req.HelperCount, PickupDriverHandling: handling("loadingResponsibility"), DeliveryDriverHandling: handling("unloadingResponsibility"),
+		PickupFloor: req.PickupFloor, DeliveryFloor: req.DeliveryFloor,
+		PickupElevatorAvailable: req.PickupElevatorAvailable && suitable("pickupElevatorSuitable"), DeliveryElevatorAvailable: req.DeliveryElevatorAvailable && suitable("deliveryElevatorSuitable"),
+		WaitingMinutes: req.WaitingMinutes, RequestedStartAt: req.ScheduledAt, UrgencyType: req.UrgencyType, Now: now,
+		ManualQuoteRequired: req.CargoType == models.CargoTypeEvEsyasi && req.CargoDetails["moveType"] == "komple",
+	})
+}
+
 func (a *API) createLoad(w http.ResponseWriter, r *http.Request) {
 	p := current(r)
 	if p.Role != models.RoleCustomer {
@@ -1184,19 +1239,7 @@ func (a *API) newLoad(ctx context.Context, customerID string, req loadRequest, s
 		return models.Load{}, e
 	}
 	now := time.Now().UTC()
-	loadLevel, e := service.DetermineLoadLevelWithConfig(a.pricing, service.LoadFeatures{
-		Dimensions: req.Dimensions, CargoType: req.CargoType,
-		PickupFloor: req.PickupFloor, DeliveryFloor: req.DeliveryFloor,
-		PickupElevatorAvailable: req.PickupElevatorAvailable, DeliveryElevatorAvailable: req.DeliveryElevatorAvailable,
-		HelperNeeded: req.HelperNeeded,
-	})
-	if e != nil {
-		return models.Load{}, e
-	}
-	pricing, e := service.CalculateEstimatedPrice(a.pricing, service.PricingInput{
-		DistanceKM: route.DistanceKM, LoadLevel: loadLevel, WaitingMinutes: req.WaitingMinutes,
-		RequestedStartAt: req.ScheduledAt, UrgencyType: req.UrgencyType, Now: now,
-	})
+	pricing, e := a.priceLoad(route.DistanceKM, req, now)
 	if e != nil {
 		return models.Load{}, e
 	}
@@ -1223,7 +1266,7 @@ func (a *API) newLoad(ctx context.Context, customerID string, req loadRequest, s
 		RouteCoordinates:          route.RouteCoordinates,
 		EstimatedKM:               pricing.DistanceKM,
 		BasePriceTL:               pricing.FinalPrice,
-		AgreedPriceTL:             pricing.FinalPrice,
+		AgreedPriceTL:             0, // Set only when a customer accepts a driver offer.
 		Pricing:                   pricingSnapshot(pricing),
 		Status:                    status,
 		CreatedAt:                 now,
@@ -1233,6 +1276,7 @@ func (a *API) newLoad(ctx context.Context, customerID string, req loadRequest, s
 		CargoType:                 req.CargoType,
 		CargoTypeNote:             req.CargoTypeNote,
 		VehicleType:               req.VehicleType,
+		RequestedVehicleType:      req.VehicleType,
 		PickupFloor:               req.PickupFloor,
 		DeliveryFloor:             req.DeliveryFloor,
 		PickupElevatorAvailable:   req.PickupElevatorAvailable,
@@ -1240,11 +1284,20 @@ func (a *API) newLoad(ctx context.Context, customerID string, req loadRequest, s
 		HelperNeeded:              req.HelperNeeded,
 		HelperCount:               req.HelperCount,
 	}
+	// Drivers and vehicle filters must see the effective class used for pricing.
+	// Body style and TIR requirements are retained independently of the tariff.
+	if !pricing.ManualQuoteRequired && req.VehicleType != models.VehicleTypeAcikKasa && req.VehicleType != models.VehicleTypeKapaliKasa && req.VehicleType != models.VehicleTypeTir {
+		load.VehicleType = pricing.VehicleType
+	}
 	return load, nil
 }
 
 func pricingSnapshot(breakdown service.PricingBreakdown) *models.PricingSnapshot {
 	return &models.PricingSnapshot{
+		VehicleType: breakdown.VehicleType, IncludedKM: breakdown.IncludedKM, OccupancyRatio: breakdown.OccupancyRatio,
+		LoadingFee: breakdown.LoadingFee, PickupFloorFee: breakdown.PickupFloorFee, DeliveryFloorFee: breakdown.DeliveryFloorFee,
+		MinPrice: breakdown.MinPrice, MaxPrice: breakdown.MaxPrice, ManualQuoteRequired: breakdown.ManualQuoteRequired, AlgorithmVersion: breakdown.AlgorithmVersion,
+
 		DistanceKM: breakdown.DistanceKM, BaseDriverFee: breakdown.BaseDriverFee,
 		PricePerKM: breakdown.PricePerKM, DistanceFee: breakdown.DistanceFee,
 		BasePrice: breakdown.BasePrice, LoadLevel: string(breakdown.LoadLevel),
