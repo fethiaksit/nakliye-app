@@ -1012,6 +1012,16 @@ type loadRequest struct {
 }
 
 func normalizeLoadRequest(req *loadRequest) {
+	if req.CargoDetails["capacityInput"] == "simple-v1" {
+		capacity, manual, err := service.EstimateCargoCapacity(req.CargoType, req.CargoDetails)
+		if err == nil {
+			req.Dimensions.VolumeM3 = capacity.VolumeM3
+			if req.Dimensions.WeightKG <= 0 {
+				req.Dimensions.WeightKG = capacity.WeightKG
+			}
+			req.CargoDetails["capacityQuoteRequired"] = manual
+		}
+	}
 	req.Title = strings.TrimSpace(req.Title)
 	req.Description = strings.TrimSpace(req.Description)
 	req.CargoTypeNote = strings.TrimSpace(req.CargoTypeNote)
@@ -1063,6 +1073,11 @@ func normalizeLoadRequest(req *loadRequest) {
 }
 
 func validLoad(req loadRequest, now time.Time) error {
+	if req.CargoDetails["capacityInput"] == "simple-v1" {
+		if _, _, err := service.EstimateCargoCapacity(req.CargoType, req.CargoDetails); err != nil {
+			return err
+		}
+	}
 	if req.Title == "" || strings.TrimSpace(req.Pickup.Address) == "" || strings.TrimSpace(req.Delivery.Address) == "" {
 		return errors.New("başlık, çıkış ve varış zorunludur")
 	}
@@ -1194,7 +1209,7 @@ func (a *API) priceLoad(distanceKM float64, req loadRequest, now time.Time) (ser
 		PickupFloor: req.PickupFloor, DeliveryFloor: req.DeliveryFloor,
 		PickupElevatorAvailable: req.PickupElevatorAvailable && suitable("pickupElevatorSuitable"), DeliveryElevatorAvailable: req.DeliveryElevatorAvailable && suitable("deliveryElevatorSuitable"),
 		WaitingMinutes: req.WaitingMinutes, RequestedStartAt: req.ScheduledAt, UrgencyType: req.UrgencyType, Now: now,
-		ManualQuoteRequired: req.CargoType == models.CargoTypeEvEsyasi && req.CargoDetails["moveType"] == "komple",
+		ManualQuoteRequired: (req.CargoType == models.CargoTypeEvEsyasi && req.CargoDetails["moveType"] == "komple") || (req.CargoDetails["capacityInput"] == "simple-v1" && req.CargoDetails["capacityQuoteRequired"] == true),
 	})
 }
 

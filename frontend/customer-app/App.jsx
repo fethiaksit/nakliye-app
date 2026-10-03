@@ -32,7 +32,6 @@ const initialLoadForm = () => ({
   cargoTypeNote: '',
   vehicleType: 'farketmez',
   weight: '',
-  volume: '',
   length: '',
   width: '',
   height: '',

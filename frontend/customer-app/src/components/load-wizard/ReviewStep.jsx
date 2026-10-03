@@ -11,14 +11,14 @@ import {
   stopTypeLabel,
   vehicleTypeLabel,
 } from '../../../../shared/loadMetadata';
-import { loads } from '../../services/api';
+import { loads, logApiError } from '../../services/api';
 import Icon from '../../../../shared/ui/Icon';
 import { AppButton } from '../../../../shared/ui/primitives';
 import { colors, radius, shadows, spacing, typography } from '../../../../shared/ui/theme';
 import { formatMoney, resolveMediaUrl } from '../../utils/presentation';
 
 const { buildPricingFields } = require('../../utils/loadForm.cjs');
-const { verifyPricingEstimate } = require('../../utils/pricingEstimate.cjs');
+const { verifyPricingEstimate, isPublishDisabled } = require('../../utils/pricingEstimate.cjs');
 
 export default function ReviewStep({
   form = {},
@@ -80,7 +80,7 @@ export default function ReviewStep({
     setEstimateState({ key: requestKey });
     loads.estimate(JSON.parse(requestKey), controller.signal)
       .then(({ data }) => { if (active) setEstimateState({ key: requestKey, data: verifyPricingEstimate(data) }); })
-      .catch(() => { if (active) setEstimateState({ key: requestKey, error: 'Fiyat tahmini hesaplanamadı. Lütfen yeniden deneyin.' }); });
+      .catch(error => { if (active) logApiError('pricingEstimate', error); if (active) setEstimateState({ key: requestKey, error: 'Şu anda tahmini fiyat gösterilemiyor. İlanınızı yayınlayabilirsiniz; fiyat şoför teklifleriyle belirlenecek.' }); });
     return () => { active = false; controller.abort(); };
   }, [requestKey, retry]);
 
@@ -304,7 +304,7 @@ export default function ReviewStep({
           <Text style={styles.priceTitle}>Önerilen Nakliye Fiyatı</Text>
         </View>
         {pricing ? pricing.manualQuoteRequired ? (
-          <Text style={styles.priceDisclaimer}>Bu taşıma için özel teklif gerekli. Komple ev, TIR ve standart kapasiteyi aşan işler şoförün değerlendirmesiyle fiyatlanır.</Text>
+          <Text style={styles.priceDisclaimer}>Bu taşıma için şoför teklifi gerekli. İlanınızı yayınlayabilirsiniz; eşya bilgileri ve taşıma koşullarına göre teklifler gelecektir.</Text>
         ) : (
           <>
             <Text style={styles.priceRange}>{formatMoney(pricing.recommendedPrice)}</Text>
@@ -341,7 +341,7 @@ export default function ReviewStep({
         icon="send"
         loading={saving}
         onPress={onPublish}
-        disabled={!pricing || saving}
+        disabled={isPublishDisabled({ saving })}
         style={styles.publishButton}
       />
       <Text style={styles.publishHint}>

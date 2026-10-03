@@ -334,8 +334,8 @@ components:
         lengthCm: { type: number, minimum: 1, maximum: 5000 }
         widthCm: { type: number, minimum: 1, maximum: 5000 }
         heightCm: { type: number, minimum: 1, maximum: 5000 }
-        weightKg: { type: number, minimum: 0.1, maximum: 100000 }
-        volumeM3: { type: number, minimum: 0, maximum: 125000, description: Total cargo volume; positive values take precedence over box dimensions }
+        weightKg: { type: number, minimum: 0, maximum: 100000, description: Zero requests server inference for simple-v1 cargo; legacy requests default to 50 kg }
+        volumeM3: { type: number, minimum: 0, maximum: 125000, description: Server inferred for simple-v1 cargo; legacy positive values take precedence over box dimensions }
     CreateListingRequest:
       type: object
       required: [title, description, pickup, delivery, urgencyType, cargoType, vehicleType, dimensions, pickupFloor, deliveryFloor, pickupElevatorAvailable, deliveryElevatorAvailable, helperNeeded]

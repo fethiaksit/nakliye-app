@@ -29,6 +29,12 @@ test('repeat load copies only listing form fields and forces a fresh schedule an
 test('repeat respects original auto-selection instead of locking the previously calculated class', () => {
  const draft = buildRepeatDraft({ vehicleType: 'kamyonet', requestedVehicleType: 'farketmez', dimensions: { volumeM3: 12, weightKg: 2000 } });
  assert.equal(draft.form.vehicleType, 'farketmez');
- assert.equal(draft.form.volume, '12');
+ assert.equal(draft.form.volume, undefined);
  assert.equal(buildRepeatDraft({ vehicleType: 'panelvan' }).form.vehicleType, 'panelvan');
+});
+
+test('repeat preserves optional reported weight but asks server to infer missing weight again', () => {
+ const load = { dimensions: { weightKg: 750 }, cargoDetails: { capacityInput: 'simple-v1', reportedWeightKg: 0, palletCount: 3 } };
+ assert.equal(buildRepeatDraft(load).form.weight, '');
+ assert.equal(buildRepeatDraft({ ...load, cargoDetails: { ...load.cargoDetails, reportedWeightKg: 900 } }).form.weight, '900');
 });

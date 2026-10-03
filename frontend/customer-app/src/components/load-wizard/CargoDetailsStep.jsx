@@ -204,9 +204,15 @@ export default function CargoDetailsStep({ form, onFormChange, onDetailChange, o
       <Text style={styles.title}>Yük Detayları</Text>
       <Text style={styles.subtitle}>Taşıma ekibinin hazırlıklı gelmesi için operasyonel detayları belirleyin.</Text>
 
-      <SectionCard title="Fiyat ve Araç İçin Yük Bilgileri" description="Toplam hacim ve ağırlık araç seçimini belirler. Boş bırakırsanız 50 kg / 1 m³ küçük yük varsayılır; gerçek yükünüzü belirtmeniz tahmini iyileştirir." icon="cube-outline">
-        {['ev_esyasi', 'mobilya', 'beyaz_esya'].includes(cargoType) ? <TextField label="Toplam Ağırlık (kg)" value={String(form.weight || '')} onChangeText={v => formChange('weight', v)} keyboardType="decimal-pad" error={errors.weight} /> : null}
-        <TextField label="Toplam Hacim (m³)" value={String(form.volume || '')} onChangeText={v => formChange('volume', v)} placeholder="Örn: 5 · 1 m³ = 1 × 1 × 1 metre" keyboardType="decimal-pad" error={errors.volume} />
+      <SectionCard title="Taşıma Bilgileri" description="Eşya türü ve adedinden araç ihtiyacı yaklaşık belirlenir. Ölçü veya hacim hesaplamanız gerekmez; son fiyat şoför teklifleriyle netleşir." icon="cube-outline">
+        {['ticari_yuk', 'parsiyel_yuk', 'diger'].includes(cargoType) || (cargoType === 'ev_esyasi' && cargoDetails.moveType === 'parca') ? (
+          <SegmentedControl columns={1} label="Yaklaşık ne kadar eşya taşınacak?" options={[
+            { value: 'small', label: 'Birkaç koli / küçük eşya' },
+            { value: 'medium', label: 'Birkaç büyük eşya' },
+            { value: 'large', label: 'Çok sayıda büyük eşya' },
+            { value: 'unknown', label: 'Emin değilim' },
+          ]} value={cargoDetails.loadSize || 'unknown'} onChange={v => detailChange('loadSize', v)} />
+        ) : null}
         <SegmentedControl label="Yüklemeyi kim yapacak?" options={responsibilityOptions} value={cargoDetails.loadingResponsibility || (form.helperNeeded ? 'driver' : 'customer')} onChange={v => detailChange('loadingResponsibility', v)} />
         <SegmentedControl label="Boşaltmayı kim yapacak?" options={responsibilityOptions} value={cargoDetails.unloadingResponsibility || (form.helperNeeded ? 'driver' : 'customer')} onChange={v => detailChange('unloadingResponsibility', v)} />
         {!['ev_esyasi', 'mobilya', 'beyaz_esya'].includes(cargoType) ? <>

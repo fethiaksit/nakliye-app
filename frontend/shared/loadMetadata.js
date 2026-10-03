@@ -115,6 +115,8 @@ export const generateLoadTitle = (cargoType, cargoDetails = {}, cargoTypeNote = 
 
 export const generateLoadDescription = (cargoType, cargoDetails = {}, cargoTypeNote = '', form = {}) => {
   const parts = [];
+  const sizeLabels = { small: 'Birkaç koli / küçük eşya', medium: 'Birkaç büyük eşya', large: 'Çok sayıda büyük eşya', unknown: 'Miktardan emin değilim' };
+  if (sizeLabels[cargoDetails.loadSize]) parts.push(`Yaklaşık yük: ${sizeLabels[cargoDetails.loadSize]}.`);
 
   switch (cargoType) {
     case 'ev_esyasi':

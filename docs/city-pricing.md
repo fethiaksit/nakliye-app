@@ -30,7 +30,11 @@ Aralık = 50 TL'ye yuvarla(tahmin × 0.90), 50 TL'ye yuvarla(tahmin × 1.15)
 - Paketleme, montaj, forklift ve özel hizmetler otomatik tarifeye dahil değildir; şoför teklifine konu olur.
 - Komple ev, TIR ve kamyon üst kapasitesini aşan yüklerde `manualQuoteRequired: true`; önerilen fiyat/aralık sıfırdır ve uygulama **Özel teklif gerekli** gösterir. Küçük yük fiyatıyla evden eve fiyatı uydurulmaz.
 
-Toplam hacim `dimensions.volumeM3` üzerinden alınır. Yoksa `lengthCm × widthCm × heightCm / 1.000.000` kullanılır. Eksik fiziksel veride mevcut 50 kg / 1 m³ varsayımı korunur ve müşteri ekranında belirtilir. Kullanıcının toplam yük hacmini girmesi önemlidir.
+Müşteri uygulaması hacim sormaz. `cargoDetails.capacityInput: simple-v1` ile sunucu mobilya/beyaz eşyanın tür ve adetlerinden, palet adedinden ve motosiklet türünden yaklaşık kapasite belirler. Diğer yüklerde “birkaç koli / küçük eşya”, “birkaç büyük eşya”, “çok sayıda büyük eşya” veya “emin değilim” sorulur. İsteğe bağlı ticari yük ağırlığı biliniyorsa kullanılır; ev eşyasında müşterinin kg hesaplaması gerekmez. `reportedWeightKg`, tekrar ilan verirken bildirilen ağırlığı hesaplanan ağırlıktan ayırır.
+
+Basit büyüklük sınıfları sırasıyla 2 m³ / 100 kg, 6 m³ / 600 kg ve 15 m³ / 1.500 kg referanslarını kullanır. Kanepe 2 m³ / 80 kg, sandalye 0,3 m³ / 8 kg, buzdolabı 1 m³ / 80 kg gibi eşya referansları `cargo_capacity.go` içinde bulunur. Bunlar yaklaşık hesaplama değerleridir; fiziksel sığma garantisi değildir. Özel ölçülü palet, tanınmayan eşya ve belirsiz miktarda `manualQuoteRequired` kullanılır; küçük yük fiyatı üretilmez. Geçersiz adetler reddedilir. Sunucu, istemcinin gönderdiği hacim ve teklif bayrağını yeniden hesaplar.
+
+Eski istemciler için `dimensions.volumeM3`, yoksa ölçülerden hacim ve 50 kg / 1 m³ varsayımı korunur. Yeni sunucu önce, müşteri uygulaması sonra güncellenmelidir. Fiyat önizlemesi isteğe bağlıdır: hata veya bekleme sırasında yayınlama butonu açık kalır. Oluşturma/yayınlama kendi sunucu doğrulamasını ve rota hesabını yapar; önizleme hatası geçerli ilanı engellemez.
 
 ## API ve kayıtlar
 

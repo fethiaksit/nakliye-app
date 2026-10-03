@@ -150,3 +150,55 @@ func TestCityPreviewIsReadOnlyAndPersistsEffectiveVehicle(t *testing.T) {
 		t.Fatalf("offer wasn't independent of reference: %#v", agreed)
 	}
 }
+
+func TestSimpleCargoCanBeEstimatedCreatedAndPublishedWithoutCustomerVolume(t *testing.T) {
+	handler := newPricingTestAPI(t)
+	customer := registerTestUser(t, handler, "simplecargo", models.RoleCustomer)
+	scheduled := time.Now().Add(48 * time.Hour).UTC().Truncate(24 * time.Hour).Add(9 * time.Hour)
+	for _, tc := range []struct {
+		name, cargo    string
+		details        map[string]any
+		volume, weight float64
+		manual         bool
+	}{
+		{"items", "mobilya", map[string]any{"items": []any{map[string]any{"name": "Kanepe", "count": 2}, map[string]any{"name": "Sandalye", "count": 4}}}, 5.2, 192, false},
+		{"unsure", "diger", map[string]any{"loadSize": "unknown"}, 1, 50, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.details["capacityInput"] = "simple-v1"
+			tc.details["capacityQuoteRequired"] = !tc.manual
+			payload := map[string]any{"title": "Basit yük bilgileri", "description": "Eşyaları taşıma", "pickup": map[string]any{"address": "A", "latitude": 38.46, "longitude": 27.21}, "delivery": map[string]any{"address": "B", "latitude": 38.42, "longitude": 27.13}, "urgencyType": "scheduled", "scheduledAt": scheduled, "cargoType": tc.cargo, "cargoTypeNote": "Koli", "vehicleType": "farketmez", "cargoDetails": tc.details, "dimensions": map[string]any{"weightKg": 0, "volumeM3": .1}}
+			preview := requestJSON(t, handler, http.MethodPost, "/api/pricing/estimate", customer.AccessToken, payload)
+			if preview.Code != http.StatusOK {
+				t.Fatalf("preview %d %s", preview.Code, preview.Body.String())
+			}
+			estimate := decodeResponse[models.PricingSnapshot](t, preview)
+			created := requestJSON(t, handler, http.MethodPost, "/api/loads", customer.AccessToken, payload)
+			if created.Code != http.StatusCreated {
+				t.Fatalf("create %d %s", created.Code, created.Body.String())
+			}
+			load := decodeResponse[models.Load](t, created)
+			if load.Dimensions.VolumeM3 != tc.volume || load.Dimensions.WeightKG != tc.weight || load.Pricing.ManualQuoteRequired != tc.manual || estimate.RecommendedPrice != load.Pricing.RecommendedPrice {
+				t.Fatalf("wrong inferred capacity/price: %#v / %#v", load, estimate)
+			}
+			if tc.manual && load.Pricing.RecommendedPrice != 0 {
+				t.Fatal("unknown capacity invented a price")
+			}
+			if !tc.manual && (load.VehicleType != models.VehicleTypePanelvan || estimate.RecommendedPrice != 3400) {
+				t.Fatalf("wrong item price %#v", estimate)
+			}
+			published := requestJSON(t, handler, http.MethodPost, "/api/loads/"+load.ID+"/publish", customer.AccessToken, nil)
+			if published.Code != http.StatusOK {
+				t.Fatalf("publish %d %s", published.Code, published.Body.String())
+			}
+		})
+	}
+}
+
+func TestSimpleCargoRejectsInvalidItemCounts(t *testing.T) {
+	req := loadRequest{CargoType: models.CargoTypeMobilya, CargoDetails: map[string]any{"capacityInput": "simple-v1", "items": []any{map[string]any{"name": "Kanepe", "count": -1.0}}}}
+	normalizeLoadRequest(&req)
+	if err := validLoad(req, time.Now()); err == nil || err.Error() != "eşya adedi 1 ile 1000 arasında tam sayı olmalıdır" {
+		t.Fatalf("wrong validation: %v", err)
+	}
+}

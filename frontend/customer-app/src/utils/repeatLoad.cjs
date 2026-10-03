@@ -33,7 +33,7 @@ function buildRepeatDraft(load = {}) {
       title: load.title || '', description: load.description || '', urgencyType: 'immediate', scheduledDate: '', scheduledTime: '',
       cargoType: load.cargoType || '', cargoTypeNote: load.cargoTypeNote || '', vehicleType: load.requestedVehicleType || load.vehicleType || 'farketmez',
       cargoDetails: load.cargoDetails ? JSON.parse(JSON.stringify(load.cargoDetails)) : {},
-      volume: String(load.dimensions?.volumeM3 || ''), weight: String(load.dimensions?.weightKg || ''), length: String(load.dimensions?.lengthCm || ''),
+      weight: load.cargoDetails?.capacityInput === 'simple-v1' ? String(load.cargoDetails.reportedWeightKg || '') : String(load.dimensions?.weightKg || ''), length: String(load.dimensions?.lengthCm || ''),
       width: String(load.dimensions?.widthCm || ''), height: String(load.dimensions?.heightCm || ''),
       pickupFloor: String(load.pickupFloor ?? 0), deliveryFloor: String(load.deliveryFloor ?? 0),
       pickupElevatorAvailable: Boolean(load.pickupElevatorAvailable), deliveryElevatorAvailable: Boolean(load.deliveryElevatorAvailable),

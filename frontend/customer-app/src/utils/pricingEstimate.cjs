@@ -14,4 +14,7 @@ function verifyPricingEstimate(data) {
   return data;
 }
 
-module.exports = { verifyPricingEstimate };
+// Estimates are optional guidance; creation performs its own server validation.
+function isPublishDisabled({ saving = false } = {}) { return Boolean(saving); }
+
+module.exports = { verifyPricingEstimate, isPublishDisabled };
