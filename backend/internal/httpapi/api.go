@@ -128,6 +128,8 @@ func (a *API) Routes() http.Handler {
 	mux.Handle("GET /api/admin/users/{id}", a.adminAuth(http.HandlerFunc(a.adminUser)))
 	mux.Handle("PATCH /api/admin/users/{id}/status", a.adminAuth(http.HandlerFunc(a.adminUserStatus)))
 	mux.Handle("GET /api/admin/driver-wallets", a.adminAuth(http.HandlerFunc(a.adminDriverWalletAccounts)))
+	mux.Handle("GET /api/admin/driver-wallets/payment-account", a.adminAuth(http.HandlerFunc(a.adminDriverPaymentAccount)))
+	mux.Handle("PUT /api/admin/driver-wallets/payment-account", a.adminAuth(http.HandlerFunc(a.adminDriverPaymentAccount)))
 	mux.Handle("GET /api/admin/drivers", a.adminAuth(http.HandlerFunc(a.adminDrivers)))
 	mux.Handle("GET /api/admin/drivers/{id}", a.adminAuth(http.HandlerFunc(a.adminDriver)))
 	mux.Handle("PATCH /api/admin/drivers/{id}/verification", a.adminAuth(http.HandlerFunc(a.adminDriverVerification)))

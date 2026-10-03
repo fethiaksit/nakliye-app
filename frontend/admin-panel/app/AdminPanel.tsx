@@ -2,6 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import DriverWalletAccounts from "./DriverWalletAccounts";
+import DriverPaymentAccountAdmin from "./DriverPaymentAccountAdmin";
 import DriverWalletAdmin from "./DriverWalletAdmin";
 import CorporateWalletAdmin, { WalletCustomer } from "./CorporateWalletAdmin";
 
@@ -280,6 +281,7 @@ export default function AdminPanel() {
         {error && <div className="alert error-alert" role="alert">{error}<button onClick={() => setError("")}>Kapat</button></div>}
         {notice && <div className="alert success-alert" role="status">{notice}<button onClick={() => setNotice("")}>Kapat</button></div>}
         {tab !== "corporate-wallets" && tab !== "dashboard" && tab !== "activity" && <Toolbar tab={tab} query={query} setQuery={setQuery} filter={filter} setFilter={setFilter} search={() => void loadTab(tab)} />}
+        {tab === "driver-wallets" ? <DriverPaymentAccountAdmin request={request} /> : null}
         {loading ? <LoadingRows /> : tab === "corporate-wallets" ? <CorporateWalletAdmin request={request} items={data?.items || []} /> : tab === "driver-wallets" ? <DriverWalletAccounts data={data as any} onOpenDriver={id => void openDetail("driver", id)} onPage={offset => void loadTab(tab, offset)} /> : <PanelContent tab={tab} data={data} openDetail={openDetail} />}
       </section>
       {detail && detailKind && <DetailDrawer kind={detailKind} data={detail} close={() => { setDetail(null); if (tab === "driver-wallets") void loadTab(tab, data?.offset || 0); }} note={actionNote} setNote={setActionNote} busy={actionBusy} mutate={mutate} request={request} refresh={() => void openDetail(detailKind, detailId(detailKind, detail))} />}
