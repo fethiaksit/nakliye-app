@@ -23,6 +23,18 @@ API:
 - `GET /api/admin/drivers/{id}/wallet`
 - `POST /api/admin/drivers/{id}/wallet/topups`: `{ "amountCents": 100000, "reference": "banka-dekont-referansi" }`
 
+## Şirket tahsilat hesabı
+
+Admin **Şoför Hesapları → Tahsilat hesabı** bölümünde alıcı şirket unvanı, banka adı ve Türkiye IBAN'ını kaydeder; mobilde gösterimi açıp kapatabilir. IBAN boşlukları kaldırılır, büyük harfe çevrilir ve kontrol numarası doğrulanır. Ayar Redis'te kalıcı saklanır; yalnız admin değiştirebilir. İlk kurulumda kapalıdır, örnek veya varsayılan banka hesabı gösterilmez.
+
+Şoför **Cüzdanım → Bakiye yükle** bölümünde şirket hesabını ve havale açıklaması için `SOFOR-<şoför ID>` referansını görür; IBAN ve açıklamayı kopyalayabilir. Admin ayarını değiştirdiğinde cüzdan yenilendiğinde yeni bilgiler alınır. Hesap kapalıysa destek yönlendirmesi gösterilir.
+
+Havale açıklaması şoförü eşleştirmek içindir; admin bakiye yüklerken her ödeme için **benzersiz banka işlem/dekont referansı** kullanmalıdır. Şoförün sabit açıklamasını her yüklemede ödeme referansı olarak kullanmak ikinci ödemeyi engeller. Bankaya gelen ödeme manuel doğrulanır; fatura şirketin kendi muhasebe sisteminde manuel düzenlenip şoföre ayrıca gönderilir. Uygulama fatura oluşturmaz, banka hareketlerini otomatik izlemez veya hesap bilgisi kaydedildiğinde bakiye yüklemez.
+
+- `GET /api/admin/driver-wallets/payment-account`
+- `PUT /api/admin/driver-wallets/payment-account`: `{ "enabled": true, "companyName": "Şirket unvanı", "bankName": "Banka adı", "iban": "TR…" }`
+- `GET /api/driver/wallet`: ek olarak `paymentAccount` (kapalı veya ayarlanmamışsa `null`) ve `paymentReference` döner.
+
 ## Yayına geçiş
 
 Backend, şoför uygulaması ve admin paneli birlikte güncellenmelidir. Yeni şoför cüzdanları sıfır bakiye ile başlar; ilk tekliften önce admin yüklemesi gerekir. Eski bekleyen teklifler kabul sırasında bakiye kontrolüne tabidir. Bu değişiklikten önce kabul edilmiş ve komisyon kaydı bulunmayan işler geriye dönük ücretlendirilmez. Kurumsal ödül cüzdanları değiştirilmez.

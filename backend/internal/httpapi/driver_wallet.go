@@ -7,6 +7,7 @@ import (
 	"nakliye-api/internal/store"
 	"net/http"
 	"strings"
+	"time"
 )
 
 func (a *API) driverWalletView(w http.ResponseWriter, r *http.Request, id string) {
@@ -20,7 +21,44 @@ func (a *API) driverWalletView(w http.ResponseWriter, r *http.Request, id string
 		serverError(w, err)
 		return
 	}
-	jsonResponse(w, 200, map[string]any{"wallet": wallet, "transactions": entries})
+	account, err := a.store.GetDriverPaymentAccount()
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	var paymentAccount *models.DriverPaymentAccount
+	if account.Enabled {
+		paymentAccount = &account
+	}
+	jsonResponse(w, 200, map[string]any{"wallet": wallet, "transactions": entries, "paymentAccount": paymentAccount, "paymentReference": "SOFOR-" + id})
+}
+
+func (a *API) adminDriverPaymentAccount(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPut {
+		var account models.DriverPaymentAccount
+		if !decode(w, r, &account) {
+			return
+		}
+		account.Normalize()
+		if err := account.Validate(); err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		account.UpdatedAt = time.Now().UTC()
+		if err := a.store.SaveDriverPaymentAccount(account); err != nil {
+			serverError(w, err)
+			return
+		}
+		a.adminAudit("driver.payment_account_updated", r, "driver-payment-account", account)
+		jsonResponse(w, 200, account)
+		return
+	}
+	account, err := a.store.GetDriverPaymentAccount()
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	jsonResponse(w, 200, account)
 }
 func (a *API) driverWallet(w http.ResponseWriter, r *http.Request) {
 	p := current(r)
