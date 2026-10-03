@@ -83,6 +83,7 @@ const getAllPages = async (path, params = {}, request = {}) => {
   return { ...firstResponse, data: { ...firstResponse.data, items, total, offset: Math.max(0, Number(params.offset) || 0), limit: items.length } };
 };
 export const loads = {
+  estimate: (data, signal) => client.post('/api/pricing/estimate', data, { signal }),
   list: params => client.get('/api/loads', { params }),
   mine: (params, request) => getAllPages('/api/loads/mine', params, request),
   get: id => client.get(`/api/loads/${id}`),

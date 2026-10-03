@@ -329,15 +329,18 @@ export function CustomerLoads({
         ) : null}
 
         <View style={styles.pricePanel}>
-          <Text style={styles.priceLabel}>İLAN FİYATI</Text>
+          <Text style={styles.priceLabel}>{selected.assignedDriverId ? 'ANLAŞILAN FİYAT' : 'ÖNERİLEN FİYAT'}</Text>
           <Text style={styles.priceValue}>
-            {formatMoney(selected.agreedPriceTl || selected.pricing?.finalPrice || selected.basePriceTl)}
+            {!selected.assignedDriverId && selected.pricing?.manualQuoteRequired ? 'Özel teklif gerekli' : formatMoney(selected.agreedPriceTl || selected.pricing?.finalPrice || selected.basePriceTl)}
           </Text>
-          {selected.pricing ? (
+          {selected.pricing && !selected.pricing.manualQuoteRequired ? (
             <>
+              {!selected.assignedDriverId && selected.pricing.minPrice > 0 ? <Text style={styles.priceBreakdown}>Tahmini aralık: {formatMoney(selected.pricing.minPrice)} – {formatMoney(selected.pricing.maxPrice)}</Text> : null}
+              {selected.pricing.loadingFee > 0 ? <Text style={styles.priceBreakdown}>Taşıma yardımı: +{formatMoney(selected.pricing.loadingFee)}</Text> : null}
+              {selected.pricing.pickupFloorFee + selected.pricing.deliveryFloorFee > 0 ? <Text style={styles.priceBreakdown}>Kat ücreti: +{formatMoney(selected.pricing.pickupFloorFee + selected.pricing.deliveryFloorFee)}</Text> : null}
               <Text style={styles.priceBreakdown}>Başlangıç + yol: {formatMoney(selected.pricing.basePrice)}</Text>
               {selected.pricing.loadExtra > 0 ? (
-                <Text style={styles.priceBreakdown}>Yük farkı: +{formatMoney(selected.pricing.loadExtra)}</Text>
+                <Text style={styles.priceBreakdown}>Doluluk farkı: +{formatMoney(selected.pricing.loadExtra)}</Text>
               ) : null}
               {selected.pricing.waitingFee > 0 ? (
                 <Text style={styles.priceBreakdown}>Bekleme: +{formatMoney(selected.pricing.waitingFee)}</Text>

@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	DefaultBaseDriverFee        = 1500.0
-	DefaultPricePerKM           = 50.0
+	DefaultBaseDriverFee        = 1250.0
+	DefaultPricePerKM           = 35.0
 	DefaultSecondTierPricePerKM = 45.0
 	DefaultThirdTierPricePerKM  = 42.5
 )
@@ -30,7 +30,13 @@ const (
 // PricingConfig is the single source for pricing rules. It is kept as a
 // value object so it can later be loaded from an admin setting or a database
 // without moving calculation logic into HTTP handlers.
+type VehicleTariff struct {
+	BaseFee, PerKM, CapacityKG, CapacityM3 float64
+}
+
 type PricingConfig struct {
+	VehicleTariffs map[models.VehicleType]VehicleTariff
+
 	BaseDriverFee        float64
 	PricePerKM           float64
 	SecondTierPricePerKM float64
@@ -66,6 +72,12 @@ type PricingConfig struct {
 
 func DefaultPricingConfig() PricingConfig {
 	return PricingConfig{
+		VehicleTariffs: map[models.VehicleType]VehicleTariff{
+			models.VehicleTypeMinivan:  {1250, 35, 500, 4},
+			models.VehicleTypePanelvan: {1600, 45, 1200, 13},
+			models.VehicleTypeKamyonet: {2100, 60, 3000, 18},
+			models.VehicleTypeKamyon:   {3250, 85, 12000, 60},
+		},
 		BaseDriverFee:        DefaultBaseDriverFee,
 		PricePerKM:           DefaultPricePerKM,
 		SecondTierPricePerKM: DefaultSecondTierPricePerKM,
@@ -76,9 +88,9 @@ func DefaultPricingConfig() PricingConfig {
 		LoadHardMultiplier:     1.20,
 		LoadVeryHardMultiplier: 1.30,
 
-		NightMultiplier:   1.10,
-		UrgentMultiplier:  1.10,
-		HolidayMultiplier: 1.10,
+		NightMultiplier:   1.20,
+		UrgentMultiplier:  1.20,
+		HolidayMultiplier: 1.00,
 		WeekendMultiplier: 1.00,
 
 		WaitingFreeMinutes:       30,
@@ -100,6 +112,9 @@ func DefaultPricingConfig() PricingConfig {
 
 func normalizedPricingConfig(config PricingConfig) PricingConfig {
 	defaults := DefaultPricingConfig()
+	if config.VehicleTariffs == nil {
+		config.VehicleTariffs = defaults.VehicleTariffs
+	}
 	if config.BaseDriverFee <= 0 {
 		config.BaseDriverFee = defaults.BaseDriverFee
 	}
@@ -195,22 +210,14 @@ func CalculateBasePrice(config PricingConfig, distanceKM float64) (float64, erro
 	return roundCurrency(config.BaseDriverFee + distanceFee), nil
 }
 
-// CalculateDistanceFee applies progressive kilometer tiers. The first 100 km
-// use the base rate, the next 50 km use the second-tier rate, and every
-// kilometer after 150 km uses the third-tier rate.
+// CalculateDistanceFee is the default minivan route-only preview; the first
+// five kilometers are included. Full listings use their selected vehicle tariff.
 func CalculateDistanceFee(config PricingConfig, distanceKM float64) (float64, error) {
 	config = normalizedPricingConfig(config)
 	if !validFinite(distanceKM) || distanceKM <= 0 {
 		return 0, errors.New("mesafe sıfırdan büyük ve geçerli olmalıdır")
 	}
-	firstTierKM := math.Min(distanceKM, 100)
-	secondTierKM := math.Min(math.Max(distanceKM-100, 0), 50)
-	thirdTierKM := math.Max(distanceKM-150, 0)
-	return roundCurrency(
-		firstTierKM*config.PricePerKM +
-			secondTierKM*config.SecondTierPricePerKM +
-			thirdTierKM*config.ThirdTierPricePerKM,
-	), nil
+	return roundCurrency(math.Max(0, distanceKM-5) * config.PricePerKM), nil
 }
 
 func CalculateWaitingFee(config PricingConfig, minutes int) (float64, error) {
@@ -232,6 +239,15 @@ func CalculateWaitingFee(config PricingConfig, minutes int) (float64, error) {
 }
 
 type PricingInput struct {
+	VehicleType                                        models.VehicleType
+	Dimensions                                         models.Dimensions
+	VolumeM3                                           float64
+	HelperCount                                        int
+	PickupDriverHandling, DeliveryDriverHandling       bool
+	PickupFloor, DeliveryFloor                         *int
+	PickupElevatorAvailable, DeliveryElevatorAvailable bool
+	ManualQuoteRequired                                bool
+
 	DistanceKM       float64
 	LoadLevel        LoadLevel
 	WaitingMinutes   int
@@ -242,6 +258,17 @@ type PricingInput struct {
 }
 
 type PricingBreakdown struct {
+	VehicleType         models.VehicleType `json:"vehicleType"`
+	IncludedKM          float64            `json:"includedKm"`
+	OccupancyRatio      float64            `json:"occupancyRatio"`
+	LoadingFee          float64            `json:"loadingFee"`
+	PickupFloorFee      float64            `json:"pickupFloorFee"`
+	DeliveryFloorFee    float64            `json:"deliveryFloorFee"`
+	MinPrice            float64            `json:"minPrice"`
+	MaxPrice            float64            `json:"maxPrice"`
+	ManualQuoteRequired bool               `json:"manualQuoteRequired"`
+	AlgorithmVersion    string             `json:"algorithmVersion"`
+
 	DistanceKM        float64   `json:"distanceKm"`
 	BaseDriverFee     float64   `json:"baseDriverFee"`
 	PricePerKM        float64   `json:"pricePerKm"`
@@ -261,24 +288,104 @@ type PricingBreakdown struct {
 	Currency          string    `json:"currency"`
 }
 
+// CalculateEstimatedPrice produces a reference, never a binding driver offer.
 func CalculateEstimatedPrice(config PricingConfig, input PricingInput) (PricingBreakdown, error) {
 	config = normalizedPricingConfig(config)
 	if !validFinite(input.DistanceKM) || input.DistanceKM <= 0 {
 		return PricingBreakdown{}, errors.New("mesafe sıfırdan büyük ve geçerli olmalıdır")
 	}
-	loadMultiplier, ok := multiplierForLevel(config, input.LoadLevel)
-	if !ok {
-		return PricingBreakdown{}, fmt.Errorf("geçersiz yük seviyesi: %q", input.LoadLevel)
+	for _, v := range []float64{input.VolumeM3, input.Dimensions.WeightKG, input.Dimensions.LengthCM, input.Dimensions.WidthCM, input.Dimensions.HeightCM} {
+		if !validFinite(v) || v < 0 {
+			return PricingBreakdown{}, errors.New("yük ölçüleri ve ağırlığı geçerli, negatif olmayan değerler olmalıdır")
+		}
 	}
-	waitingFee, err := CalculateWaitingFee(config, input.WaitingMinutes)
-	if err != nil {
-		return PricingBreakdown{}, err
+	if input.HelperCount < 0 || input.HelperCount > models.MaxHelperCount {
+		return PricingBreakdown{}, errors.New("geçersiz yardımcı sayısı")
 	}
-	distanceFee, err := CalculateDistanceFee(config, input.DistanceKM)
-	if err != nil {
-		return PricingBreakdown{}, err
+	if input.VehicleType != "" && !models.ValidVehicleType(input.VehicleType) {
+		return PricingBreakdown{}, errors.New("geçersiz araç türü")
 	}
-	basePrice := roundCurrency(config.BaseDriverFee + distanceFee)
+	if input.LoadLevel != "" {
+		if _, ok := multiplierForLevel(config, input.LoadLevel); !ok {
+			return PricingBreakdown{}, fmt.Errorf("geçersiz yük seviyesi: %q", input.LoadLevel)
+		}
+	}
+	volume := input.VolumeM3
+	if volume == 0 {
+		volume = input.Dimensions.LengthCM * input.Dimensions.WidthCM * input.Dimensions.HeightCM / 1_000_000
+	}
+	if !validFinite(volume) {
+		return PricingBreakdown{}, errors.New("geçersiz yük hacmi")
+	}
+	// Require both weight and volume to fit; fill gaps between the advertised
+	// vehicle bands. A requested larger vehicle is respected; smaller is upgraded.
+	types := []models.VehicleType{models.VehicleTypeMinivan, models.VehicleTypePanelvan, models.VehicleTypeKamyonet, models.VehicleTypeKamyon}
+	requested := input.VehicleType
+	if requested == models.VehicleTypeAcikKasa || requested == models.VehicleTypeKapaliKasa {
+		requested = models.VehicleTypeKamyonet
+	}
+	if requested == models.VehicleTypeTir {
+		requested = models.VehicleTypeKamyon
+		input.ManualQuoteRequired = true
+	}
+	rank := 0
+	for i, v := range types {
+		if v == requested {
+			rank = i
+		}
+	}
+	selected := types[len(types)-1]
+	tariff := config.VehicleTariffs[selected]
+	for i, v := range types {
+		t, ok := config.VehicleTariffs[v]
+		if !ok || t.CapacityKG <= 0 || t.CapacityM3 <= 0 || t.BaseFee <= 0 || t.PerKM <= 0 {
+			return PricingBreakdown{}, errors.New("geçersiz araç tarifesi")
+		}
+		if i >= rank && input.Dimensions.WeightKG <= t.CapacityKG && volume <= t.CapacityM3 {
+			selected = v
+			tariff = t
+			break
+		}
+	}
+	if selected == models.VehicleTypeMinivan {
+		tariff.BaseFee = config.BaseDriverFee
+		tariff.PerKM = config.PricePerKM
+	}
+	ratio := math.Max(input.Dimensions.WeightKG/tariff.CapacityKG, volume/tariff.CapacityM3)
+	if ratio > 1 {
+		input.ManualQuoteRequired = true
+	}
+	occupancy := 1.0
+	if ratio > 0.90 {
+		occupancy = 1.25
+	} else if ratio > 0.75 {
+		occupancy = 1.15
+	} else if ratio > 0.50 {
+		occupancy = 1.08
+	}
+	loading := 0.0
+	if input.HelperCount > 0 {
+		loading = 900 + float64(input.HelperCount-1)*800
+	} else if input.PickupDriverHandling || input.DeliveryDriverHandling {
+		loading = 400
+	}
+	floorFee := func(floor *int, elevator, handling bool) float64 {
+		if !handling || elevator || floor == nil || *floor <= 0 {
+			return 0
+		}
+		if *floor <= 2 {
+			return 250
+		}
+		if *floor <= 4 {
+			return 500
+		}
+		return 800
+	}
+	pickupFee := floorFee(input.PickupFloor, input.PickupElevatorAvailable, input.PickupDriverHandling)
+	deliveryFee := floorFee(input.DeliveryFloor, input.DeliveryElevatorAvailable, input.DeliveryDriverHandling)
+	distanceFee := roundCurrency(math.Max(0, input.DistanceKM-5) * tariff.PerKM)
+	base := roundCurrency(tariff.BaseFee + distanceFee)
+	subtotal := base + loading + pickupFee + deliveryFee
 	now := input.Now
 	if now.IsZero() {
 		now = time.Now().UTC()
@@ -287,50 +394,43 @@ func CalculateEstimatedPrice(config PricingConfig, input PricingInput) (PricingB
 	if input.UrgencyType == models.UrgencyImmediate {
 		start = &now
 	}
-	nightMultiplier, urgentMultiplier := 1.0, 1.0
-	weekendMultiplier := 1.0
+	timeMultiplier, urgent := 1.0, 1.0
+	location, err := time.LoadLocation(config.Timezone)
+	if err != nil {
+		return PricingBreakdown{}, err
+	}
 	if start != nil {
-		location, locationErr := time.LoadLocation(config.Timezone)
-		if locationErr != nil {
-			location = time.UTC
+		hour := start.In(location).Hour()
+		if hour >= 23 || hour < 7 {
+			timeMultiplier = config.NightMultiplier
+		} else if hour >= 19 {
+			timeMultiplier = 1.10
 		}
-		localStart := start.In(location)
-		if localStart.Hour() >= 22 || localStart.Hour() < 6 {
-			nightMultiplier = config.NightMultiplier
-		}
-		if localStart.Weekday() == time.Saturday || localStart.Weekday() == time.Sunday {
-			weekendMultiplier = config.WeekendMultiplier
-		}
-		untilStart := start.Sub(now)
-		if untilStart >= 0 && untilStart <= 2*time.Hour {
-			urgentMultiplier = config.UrgentMultiplier
+		until := start.Sub(now)
+		if until >= 0 && until <= 2*time.Hour {
+			urgent = config.UrgentMultiplier
+		} else if start.In(location).Format("2006-01-02") == now.In(location).Format("2006-01-02") && until >= 0 {
+			urgent = 1.10
 		}
 	}
-	holidayMultiplier := 1.0
-	if input.IsHoliday {
-		holidayMultiplier = config.HolidayMultiplier
+	// Today without an exact appointment has no invented night surcharge.
+	if input.UrgencyType == models.UrgencyToday {
+		urgent = 1.10
 	}
-	loadAdjustedPrice := basePrice * loadMultiplier
-	preWaiting := loadAdjustedPrice * nightMultiplier * urgentMultiplier * holidayMultiplier * weekendMultiplier
-	finalPrice := RoundToNearest50(preWaiting + waitingFee)
+	waiting, err := CalculateWaitingFee(config, input.WaitingMinutes)
+	if err != nil {
+		return PricingBreakdown{}, err
+	}
+	final := RoundToNearest50(subtotal*occupancy*timeMultiplier*urgent + waiting)
+	if input.ManualQuoteRequired {
+		final = 0
+	}
 	return PricingBreakdown{
-		DistanceKM:        roundCurrency(input.DistanceKM),
-		BaseDriverFee:     config.BaseDriverFee,
-		PricePerKM:        config.PricePerKM,
-		DistanceFee:       distanceFee,
-		BasePrice:         basePrice,
-		LoadLevel:         input.LoadLevel,
-		LoadMultiplier:    loadMultiplier,
-		LoadExtra:         roundCurrency(loadAdjustedPrice - basePrice),
-		WaitingMinutes:    input.WaitingMinutes,
-		WaitingFee:        roundCurrency(waitingFee),
-		NightMultiplier:   nightMultiplier,
-		UrgentMultiplier:  urgentMultiplier,
-		HolidayMultiplier: holidayMultiplier,
-		WeekendMultiplier: weekendMultiplier,
-		FinalPrice:        finalPrice,
-		RecommendedPrice:  finalPrice,
-		Currency:          "TRY",
+		VehicleType: selected, IncludedKM: 5, OccupancyRatio: roundCurrency(ratio), LoadingFee: loading, PickupFloorFee: pickupFee, DeliveryFloorFee: deliveryFee,
+		MinPrice: RoundToNearest50(final * 0.90), MaxPrice: RoundToNearest50(final * 1.15), ManualQuoteRequired: input.ManualQuoteRequired, AlgorithmVersion: "city-v2",
+		DistanceKM: roundCurrency(input.DistanceKM), BaseDriverFee: tariff.BaseFee, PricePerKM: tariff.PerKM, DistanceFee: distanceFee, BasePrice: base,
+		LoadLevel: LoadLevelNormal, LoadMultiplier: occupancy, LoadExtra: roundCurrency(subtotal * (occupancy - 1)), WaitingMinutes: input.WaitingMinutes, WaitingFee: waiting,
+		NightMultiplier: timeMultiplier, UrgentMultiplier: urgent, HolidayMultiplier: 1, WeekendMultiplier: 1, FinalPrice: final, RecommendedPrice: final, Currency: "TRY",
 	}, nil
 }
 

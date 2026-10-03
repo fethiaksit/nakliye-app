@@ -81,12 +81,13 @@ export default function DriverJobSummary({ load }) {
       {/* Price Container */}
       <View style={styles.priceContainer}>
         <View>
-          <Text style={styles.priceLabel}>MÜŞTERİ TAHMİNİ FİYATI</Text>
-          <Text style={styles.priceValue}>{formatMoney(price)}</Text>
+          <Text style={styles.priceLabel}>ÖNERİLEN FİYAT</Text>
+          <Text style={styles.priceValue}>{load.pricing?.manualQuoteRequired ? 'Özel teklif gerekli' : formatMoney(price)}</Text>
         </View>
-        {loadExtra > 0 ? (
+        {load.pricing?.minPrice > 0 ? <Text style={styles.priceLabel}>{formatMoney(load.pricing.minPrice)} – {formatMoney(load.pricing.maxPrice)}</Text> : null}
+        {loadExtra > 0 && !load.pricing?.manualQuoteRequired ? (
           <View style={styles.extraBadge}>
-            <Text style={styles.extraText}>+{formatMoney(loadExtra)} ek yük</Text>
+            <Text style={styles.extraText}>+{formatMoney(loadExtra)} doluluk farkı</Text>
           </View>
         ) : null}
       </View>

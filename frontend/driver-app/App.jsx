@@ -155,7 +155,7 @@ function DriverApp() {
     setSelected(load);
     setSelectedOffer(offer);
     setOfferErrors({});
-    setOfferForm({ amount: String(toFiniteNumber(offer?.amountTl, toFiniteNumber(load.basePriceTl, toFiniteNumber(load.agreedPriceTl)))), note: offer?.note || '', eta: String(offer?.estimatedArrivalMinutes || 45) });
+    setOfferForm({ amount: !offer && load.pricing?.manualQuoteRequired ? '' : String(toFiniteNumber(offer?.amountTl, toFiniteNumber(load.pricing?.recommendedPrice, toFiniteNumber(load.basePriceTl, toFiniteNumber(load.agreedPriceTl))))), note: offer?.note || '', eta: String(offer?.estimatedArrivalMinutes || 45) });
   }, []);
   const openMessageLoad = useCallback(async id => {
     try {

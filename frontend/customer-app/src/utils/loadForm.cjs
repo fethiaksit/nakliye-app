@@ -126,6 +126,18 @@ function validateStep(step, draft, now = new Date()) {
     }
   }
 
+  if (step === 2) {
+    for (const [key, max] of [['weight', 100000], ['volume', 125000], ['length', 5000], ['width', 5000], ['height', 5000]]) {
+      if (form[key] !== undefined && form[key] !== '' && (!Number.isFinite(number(form[key])) || number(form[key]) <= 0 || number(form[key]) > max)) {
+        errors[key] = 'Geçerli, sıfırdan büyük bir değer girin.';
+      }
+    }
+    if (form.helperNeeded && (!Number.isInteger(number(form.helperCount)) || number(form.helperCount) < 1 || number(form.helperCount) > 20)) errors.helperCount = 'Yardımcı sayısı en az 1, en fazla 20 olmalıdır.';
+    for (const key of ['pickupFloor', 'deliveryFloor']) {
+      if (form[key] !== undefined && form[key] !== '' && (!Number.isInteger(number(form[key])) || number(form[key]) < -5 || number(form[key]) > 100)) errors[key] = 'Kat -5 ile 100 arasında tam sayı olmalıdır.';
+    }
+  }
+
   if (step === 3) {
     if (!routeDraft.pickup) errors.pickup = 'Yükün alınacağı başlangıç adresini seçin.';
     if (!routeDraft.dropoff) errors.dropoff = 'Yükün teslim edileceği varış adresini seçin.';
@@ -158,7 +170,7 @@ function validateStep(step, draft, now = new Date()) {
   }
 
   if (step === 5) {
-    if (form.vehicleType && !['panelvan', 'kamyonet', 'acik_kasa', 'kapali_kasa', 'kamyon', 'tir', 'farketmez'].includes(form.vehicleType)) {
+    if (form.vehicleType && !['minivan', 'panelvan', 'kamyonet', 'acik_kasa', 'kapali_kasa', 'kamyon', 'tir', 'farketmez'].includes(form.vehicleType)) {
       errors.vehicleType = 'Geçerli bir araç tipi seçin.';
     }
   }
@@ -181,6 +193,23 @@ function validateLoadForm(draft, now = new Date()) {
   return Object.values(validateLoadFormFields(draft, now))[0] || '';
 }
 
-module.exports = { number, scheduledAtISO, validateLoadForm, validateLoadFormFields, validateStep };
+function buildPricingFields(form = {}) {
+  const positive = (value, fallback) => Number.isFinite(number(value)) && number(value) > 0 ? number(value) : fallback;
+  const floor = value => Number.isInteger(number(value)) ? number(value) : 0;
+  return {
+    urgencyType: form.urgencyType || 'immediate',
+    ...(form.urgencyType === 'scheduled' ? { scheduledAt: scheduledAtISO(form.scheduledDate, form.scheduledTime) } : {}),
+    cargoType: form.cargoType,
+    cargoTypeNote: form.cargoType === 'diger' ? String(form.cargoTypeNote || '').trim() : '',
+    cargoDetails: form.cargoDetails || {},
+    vehicleType: form.vehicleType || 'farketmez',
+    dimensions: { lengthCm: positive(form.length, 100), widthCm: positive(form.width, 100), heightCm: positive(form.height, 100), weightKg: positive(form.weight, 50), ...(form.volume ? { volumeM3: positive(form.volume, 0) } : {}) },
+    pickupFloor: floor(form.pickupFloor), deliveryFloor: floor(form.deliveryFloor),
+    pickupElevatorAvailable: Boolean(form.pickupElevatorAvailable), deliveryElevatorAvailable: Boolean(form.deliveryElevatorAvailable),
+    helperNeeded: Boolean(form.helperNeeded), helperCount: form.helperNeeded ? positive(form.helperCount, 1) : 0,
+  };
+}
+
+module.exports = { buildPricingFields, number, scheduledAtISO, validateLoadForm, validateLoadFormFields, validateStep };
 
 

@@ -78,3 +78,19 @@ func TestValidateKeepsAdminCredentialsInSeparateSecurityDomain(t *testing.T) {
 		})
 	}
 }
+
+func TestCityTariffsIgnoreObsoleteGlobalOverrides(t *testing.T) {
+	t.Setenv("BASE_DRIVER_FEE", "9999")
+	t.Setenv("PRICE_PER_KM", "999")
+	t.Setenv("MINIVAN_BASE_FEE", "")
+	t.Setenv("MINIVAN_PRICE_PER_KM", "")
+	if got := Load().Pricing; got.BaseDriverFee != 1250 || got.PricePerKM != 35 {
+		t.Fatalf("old overrides changed new tariffs: %#v", got)
+	}
+	t.Setenv("MINIVAN_BASE_FEE", "1350")
+	t.Setenv("PANELVAN_PRICE_PER_KM", "48")
+	got := Load().Pricing
+	if got.BaseDriverFee != 1350 || got.VehicleTariffs["panelvan"].PerKM != 48 {
+		t.Fatalf("vehicle overrides ignored: %#v", got)
+	}
+}

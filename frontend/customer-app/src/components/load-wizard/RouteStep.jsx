@@ -726,12 +726,12 @@ export default function RouteStep({
           <View style={styles.priceDivider} />
           <View style={styles.priceBottomRow}>
             <View>
-              <Text style={styles.estimateLabel}>TAHMİNİ TABAN FİYAT</Text>
+              <Text style={styles.estimateLabel}>KÜÇÜK YÜK İÇİN BAŞLANGIÇ TAHMİNİ</Text>
               <Text style={styles.estimateValue}>{money(route.estimatedPrice)}</Text>
             </View>
             <Text style={styles.priceRate}>{number(route.pricePerKm)} TL/km</Text>
           </View>
-          <Text style={styles.priceNote}>Tüm duraklar güzergaha dahil edilmiştir. Nihai teklifler şoförler tarafından verilir.</Text>
+          <Text style={styles.priceNote}>Minivan için ilk 5 km tabana dahildir; sonrası km bedeli eklenir. Yük, araç ve hizmetlere göre fiyatı özet adımında görebilirsiniz.</Text>
         </View>
       ) : null}
     </View>

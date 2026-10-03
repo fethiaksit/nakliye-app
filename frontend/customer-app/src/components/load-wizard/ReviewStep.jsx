@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import {
@@ -7,13 +7,17 @@ import {
   VEHICLE_TYPE_OPTIONS,
   cargoTypeLabel,
   generateLoadTitle,
+  generateLoadDescription,
   stopTypeLabel,
   vehicleTypeLabel,
 } from '../../../../shared/loadMetadata';
+import { loads } from '../../services/api';
 import Icon from '../../../../shared/ui/Icon';
 import { AppButton } from '../../../../shared/ui/primitives';
 import { colors, radius, shadows, spacing, typography } from '../../../../shared/ui/theme';
-import { formatMoney, resolveMediaUrl, toFiniteNumber } from '../../utils/presentation';
+import { formatMoney, resolveMediaUrl } from '../../utils/presentation';
+
+const { buildPricingFields } = require('../../utils/loadForm.cjs');
 
 export default function ReviewStep({
   form = {},
@@ -57,23 +61,27 @@ export default function ReviewStep({
   const distanceKm = route?.distanceMeters ? (route.distanceMeters / 1000).toFixed(1) : null;
   const durationMin = route?.durationSeconds ? Math.round(route.durationSeconds / 60) : null;
 
-  // Estimated price calculation
-  const calculateEstimatedPrice = () => {
-    const km = distanceKm ? parseFloat(distanceKm) : 10;
-    let base = 400 + km * 30; // base + per km
-    if (stops.length > 0) base += stops.length * 150; // extra per stop
-    if (form.helperNeeded) base += (toFiniteNumber(form.helperCount) || 1) * 350;
-    if (cargoDetails.packagingRequired) base += 250;
-    if (cargoDetails.assemblyRequired) base += 300;
-    if (form.pickupFloor && Number(form.pickupFloor) > 2 && !form.pickupElevatorAvailable) base += Number(form.pickupFloor) * 50;
-    if (form.deliveryFloor && Number(form.deliveryFloor) > 2 && !form.deliveryElevatorAvailable) base += Number(form.deliveryFloor) * 50;
-
-    const minPrice = Math.round(base * 0.9);
-    const maxPrice = Math.round(base * 1.25);
-    return { minPrice, maxPrice };
-  };
-
-  const { minPrice, maxPrice } = calculateEstimatedPrice();
+  const location = value => ({ address: value?.address || value?.formattedAddress || '', latitude: Number(value?.latitude ?? value?.coordinate?.latitude), longitude: Number(value?.longitude ?? value?.coordinate?.longitude) });
+  const requestKey = JSON.stringify({
+    title: form.title?.trim() || autoTitle,
+    description: form.description?.trim() || generateLoadDescription(form.cargoType, cargoDetails, form.cargoTypeNote, form),
+    pickup: location(pickup), delivery: location(dropoff),
+    stops: stops.map((stop, index) => ({ ...location(stop), stopType: stop.stopType || 'delivery', order: index + 1 })),
+    ...buildPricingFields(form),
+  });
+  const [estimateState, setEstimateState] = useState({});
+  const [retry, setRetry] = useState(0);
+  const pricing = estimateState.key === requestKey ? estimateState.data : null;
+  const estimateError = estimateState.key === requestKey ? estimateState.error : '';
+  useEffect(() => {
+    let active = true;
+    const controller = new AbortController();
+    setEstimateState({ key: requestKey });
+    loads.estimate(JSON.parse(requestKey), controller.signal)
+      .then(({ data }) => { if (active) setEstimateState({ key: requestKey, data }); })
+      .catch(() => { if (active) setEstimateState({ key: requestKey, error: 'Fiyat tahmini hesaplanamadı. Lütfen yeniden deneyin.' }); });
+    return () => { active = false; controller.abort(); };
+  }, [requestKey, retry]);
 
   return (
     <View style={styles.container}>
@@ -294,12 +302,21 @@ export default function ReviewStep({
           <Icon name="pricetag" size={20} color={colors.primary} />
           <Text style={styles.priceTitle}>Tahmini Fiyat Beklentisi</Text>
         </View>
-        <Text style={styles.priceRange}>
-          {formatMoney(minPrice)} - {formatMoney(maxPrice)}
-        </Text>
-        <Text style={styles.priceDisclaimer}>
-          Bu fiyat mesafe, kat ve ek hizmetlere göre oluşturulmuş tahmini bir aralıktır. Kesin fiyat şoförlerin vereceği serbest tekliflerle belirlenir.
-        </Text>
+        {pricing ? pricing.manualQuoteRequired ? (
+          <Text style={styles.priceDisclaimer}>Bu taşıma için özel teklif gerekli. Komple ev, TIR ve standart kapasiteyi aşan işler şoförün değerlendirmesiyle fiyatlanır.</Text>
+        ) : (
+          <>
+            <Text style={styles.priceRange}>{formatMoney(pricing.recommendedPrice)}</Text>
+            <Text style={styles.priceDisclaimer}>Tahmini aralık: {formatMoney(pricing.minPrice)} – {formatMoney(pricing.maxPrice)}</Text>
+            <Text style={styles.priceDisclaimer}>Önerilen araç: {vehicleTypeLabel(pricing.vehicleType)} · İlk 5 km dahil</Text>
+            {pricing.loadingFee > 0 ? <Text style={styles.priceDisclaimer}>Yükleme / boşaltma yardımı: {formatMoney(pricing.loadingFee)}</Text> : null}
+            {pricing.pickupFloorFee + pricing.deliveryFloorFee > 0 ? <Text style={styles.priceDisclaimer}>Kat ücreti: {formatMoney(pricing.pickupFloorFee + pricing.deliveryFloorFee)}</Text> : null}
+            <Text style={styles.priceDisclaimer}>Kesin fiyat, kabul edeceğiniz şoför teklifiyle belirlenir. Paketleme, montaj, forklift ve özel taşıma hizmetleri ayrıca teklif edilir.</Text>
+          </>
+        ) : estimateError ? (
+          <><Text style={styles.priceDisclaimer}>{estimateError}</Text><AppButton label="Yeniden hesapla" variant="secondary" onPress={() => setRetry(value => value + 1)} /></>
+        ) : <Text style={styles.priceDisclaimer}>Fiyat hesaplanıyor…</Text>}
+
       </View>
 
       {/* Errors Banner */}
@@ -318,6 +335,7 @@ export default function ReviewStep({
         icon="send"
         loading={saving}
         onPress={onPublish}
+        disabled={!pricing || saving}
         style={styles.publishButton}
       />
       <Text style={styles.publishHint}>
