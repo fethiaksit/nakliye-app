@@ -350,6 +350,11 @@ func (s *RedisStore) AcceptOffer(load models.Load, accepted models.Offer, allOff
 		!models.CanTransition(expected, load.Status) {
 		return ErrInvalidLoadStatusTransition
 	}
+	fee, valid := models.DriverCommissionCents(accepted.AmountTL)
+	if !valid {
+		return ErrDriverWalletBalance
+	}
+	load.DriverCommissionCents = fee
 	loadBytes, err := json.Marshal(load)
 	if err != nil {
 		return err
@@ -368,6 +373,7 @@ func (s *RedisStore) AcceptOffer(load models.Load, accepted models.Offer, allOff
 	}
 	deliveryKey := "load-delivery-verification:" + load.ID
 	watchKeys := []string{"load:" + load.ID, "load-status-event:" + event.ID, deliveryKey}
+	watchKeys = append(watchKeys, driverWatchKeys(load)...)
 	for _, offer := range allOffers {
 		watchKeys = append(watchKeys, "offer:"+offer.ID)
 	}
@@ -381,7 +387,7 @@ func (s *RedisStore) AcceptOffer(load models.Load, accepted models.Offer, allOff
 			return unmarshalErr
 		}
 		currentStatus := models.CanonicalLoadStatus(storedLoad.Status)
-		if currentStatus != expected {
+		if currentStatus != expected || storedLoad.DeletedAt != nil {
 			return ErrLoadStatusConflict
 		}
 		if !models.CanTransition(currentStatus, load.Status) {
@@ -395,7 +401,7 @@ func (s *RedisStore) AcceptOffer(load models.Load, accepted models.Offer, allOff
 		if unmarshalErr := json.Unmarshal(storedAcceptedBytes, &storedAccepted); unmarshalErr != nil {
 			return unmarshalErr
 		}
-		if storedAccepted.Status != "pending" {
+		if storedAccepted.Status != "pending" || storedAccepted.LoadID != load.ID || storedAccepted.DriverID != load.AssignedDriver || storedAccepted.AmountTL != accepted.AmountTL || load.AgreedPriceTL != storedAccepted.AmountTL {
 			return ErrLoadStatusConflict
 		}
 		if exists, existsErr := tx.Exists(s.ctx, deliveryKey).Result(); existsErr != nil {
@@ -404,6 +410,10 @@ func (s *RedisStore) AcceptOffer(load models.Load, accepted models.Offer, allOff
 			return ErrLoadStatusConflict
 		}
 
+		driverMutation, commissionErr := s.prepareDriverCommission(tx, load, "RESERVE", event.ChangedByUserID, event.ChangedAt)
+		if commissionErr != nil {
+			return commissionErr
+		}
 		offerBodies := make(map[string][]byte, len(allOffers))
 		for _, listedOffer := range allOffers {
 			storedOfferBytes, offerErr := tx.Get(s.ctx, "offer:"+listedOffer.ID).Bytes()
@@ -427,6 +437,7 @@ func (s *RedisStore) AcceptOffer(load models.Load, accepted models.Offer, allOff
 		}
 
 		_, txErr := tx.TxPipelined(s.ctx, func(pipe redis.Pipeliner) error {
+			s.writeDriverCommission(pipe, driverMutation)
 			pipe.Set(s.ctx, "load:"+load.ID, loadBytes, 0)
 			pipe.Set(s.ctx, deliveryKey, deliveryBytes, 0)
 			// A load can have only one assigned driver. Persisting the

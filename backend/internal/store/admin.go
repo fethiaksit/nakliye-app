@@ -309,14 +309,23 @@ func (s *RedisStore) TransitionLoadStatus(expectedStatus string, updated models.
 		} else if exists != 0 {
 			return ErrLoadStatusConflict
 		}
+		var driverMutation *driverWalletMutation
+		if updated.Status == models.LoadStatusCancelled {
+			var commissionErr error
+			driverMutation, commissionErr = s.prepareDriverCommission(tx, stored, "RELEASE", event.ChangedByUserID, event.ChangedAt)
+			if commissionErr != nil {
+				return commissionErr
+			}
+		}
 		_, txErr := tx.TxPipelined(s.ctx, func(pipe redis.Pipeliner) error {
+			s.writeDriverCommission(pipe, driverMutation)
 			pipe.Set(s.ctx, loadKey, loadBody, 0)
 			pipe.Set(s.ctx, eventKey, eventBody, 0)
 			pipe.ZAdd(s.ctx, "load-status-history:"+updated.ID, redis.Z{Score: float64(event.ChangedAt.UnixMicro()), Member: event.ID})
 			return nil
 		})
 		return txErr
-	}, loadKey, eventKey, "load-wallet:"+updated.ID)
+	}, append([]string{loadKey, eventKey, "load-wallet:" + updated.ID}, driverWatchKeys(updated)...)...)
 	if errors.Is(err, redis.TxFailedErr) {
 		return ErrLoadStatusConflict
 	}

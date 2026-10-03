@@ -1,3 +1,4 @@
+import DriverWalletScreen from './DriverWalletScreen';
 import React, { useCallback, useEffect, useState } from 'react';
 import { Image, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
@@ -470,6 +471,7 @@ export default function DriverAccountScreens({ page, onPageChange, loading, erro
   };
 
   const renderCurrentPage = () => {
+    if (page === 'wallet') return <DriverWalletScreen onBack={() => onPageChange('home')} />;
     if (page === 'personal') return <PersonalInfoPage account={account} onBack={() => onPageChange('home')} onEdit={() => { setForm(current => ({ ...current, name: account.name || '', email: account.email || '', phone: account.phone || '' })); onPageChange('profile-edit'); }} />;
     if (page === 'profile-edit') return <ProfileEditPage form={form} setForm={setForm} loading={saveLoading} onSave={async () => { if (await save()) onPageChange('personal'); }} onCancel={() => onPageChange('personal')} />;
     if (page === 'password') return <PasswordPage form={form} setForm={setForm} loading={passwordLoading} onSubmit={changePassword} onBack={() => onPageChange('home')} />;
@@ -503,6 +505,7 @@ export default function DriverAccountScreens({ page, onPageChange, loading, erro
         <AccountMenuItem icon="car-sport-outline" label="Araçlarım" onPress={() => onPageChange('vehicles')} />
         <AccountMenuItem icon="add-circle-outline" label="Araç Ekle" last onPress={() => startVehicleForm(null)} />
       </AccountMenuSection>
+      <AccountMenuSection title="Cüzdan"><AccountMenuItem icon="wallet-outline" label="Cüzdanım" last onPress={() => onPageChange('wallet')} /></AccountMenuSection>
       <AccountMenuSection title="İşler">
         <AccountMenuItem icon="navigate-outline" label="Aktif İşlerim" onPress={() => onPageChange('active-jobs')} />
         <AccountMenuItem icon="checkmark-done-outline" label="Tamamlanan İşler" last onPress={() => onPageChange('completed-jobs')} />
