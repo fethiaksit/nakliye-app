@@ -95,33 +95,34 @@ type Stop struct {
 }
 
 type Load struct {
-	ID                   string           `json:"id"`
-	CustomerID           string           `json:"customerId"`
-	Title                string           `json:"title"`
-	Description          string           `json:"description"`
-	PhotoURLs            []string         `json:"photoUrls"`
-	Dimensions           Dimensions       `json:"dimensions"`
-	Pickup               Location         `json:"pickup"`
-	Stops                []Stop           `json:"stops,omitempty"`
-	Delivery             Location         `json:"delivery"`
-	CargoDetails         map[string]any   `json:"cargoDetails,omitempty"`
-	RouteDistanceMeters  int              `json:"routeDistanceMeters"`
-	RouteDurationSeconds int              `json:"routeDurationSeconds"`
-	PricePerKM           float64          `json:"pricePerKm"`
-	RouteEncodedPolyline string           `json:"routeEncodedPolyline,omitempty"`
-	RouteProvider        string           `json:"routeProvider,omitempty"`
-	RouteCoordinates     []Coordinate     `json:"routeCoordinates,omitempty"`
-	EstimatedKM          float64          `json:"estimatedKm"`
-	BasePriceTL          float64          `json:"basePriceTl"`
-	AgreedPriceTL        float64          `json:"agreedPriceTl"`
-	Pricing              *PricingSnapshot `json:"pricing,omitempty"`
-	OfferCount           int              `json:"offerCount"`
-	LastOfferTL          float64          `json:"lastOfferTl,omitempty"`
-	Status               string           `json:"status"`
-	AssignedDriver       string           `json:"assignedDriverId,omitempty"`
-	CreatedAt            time.Time        `json:"createdAt"`
-	UpdatedAt            time.Time        `json:"updatedAt"`
-	DeletedAt            *time.Time       `json:"deletedAt,omitempty"`
+	DriverCommissionCents int64            `json:"driverCommissionCents,omitempty"`
+	ID                    string           `json:"id"`
+	CustomerID            string           `json:"customerId"`
+	Title                 string           `json:"title"`
+	Description           string           `json:"description"`
+	PhotoURLs             []string         `json:"photoUrls"`
+	Dimensions            Dimensions       `json:"dimensions"`
+	Pickup                Location         `json:"pickup"`
+	Stops                 []Stop           `json:"stops,omitempty"`
+	Delivery              Location         `json:"delivery"`
+	CargoDetails          map[string]any   `json:"cargoDetails,omitempty"`
+	RouteDistanceMeters   int              `json:"routeDistanceMeters"`
+	RouteDurationSeconds  int              `json:"routeDurationSeconds"`
+	PricePerKM            float64          `json:"pricePerKm"`
+	RouteEncodedPolyline  string           `json:"routeEncodedPolyline,omitempty"`
+	RouteProvider         string           `json:"routeProvider,omitempty"`
+	RouteCoordinates      []Coordinate     `json:"routeCoordinates,omitempty"`
+	EstimatedKM           float64          `json:"estimatedKm"`
+	BasePriceTL           float64          `json:"basePriceTl"`
+	AgreedPriceTL         float64          `json:"agreedPriceTl"`
+	Pricing               *PricingSnapshot `json:"pricing,omitempty"`
+	OfferCount            int              `json:"offerCount"`
+	LastOfferTL           float64          `json:"lastOfferTl,omitempty"`
+	Status                string           `json:"status"`
+	AssignedDriver        string           `json:"assignedDriverId,omitempty"`
+	CreatedAt             time.Time        `json:"createdAt"`
+	UpdatedAt             time.Time        `json:"updatedAt"`
+	DeletedAt             *time.Time       `json:"deletedAt,omitempty"`
 
 	// Structured listing attributes. Scheduling is stored as one UTC instant;
 	// presentation clients render it in the user's local time zone.

@@ -105,6 +105,7 @@ func (s *RedisStore) CompleteDeliveryWithReward(expectedStatus string, updated m
 	photoKey := "photo:" + photoID
 	watchKeys := []string{loadKey, verificationKey, eventKey, photoKey}
 
+	watchKeys = append(watchKeys, driverWatchKeys(updated)...)
 	var reward models.WalletTransaction
 	var wallet models.CorporateWallet
 	var company models.Company
@@ -181,6 +182,10 @@ rewardSetupDone:
 			return ErrLoadStatusConflict
 		}
 
+		driverMutation, commissionErr := s.prepareDriverCommission(tx, storedLoad, "COMMISSION", event.ChangedByUserID, event.ChangedAt)
+		if commissionErr != nil {
+			return commissionErr
+		}
 		var walletBody, allocationBody, rewardBody []byte
 		var allocation models.LoadWalletAllocation
 		if rewardTemplate != nil {
@@ -268,6 +273,7 @@ rewardSetupDone:
 		}
 
 		_, txErr := tx.TxPipelined(s.ctx, func(pipe redis.Pipeliner) error {
+			s.writeDriverCommission(pipe, driverMutation)
 			pipe.Set(s.ctx, loadKey, loadBody, 0)
 			pipe.Set(s.ctx, verificationKey, verificationBody, 0)
 			pipe.Set(s.ctx, eventKey, eventBody, 0)

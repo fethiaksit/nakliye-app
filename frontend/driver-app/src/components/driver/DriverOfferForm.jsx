@@ -1,4 +1,6 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+import { driverWallet, apiError } from '../../services/api';
+import { parseWalletUnits, formatWalletCents } from '../../../../shared/walletMoney.mjs';
 import { StyleSheet, Text, View } from 'react-native';
 
 import Icon from '../../../../shared/ui/Icon';
@@ -15,6 +17,16 @@ export default function DriverOfferForm({
   onSaveOffer,
   isEdit = false,
 }) {
+  const [wallet, setWallet] = useState(null);
+  const [walletError, setWalletError] = useState('');
+  useEffect(() => {
+    let active = true;
+    driverWallet.get().then(({ data }) => { if (active) setWallet(data.wallet); })
+      .catch(error => { if (active) setWalletError(apiError(error)); });
+    return () => { active = false; };
+  }, []);
+  const amountCents = parseWalletUnits(form.amount);
+  const commissionCents = amountCents > 0 ? Math.floor(amountCents / 10 + 0.5) : 0;
   const setField = (field, value) => {
     setForm(current => ({ ...current, [field]: value }));
     setFormErrors(current => ({ ...current, [field]: '' }));
@@ -62,6 +74,12 @@ export default function DriverOfferForm({
           />
         </View>
 
+        <View style={{ marginVertical: spacing.sm }}>
+          <Text style={styles.label}>Hizmet bedeli (%10): {formatWalletCents(commissionCents)}</Text>
+          <Text style={styles.headerSubtitle}>İş tamamlandığında %10 hizmet bedeli alınır. Teklif verirken hesabınızdan ücret alınmaz. Teklif kabul edilince hizmet bedeli bloke edilir.</Text>
+          {wallet ? <Text style={styles.label}>Kullanılabilir bakiye: {formatWalletCents(wallet.availableCents)}</Text> : <Text style={styles.headerSubtitle}>{walletError || 'Bakiye yükleniyor…'}</Text>}
+          {wallet && wallet.availableCents < commissionCents ? <Text style={{ color: colors.danger }}>Bu teklif için en az {formatWalletCents(commissionCents)} kullanılabilir bakiye gerekiyor.</Text> : null}
+        </View>
         <TextField
           label="Tahmini Varış Süresi"
           required

@@ -14,6 +14,7 @@ import ConversationCenter from './src/components/ConversationCenter';
 import { nativeGoogleMapsConfigured, nativeGoogleMapsMessage } from './src/config/maps';
 import { DriverJobs, DriverOffers } from './src/screens/DriverScreens';
 import DriverAccountScreens from './src/screens/DriverAccountScreens';
+import { parseWalletUnits } from '../shared/walletMoney.mjs';
 import { driverStatusAction, formatMoney, loadStatusLabel, resolveMediaUrl, toFiniteNumber } from './src/utils/presentation';
 
 const navItems = [
@@ -186,10 +187,11 @@ function DriverApp() {
   }, []);
   const saveOffer = useCallback(async () => {
     if (!selected) return;
-    const amountTl = toFiniteNumber(offerForm.amount);
+    const amountCents = parseWalletUnits(offerForm.amount);
+    const amountTl = amountCents === null ? 0 : amountCents / 100;
     const estimatedArrivalMinutes = Math.round(toFiniteNumber(offerForm.eta));
     const errors = {};
-    if (amountTl <= 0) errors.amount = 'Geçerli bir teklif fiyatı girin.';
+    if (amountTl <= 0) errors.amount = 'En fazla iki ondalık haneli geçerli bir teklif fiyatı girin.';
     if (estimatedArrivalMinutes < 0 || !String(offerForm.eta).trim()) errors.eta = 'Geçerli bir varış süresi girin.';
     setOfferErrors(errors);
     if (Object.keys(errors).length) {

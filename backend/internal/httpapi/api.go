@@ -222,6 +222,9 @@ func (a *API) Routes() http.Handler {
 	mux.Handle("GET /api/drivers/jobs/nearby", a.auth(http.HandlerFunc(a.nearbyLoads)))
 	mux.Handle("POST /api/drivers/jobs/{id}/offers", a.auth(http.HandlerFunc(a.createOffer)))
 	mux.Handle("PATCH /api/drivers/jobs/{id}/offers/me", a.auth(http.HandlerFunc(a.withdrawOwnOffer)))
+	mux.Handle("GET /api/driver/wallet", a.auth(http.HandlerFunc(a.driverWallet)))
+	mux.Handle("GET /api/admin/drivers/{id}/wallet", a.adminAuth(http.HandlerFunc(a.adminDriverWallet)))
+	mux.Handle("POST /api/admin/drivers/{id}/wallet/topups", a.adminAuth(http.HandlerFunc(a.adminDriverTopup)))
 	mux.Handle("GET /api/drivers/offers", a.auth(http.HandlerFunc(a.driverOffers)))
 	mux.Handle("GET /api/driver/vehicles", a.auth(http.HandlerFunc(a.listVehicles)))
 	mux.Handle("POST /api/driver/vehicles", a.auth(http.HandlerFunc(a.createVehicle)))
@@ -1388,8 +1391,8 @@ func (a *API) updateLoad(w http.ResponseWriter, r *http.Request) {
 	}
 	updated.ID = l.ID
 	updated.CreatedAt = l.CreatedAt
-	if e = a.store.SaveLoad(updated); e != nil {
-		serverError(w, e)
+	if e = a.store.SaveLoadIfUnchanged(l, updated); e != nil {
+		writeLoadStatusError(w, e)
 		return
 	}
 	jsonResponse(w, 200, updated)
@@ -1522,11 +1525,16 @@ func (a *API) deleteLoad(w http.ResponseWriter, r *http.Request) {
 		forbidden(w)
 		return
 	}
+	if l.Status != models.LoadStatusDraft && l.Status != models.LoadStatusPublished && l.Status != models.LoadStatusCancelled && l.Status != models.LoadStatusCompleted {
+		conflict(w, "Aktif nakliye silinemez. Önce işi iptal edin.")
+		return
+	}
+	original := l
 	now := time.Now().UTC()
 	l.DeletedAt = &now
 	l.UpdatedAt = now
-	if e := a.store.SaveLoad(l); e != nil {
-		serverError(w, e)
+	if e := a.store.SaveLoadIfUnchanged(original, l); e != nil {
+		writeLoadStatusError(w, e)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -1538,7 +1546,7 @@ func (a *API) createOffer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	l, e := a.store.GetLoad(r.PathValue("id"))
-	if e != nil || !isOfferableStatus(l.Status) {
+	if e != nil || l.DeletedAt != nil || !isOfferableStatus(l.Status) {
 		badRequest(w, "ilan teklif almaya uygun değil")
 		return
 	}
@@ -1552,6 +1560,9 @@ func (a *API) createOffer(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.AmountTL <= 0 || req.EstimatedArrivalMinutes < 0 || req.EstimatedArrivalMinutes > 7*24*60 {
 		badRequest(w, "teklif tutarı zorunludur")
+		return
+	}
+	if !a.checkDriverOfferBalance(w, p.ID, req.AmountTL) {
 		return
 	}
 	now := time.Now().UTC()
@@ -1625,6 +1636,10 @@ func (a *API) acceptOffer(w http.ResponseWriter, r *http.Request) {
 		forbidden(w)
 		return
 	}
+	if l.DeletedAt != nil {
+		notFound(w)
+		return
+	}
 	from := l.Status
 	if !models.CanTransition(from, models.LoadStatusDriverSelected) {
 		conflict(w, "ilan şoför seçimine uygun değil")
@@ -1633,6 +1648,7 @@ func (a *API) acceptOffer(w http.ResponseWriter, r *http.Request) {
 	l.Status = models.LoadStatusDriverSelected
 	l.AssignedDriver = o.DriverID
 	l.AgreedPriceTL = o.AmountTL
+	l.DriverCommissionCents, _ = models.DriverCommissionCents(o.AmountTL)
 	l.UpdatedAt = time.Now().UTC()
 	o.Status = "accepted"
 	o.UpdatedAt = l.UpdatedAt
@@ -1649,12 +1665,16 @@ func (a *API) acceptOffer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if e = a.store.AcceptOffer(l, o, allOffers, conversation, event, deliveryVerification); e != nil {
-		writeLoadStatusError(w, e)
+		if errors.Is(e, store.ErrDriverWalletBalance) {
+			conflict(w, "Şoförün kullanılabilir bakiyesi %10 hizmet bedeli için yetersiz. İş atanmadı.")
+		} else {
+			writeLoadStatusError(w, e)
+		}
 		return
 	}
 	a.addOfferMessage(l, o)
 	a.addSystemMessage(l, "Teklif kabul edildi.")
-	a.sendPush(o.DriverID, "Teklifiniz kabul edildi", "İlan için teklifiniz kabul edildi.", map[string]string{"type": "driver_selected", "loadId": l.ID, "screen": "load"})
+	a.sendPush(o.DriverID, "Teklifiniz kabul edildi", fmt.Sprintf("%.2f TL hizmet bedeli bloke edildi. Ücret yalnızca nakliye tamamlandığında tahsil edilecektir.", float64(l.DriverCommissionCents)/100), map[string]string{"type": "driver_selected", "loadId": l.ID, "screen": "load"})
 	jsonResponse(w, 200, l)
 }
 func (a *API) updateOffer(w http.ResponseWriter, r *http.Request) {
@@ -1668,6 +1688,11 @@ func (a *API) updateOffer(w http.ResponseWriter, r *http.Request) {
 		forbidden(w)
 		return
 	}
+	load, loadErr := a.store.GetLoad(offer.LoadID)
+	if loadErr != nil || load.DeletedAt != nil || !isOfferableStatus(load.Status) {
+		conflict(w, "İlan teklif güncellemeye uygun değil.")
+		return
+	}
 	var req struct {
 		AmountTL                float64 `json:"amountTl"`
 		Note                    string  `json:"note"`
@@ -1678,6 +1703,9 @@ func (a *API) updateOffer(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.AmountTL <= 0 || req.EstimatedArrivalMinutes < 0 || req.EstimatedArrivalMinutes > 7*24*60 {
 		badRequest(w, "geçerli bir teklif fiyatı ve varış süresi girin")
+		return
+	}
+	if !a.checkDriverOfferBalance(w, p.ID, req.AmountTL) {
 		return
 	}
 	offer.AmountTL, offer.Note, offer.EstimatedArrivalMinutes, offer.UpdatedAt = req.AmountTL, strings.TrimSpace(req.Note), req.EstimatedArrivalMinutes, time.Now().UTC()
@@ -2562,11 +2590,12 @@ func (a *API) uploadLoadPhotos(w http.ResponseWriter, r *http.Request) {
 		}
 		urls = append(urls, url)
 	}
+	original := l
 	l.PhotoURLs = append(l.PhotoURLs, urls...)
 	l.UpdatedAt = time.Now().UTC()
-	if err := a.store.SaveLoad(l); err != nil {
+	if err := a.store.SaveLoadIfUnchanged(original, l); err != nil {
 		cleanup()
-		serverError(w, err)
+		writeLoadStatusError(w, err)
 		return
 	}
 	jsonResponse(w, http.StatusCreated, l)
@@ -2620,12 +2649,13 @@ func (a *API) deleteLoadPhoto(w http.ResponseWriter, r *http.Request) {
 		notFound(w)
 		return
 	}
-	if err := a.store.DeletePhoto(photoID); err != nil {
-		serverError(w, err)
+	original := l
+	l.PhotoURLs, l.UpdatedAt = next, time.Now().UTC()
+	if err := a.store.SaveLoadIfUnchanged(original, l); err != nil {
+		writeLoadStatusError(w, err)
 		return
 	}
-	l.PhotoURLs, l.UpdatedAt = next, time.Now().UTC()
-	if err := a.store.SaveLoad(l); err != nil {
+	if err := a.store.DeletePhoto(photoID); err != nil {
 		serverError(w, err)
 		return
 	}

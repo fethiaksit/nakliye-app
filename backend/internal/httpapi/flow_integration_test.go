@@ -105,7 +105,11 @@ func registerTestUser(t *testing.T, handler http.Handler, suffix, role string) t
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("register %s status=%d body=%s", role, recorder.Code, recorder.Body.String())
 	}
-	return decodeResponse[testSession](t, recorder)
+	session := decodeResponse[testSession](t, recorder)
+	if role == models.RoleDriver && !strings.Contains(suffix, "commission_empty") {
+		fundDriver(t, handler, session, 1000000000, "fixture-payment")
+	}
+	return session
 }
 
 func testPhone(suffix string) string {

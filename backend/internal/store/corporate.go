@@ -382,7 +382,12 @@ func (s *RedisStore) TransitionLoadStatusAndReverseWallet(expectedStatus string,
 		if marshalErr != nil {
 			return marshalErr
 		}
+		driverMutation, commissionErr := s.prepareDriverCommission(tx, storedLoad, "RELEASE", event.ChangedByUserID, event.ChangedAt)
+		if commissionErr != nil {
+			return commissionErr
+		}
 		_, txErr := tx.TxPipelined(s.ctx, func(pipe redis.Pipeliner) error {
+			s.writeDriverCommission(pipe, driverMutation)
 			pipe.Set(s.ctx, loadKey, loadBody, 0)
 			pipe.Set(s.ctx, eventKey, eventBody, 0)
 			pipe.ZAdd(s.ctx, "load-status-history:"+updated.ID, redis.Z{Score: float64(event.ChangedAt.UnixMicro()), Member: event.ID})
@@ -394,7 +399,7 @@ func (s *RedisStore) TransitionLoadStatusAndReverseWallet(expectedStatus string,
 			return nil
 		})
 		return txErr
-	}, loadKey, eventKey, walletKey, allocationKey, uniqueKey, transactionKey)
+	}, append([]string{loadKey, eventKey, walletKey, allocationKey, uniqueKey, transactionKey}, driverWatchKeys(updated)...)...)
 	if errors.Is(err, redis.TxFailedErr) {
 		err = ErrWalletConflict
 	}

@@ -40,7 +40,7 @@ func newPricingTestAPI(t *testing.T) http.Handler {
 	if err != nil {
 		t.Fatal(err)
 	}
-	api := NewWithOptions(redisStore, Options{Secret: integrationTestSecret, Pricing: service.DefaultPricingConfig(), MaxUploadMB: 1})
+	api := NewWithOptions(redisStore, Options{AdminEmail: adminTestEmail, AdminPassword: adminTestPassword, AdminSecret: adminTestSecret, Secret: integrationTestSecret, Pricing: service.DefaultPricingConfig(), MaxUploadMB: 1})
 	api.maps = pricingMapsStub{}
 	return api.Routes()
 }

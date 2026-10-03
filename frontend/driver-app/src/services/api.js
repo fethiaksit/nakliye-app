@@ -262,3 +262,5 @@ export const normalizeApiError = error => {
   const [type, normalizedMessage] = byStatus[status] || (status >= 500 ? ['SERVER_ERROR', message || 'Sunucuda bir hata oluştu. Lütfen tekrar dene.'] : ['UNKNOWN_ERROR', message || 'İşlem tamamlanamadı.']);
   return { type, message: normalizedMessage, messageWithRequestId: withRequestId(normalizedMessage), requestId, status };
 };
+
+export const driverWallet = { get: () => client.get("/api/driver/wallet") };
