@@ -334,10 +334,6 @@ func (a *API) adminUsers(w http.ResponseWriter, r *http.Request) {
 			if models.CustomerAccountType(user) != accountType {
 				continue
 			}
-		} else if role != "corporate" && accountType != "all" {
-			if models.CustomerAccountType(user) == models.AccountTypeCorporate {
-				continue
-			}
 		}
 		if status != "" && status != "all" && accountStatus(user) != status {
 			continue
