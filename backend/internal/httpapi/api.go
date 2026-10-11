@@ -5,10 +5,13 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/argon2"
@@ -43,6 +46,9 @@ type API struct {
 	adminPasswordHash string
 	adminSecret       []byte
 	adminLoginRate    *service.FixedWindowLimiter
+	emailSender       service.EmailSender
+	resetRequestRate  *service.FixedWindowLimiter
+	resetVerifyRate   *service.FixedWindowLimiter
 }
 
 type mapsService interface {
@@ -70,6 +76,10 @@ type Options struct {
 	AdminPasswordHash string
 	AdminSecret       string
 	PushSender        PushSender
+	EmailSender       service.EmailSender
+	ResendAPIKey      string
+	ResendFromEmail   string
+	ResendAPIURL      string
 }
 
 func New(s *store.RedisStore, secret string) *API {
@@ -95,6 +105,10 @@ func NewWithOptions(s *store.RedisStore, options Options) *API {
 	if pushSender == nil {
 		pushSender = newExpoPushSender(s)
 	}
+	emailSender := options.EmailSender
+	if emailSender == nil {
+		emailSender = service.NewResendClient(options.ResendAPIKey, options.ResendFromEmail, options.ResendAPIURL)
+	}
 	return &API{
 		store:             s,
 		pricing:           pricing,
@@ -110,6 +124,9 @@ func NewWithOptions(s *store.RedisStore, options Options) *API {
 		adminPasswordHash: strings.TrimSpace(options.AdminPasswordHash),
 		adminSecret:       []byte(options.AdminSecret),
 		adminLoginRate:    service.NewFixedWindowLimiter(5, time.Minute),
+		emailSender:       emailSender,
+		resetRequestRate:  service.NewFixedWindowLimiter(3, 5*time.Minute),
+		resetVerifyRate:   service.NewFixedWindowLimiter(10, 5*time.Minute),
 	}
 }
 func (a *API) Routes() http.Handler {
@@ -120,7 +137,10 @@ func (a *API) Routes() http.Handler {
 	mux.HandleFunc("POST /api/auth/login", a.login)
 	mux.HandleFunc("POST /api/auth/refresh", a.refresh)
 	mux.HandleFunc("POST /api/auth/logout", a.logout)
-	mux.HandleFunc("POST /api/auth/password-reset", a.passwordReset)
+	mux.HandleFunc("POST /api/auth/forgot-password", a.forgotPassword)
+	mux.HandleFunc("POST /api/auth/password-reset", a.forgotPassword)
+	mux.HandleFunc("POST /api/auth/verify-reset-code", a.verifyResetCode)
+	mux.HandleFunc("POST /api/auth/reset-password", a.resetPassword)
 	mux.HandleFunc("POST /api/admin/auth/login", a.adminLogin)
 	mux.Handle("GET /api/admin/auth/me", a.adminAuth(http.HandlerFunc(a.adminMe)))
 	mux.Handle("GET /api/admin/dashboard", a.adminAuth(http.HandlerFunc(a.adminDashboard)))
@@ -440,13 +460,246 @@ func (a *API) logout(w http.ResponseWriter, r *http.Request) {
 	_, _ = a.store.ConsumeRefresh(req.RefreshToken)
 	w.WriteHeader(http.StatusNoContent)
 }
-func (a *API) passwordReset(w http.ResponseWriter, r *http.Request) {
-	var req struct{ Email string }
+const genericPasswordResetMessage = "Eğer bu e-posta adresi sistemde kayıtlıysa, 6 haneli doğrulama kodu gönderilmiştir."
+
+func (a *API) forgotPassword(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Email string `json:"email"`
+		Role  string `json:"role"`
+	}
 	if !decode(w, r, &req) {
 		return
 	}
-	_, _ = a.store.GetUserByEmail(req.Email)
-	jsonResponse(w, 202, map[string]string{"message": "Hesap varsa şifre sıfırlama talimatları gönderildi."})
+	email := strings.TrimSpace(strings.ToLower(req.Email))
+	if email == "" || !strings.Contains(email, "@") {
+		badRequest(w, "geçerli bir e-posta adresi giriniz")
+		return
+	}
+
+	ip := clientIP(r)
+	if !a.resetRequestRate.Allow(email) || !a.resetRequestRate.Allow("ip:"+ip) {
+		tooManyRequests(w, "çok fazla kod talebinde bulundunuz, lütfen 5 dakika sonra tekrar deneyin")
+		return
+	}
+
+	// Güvenlik: Kullanıcının var olup olmadığını dışarı sızdırma.
+	u, err := a.store.GetUserByEmail(email)
+	if err != nil || accountStatus(u) != models.AccountStatusActive || (u.Role != models.RoleCustomer && u.Role != models.RoleDriver) {
+		jsonResponse(w, http.StatusOK, map[string]any{"success": true, "message": genericPasswordResetMessage})
+		return
+	}
+
+	// Müşteri / şoför rol kısıtlaması varsa kontrol et
+	reqRole := strings.TrimSpace(strings.ToLower(req.Role))
+	if reqRole != "" && u.Role != reqRole {
+		jsonResponse(w, http.StatusOK, map[string]any{"success": true, "message": genericPasswordResetMessage})
+		return
+	}
+
+	code, err := generate6DigitCode()
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+
+	hashedCode := a.hashResetCode(email, code)
+	now := time.Now().UTC()
+	rec := store.PasswordResetRecord{
+		UserID:     u.ID,
+		Email:      email,
+		HashedCode: hashedCode,
+		Role:       u.Role,
+		Attempts:   0,
+		CreatedAt:  now,
+		ExpiresAt:  now.Add(5 * time.Minute),
+	}
+
+	if err := a.store.SavePasswordResetCode(rec, 5*time.Minute); err != nil {
+		serverError(w, err)
+		return
+	}
+
+	if err := a.emailSender.SendPasswordResetCode(r.Context(), email, code); err != nil {
+		log.Printf("[PASSWORD RESET EMAIL ERROR] user_id=%s error=%v", u.ID, err)
+		// Kullanıcıya teknik ayrıntı veya gizli bilgi sızdırmadan genel yanıt ver
+		jsonResponse(w, http.StatusOK, map[string]any{"success": true, "message": genericPasswordResetMessage})
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]any{"success": true, "message": genericPasswordResetMessage})
+}
+
+func (a *API) verifyResetCode(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Email string `json:"email"`
+		Code  string `json:"code"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	email := strings.TrimSpace(strings.ToLower(req.Email))
+	code := strings.TrimSpace(req.Code)
+	if email == "" || len(code) != 6 {
+		badRequest(w, "geçerli bir e-posta ve 6 haneli kod giriniz")
+		return
+	}
+
+	ip := clientIP(r)
+	if !a.resetVerifyRate.Allow("ip:" + ip) {
+		tooManyRequests(w, "çok fazla deneme yapıldı, lütfen biraz bekleyin")
+		return
+	}
+
+	record, err := a.store.GetPasswordResetCode(email)
+	if err != nil || record == nil {
+		badRequest(w, "doğrulama kodunun süresi dolmuş veya kod geçersiz")
+		return
+	}
+
+	if record.Attempts >= 5 {
+		_ = a.store.DeletePasswordResetCode(email)
+		badRequest(w, "çok fazla hatalı deneme yapıldı. Bu kod iptal edildi, lütfen yeni bir kod talep edin")
+		return
+	}
+
+	expectedHash := a.hashResetCode(email, code)
+	if subtle.ConstantTimeCompare([]byte(record.HashedCode), []byte(expectedHash)) != 1 {
+		attempts, _ := a.store.IncrementResetAttempts(email)
+		if attempts >= 5 {
+			_ = a.store.DeletePasswordResetCode(email)
+			badRequest(w, "çok fazla hatalı deneme yapıldı. Bu kod iptal edildi, lütfen yeni bir kod talep edin")
+			return
+		}
+		badRequest(w, "girdiğiniz doğrulama kodu hatalı")
+		return
+	}
+
+	tokenBytes := make([]byte, 32)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		serverError(w, err)
+		return
+	}
+	resetToken := hex.EncodeToString(tokenBytes)
+
+	tokenRec := store.PasswordResetTokenRecord{
+		UserID:    record.UserID,
+		Email:     email,
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := a.store.SavePasswordResetToken(resetToken, tokenRec, 10*time.Minute); err != nil {
+		serverError(w, err)
+		return
+	}
+
+	// Kod bir kez doğrulandıktan sonra silinir (tek kullanımlık)
+	_ = a.store.DeletePasswordResetCode(email)
+
+	jsonResponse(w, http.StatusOK, map[string]any{
+		"success":    true,
+		"message":    "kod başarıyla doğrulandı",
+		"resetToken": resetToken,
+	})
+}
+
+func (a *API) resetPassword(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Email       string `json:"email"`
+		ResetToken  string `json:"resetToken"`
+		Code        string `json:"code"`
+		NewPassword string `json:"newPassword"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	email := strings.TrimSpace(strings.ToLower(req.Email))
+	if len(req.NewPassword) < 8 {
+		badRequest(w, "yeni şifre en az 8 karakter olmalıdır")
+		return
+	}
+
+	var userID string
+	if strings.TrimSpace(req.ResetToken) != "" {
+		tokenRec, err := a.store.ConsumePasswordResetToken(strings.TrimSpace(req.ResetToken))
+		if err != nil || tokenRec == nil {
+			badRequest(w, "şifre sıfırlama oturumunun süresi dolmuş veya geçersiz, lütfen baştan başlayın")
+			return
+		}
+		if strings.ToLower(tokenRec.Email) != email {
+			badRequest(w, "geçersiz şifre sıfırlama oturumu")
+			return
+		}
+		userID = tokenRec.UserID
+	} else if strings.TrimSpace(req.Code) != "" && len(strings.TrimSpace(req.Code)) == 6 {
+		record, err := a.store.GetPasswordResetCode(email)
+		if err != nil || record == nil {
+			badRequest(w, "doğrulama kodunun süresi dolmuş veya kod geçersiz")
+			return
+		}
+		expectedHash := a.hashResetCode(email, req.Code)
+		if subtle.ConstantTimeCompare([]byte(record.HashedCode), []byte(expectedHash)) != 1 {
+			badRequest(w, "girdiğiniz doğrulama kodu hatalı")
+			return
+		}
+		userID = record.UserID
+		_ = a.store.DeletePasswordResetCode(email)
+	} else {
+		badRequest(w, "doğrulama belirteci veya kod zorunludur")
+		return
+	}
+
+	user, err := a.store.GetUser(userID)
+	if err != nil {
+		notFound(w)
+		return
+	}
+
+	newHash, err := hashPassword(req.NewPassword)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+
+	user.PasswordHash = newHash
+	if err := a.store.SaveUser(user); err != nil {
+		serverError(w, err)
+		return
+	}
+
+	// Başarılı şifre değişikliğinde önceki oturumları iptal et
+	_ = a.store.RevokeAllUserSessions(user.ID)
+	_ = a.store.DeletePasswordResetCode(email)
+
+	jsonResponse(w, http.StatusOK, map[string]any{
+		"success": true,
+		"message": "şifreniz başarıyla güncellendi, yeni şifrenizle giriş yapabilirsiniz",
+	})
+}
+
+func (a *API) hashResetCode(email, code string) string {
+	h := hmac.New(sha256.New, a.secret)
+	h.Write([]byte(strings.ToLower(strings.TrimSpace(email)) + ":" + strings.TrimSpace(code)))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func generate6DigitCode() (string, error) {
+	n, err := rand.Int(rand.Reader, big.NewInt(1000000))
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%06d", n.Int64()), nil
+}
+
+func clientIP(r *http.Request) string {
+	forwarded := r.Header.Get("X-Forwarded-For")
+	if forwarded != "" {
+		parts := strings.Split(forwarded, ",")
+		return strings.TrimSpace(parts[0])
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err == nil {
+		return host
+	}
+	return r.RemoteAddr
 }
 func (a *API) me(w http.ResponseWriter, r *http.Request) {
 	p := current(r)
@@ -3002,6 +3255,9 @@ func notFound(w http.ResponseWriter) {
 }
 func conflict(w http.ResponseWriter, message string) {
 	errorResponse(w, http.StatusConflict, "CONFLICT", message, map[string]any{})
+}
+func tooManyRequests(w http.ResponseWriter, message string) {
+	errorResponse(w, http.StatusTooManyRequests, "RATE_LIMIT_EXCEEDED", message, map[string]any{})
 }
 func serverError(w http.ResponseWriter, e error) {
 	log.Printf("request_id=%s unexpected_api_error=%q", w.Header().Get("X-Request-ID"), e)

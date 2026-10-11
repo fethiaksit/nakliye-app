@@ -279,14 +279,27 @@ func TestAdminCorporateAccountManagementFlow(t *testing.T) {
 		Items []map[string]any `json:"items"`
 		Total int              `json:"total"`
 	}](t, usersRes)
+
+	foundCorp1 := false
+	foundCorp2 := false
+
 	for _, u := range usersList.Items {
-		if u["id"] == corp1Session.User.ID || u["id"] == corp2Session.User.ID {
-			t.Fatalf("corporate account %v should not be present in default regular users list", u["id"])
+		if u["id"] == corp1Session.User.ID {
+			foundCorp1 = true
+		}
+		if u["id"] == corp2Session.User.ID {
+			foundCorp2 = true
 		}
 	}
-	if len(usersList.Items) < 2 {
-		t.Fatalf("expected individual customer and driver in users list, got %d items", len(usersList.Items))
+
+	if !foundCorp1 || !foundCorp2 {
+		t.Fatalf("expected corporate accounts in default users list, foundCorp1=%v foundCorp2=%v", foundCorp1, foundCorp2)
 	}
+
+	if len(usersList.Items) < 4 {
+		t.Fatalf("expected individual customer, driver and corporate accounts in users list, got %d items", len(usersList.Items))
+	}
+
 	_ = indivCustomer
 
 	// 2. Corporate applications list with status=pending filter

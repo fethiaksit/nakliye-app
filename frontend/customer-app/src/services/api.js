@@ -61,7 +61,15 @@ client.interceptors.response.use(response => response, async error => {
   }
   catch (refreshError) { refreshing = undefined; const terminal = refreshError.code === 'SESSION_EXPIRED' || [400, 401].includes(refreshError.response?.status); if (terminal) { await clearSession(); sessionExpiredListeners.forEach(listener => listener()); } return Promise.reject(refreshError); }
 });
-export const auth = { login: data => client.post('/api/auth/login', data), register: data => client.post('/api/auth/register', data), reset: data => client.post('/api/auth/password-reset', data), logout: async () => { const { refreshToken } = await tokens(); try { await client.post('/api/auth/logout', { refreshToken }); } finally { await clearSession(); } } };
+export const auth = {
+  login: data => client.post('/api/auth/login', data),
+  register: data => client.post('/api/auth/register', data),
+  reset: data => client.post('/api/auth/forgot-password', data),
+  forgotPassword: data => client.post('/api/auth/forgot-password', data),
+  verifyResetCode: data => client.post('/api/auth/verify-reset-code', data),
+  resetPassword: data => client.post('/api/auth/reset-password', data),
+  logout: async () => { const { refreshToken } = await tokens(); try { await client.post('/api/auth/logout', { refreshToken }); } finally { await clearSession(); } }
+};
 // Health deliberately uses the same Axios instance, but targets the backend
 // root rather than the /api route group. Axios timeout works in Expo Go/Hermes.
 export const checkApiHealth = ({ signal } = {}) => client.get('/health', { timeout: 5000, signal, headers: { Accept: 'application/json' } });

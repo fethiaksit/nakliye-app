@@ -27,6 +27,9 @@ type Config struct {
 	AdminPassword     string
 	AdminPasswordHash string
 	AdminJWTSecret    string
+	ResendAPIKey      string
+	ResendFromEmail   string
+	ResendAPIURL      string
 }
 
 func Load() Config {
@@ -89,7 +92,26 @@ func Load() Config {
 		AdminPassword:          os.Getenv("ADMIN_PASSWORD"),
 		AdminPasswordHash:      strings.TrimSpace(os.Getenv("ADMIN_PASSWORD_HASH")),
 		AdminJWTSecret:         strings.TrimSpace(os.Getenv("ADMIN_JWT_SECRET")),
+		ResendAPIKey:           strings.TrimSpace(os.Getenv("RESEND_API_KEY")),
+		ResendFromEmail:        resendFromEmail(),
+		ResendAPIURL:           resendAPIURL(),
 	}
+}
+
+func resendFromEmail() string {
+	from := strings.TrimSpace(os.Getenv("RESEND_FROM_EMAIL"))
+	if from == "" {
+		return "onboarding@resend.dev"
+	}
+	return from
+}
+
+func resendAPIURL() string {
+	url := strings.TrimSpace(os.Getenv("RESEND_API_URL"))
+	if url == "" {
+		return "https://api.resend.com/emails"
+	}
+	return url
 }
 
 func (c Config) Validate() error {

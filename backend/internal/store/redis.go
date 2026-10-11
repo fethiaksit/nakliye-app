@@ -274,10 +274,19 @@ func (s *RedisStore) GetUserByEmail(email string) (models.User, error) {
 	return s.GetUser(id)
 }
 func (s *RedisStore) SaveRefresh(token, userID string, ttl time.Duration) error {
-	return s.client.Set(s.ctx, "refresh:"+token, userID, ttl).Err()
+	pipe := s.client.TxPipeline()
+	pipe.Set(s.ctx, "refresh:"+token, userID, ttl)
+	pipe.SAdd(s.ctx, "user-refresh:"+userID, token)
+	pipe.Expire(s.ctx, "user-refresh:"+userID, ttl)
+	_, err := pipe.Exec(s.ctx)
+	return err
 }
 func (s *RedisStore) ConsumeRefresh(token string) (string, error) {
-	return s.client.GetDel(s.ctx, "refresh:"+token).Result()
+	id, err := s.client.GetDel(s.ctx, "refresh:"+token).Result()
+	if err == nil && id != "" {
+		_ = s.client.SRem(s.ctx, "user-refresh:"+id, token).Err()
+	}
+	return id, err
 }
 func (s *RedisStore) SaveOffer(o models.Offer) error {
 	b, err := json.Marshal(o)

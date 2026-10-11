@@ -137,7 +137,10 @@ client.interceptors.response.use(response => response, async error => {
 export const auth = {
   login: data => client.post('/api/auth/login', data),
   register: data => client.post('/api/auth/register', data),
-  reset: data => client.post('/api/auth/password-reset', data),
+  reset: data => client.post('/api/auth/forgot-password', data),
+  forgotPassword: data => client.post('/api/auth/forgot-password', data),
+  verifyResetCode: data => client.post('/api/auth/verify-reset-code', data),
+  resetPassword: data => client.post('/api/auth/reset-password', data),
   logout: async () => {
     const { refreshToken } = await tokens();
     try {

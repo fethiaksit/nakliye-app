@@ -41,6 +41,11 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	if cfg.ResendAPIKey != "" {
+		log.Printf("[EMAIL CONFIG] provider=resend configured: true from=%s", cfg.ResendFromEmail)
+	} else {
+		log.Printf("[EMAIL CONFIG] provider=resend configured: false (RESEND_API_KEY boş)")
+	}
 	log.Fatal(http.Serve(listener, httpapi.NewWithOptions(s, httpapi.Options{
 		Secret:                 cfg.JWTSecret,
 		GoogleMapsServerAPIKey: cfg.GoogleMapsServerAPIKey,
@@ -51,5 +56,8 @@ func main() {
 		AdminPassword:          cfg.AdminPassword,
 		AdminPasswordHash:      cfg.AdminPasswordHash,
 		AdminSecret:            cfg.AdminJWTSecret,
+		ResendAPIKey:           cfg.ResendAPIKey,
+		ResendFromEmail:        cfg.ResendFromEmail,
+		ResendAPIURL:           cfg.ResendAPIURL,
 	}).Routes()))
 }
