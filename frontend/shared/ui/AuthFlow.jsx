@@ -197,7 +197,7 @@ export default function AuthFlow({ auth, saveSession, apiError, onSession, conne
   return (
     <SafeAreaView edges={['top', 'bottom', 'left', 'right']} style={styles.safe}>
       <KeyboardAvoidingView style={styles.safe} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <ScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
+        <ScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'} showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
           <View style={styles.hero}>
             <View style={styles.logo}>
               <Icon name={allowedRole === 'driver' ? 'car-sport' : 'cube'} size={30} color={colors.white} />
@@ -240,6 +240,8 @@ export default function AuthFlow({ auth, saveSession, apiError, onSession, conne
                   </View>
                 ) : null}
                 <Checkbox checked={terms} onPress={() => { setTerms(current => !current); setErrors(old => ({ ...old, terms: '' })); }} label="Kullanım koşullarını kabul ediyorum" error={errors.terms} />
+                {serverError ? <InlineNotice tone="danger" title="İşlem tamamlanamadı" message={serverError} /> : null}
+                <AppButton loading={busy} label="Kayıt Ol" icon="person-add-outline" onPress={submit} style={styles.submit} />
               </>
             ) : mode === 'reset' ? (
               <>
@@ -336,7 +338,7 @@ export default function AuthFlow({ auth, saveSession, apiError, onSession, conne
 
 const styles = StyleSheet.create({
   safe: { backgroundColor: colors.background, flex: 1 },
-  scroll: { flexGrow: 1, paddingBottom: spacing.xxl },
+  scroll: { flexGrow: 1, paddingBottom: spacing.xxl + spacing.md },
   hero: { alignItems: 'center', backgroundColor: colors.ink, borderBottomLeftRadius: radius.xl, borderBottomRightRadius: radius.xl, paddingBottom: 54, paddingHorizontal: spacing.xl, paddingTop: spacing.xl },
   logo: { alignItems: 'center', backgroundColor: colors.primary, borderRadius: radius.md, height: 56, justifyContent: 'center', width: 56 },
   brand: { ...typography.h2, color: colors.white, marginTop: spacing.sm },
