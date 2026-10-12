@@ -190,9 +190,7 @@ func (a *API) completeDelivery(w http.ResponseWriter, r *http.Request) {
 		conflict(w, "yalnızca teslim edilmiş aktif iş tamamlanabilir")
 		return
 	}
-	if !a.deliveryCodeRate.Allow(load.ID + ":" + principal.ID) {
-		w.Header().Set("Retry-After", "60")
-		errorResponse(w, http.StatusTooManyRequests, "RATE_LIMITED", "çok fazla teslimat doğrulama denemesi", map[string]any{"retryAfterSeconds": 60})
+	if !a.allowRate(w, "delivery_code:"+load.ID+":"+principal.ID, 10, 10*time.Minute, "çok fazla teslimat doğrulama denemesi yapıldı; lütfen 10 dakika sonra tekrar deneyin") {
 		return
 	}
 

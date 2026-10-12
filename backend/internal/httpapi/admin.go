@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -37,13 +36,8 @@ func (a *API) adminLogin(w http.ResponseWriter, r *http.Request) {
 		errorResponse(w, http.StatusServiceUnavailable, "ADMIN_DISABLED", "admin erişimi yapılandırılmamış", map[string]any{})
 		return
 	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil || host == "" {
-		host = r.RemoteAddr
-	}
-	if !a.adminLoginRate.Allow(host) {
-		w.Header().Set("Retry-After", "60")
-		errorResponse(w, http.StatusTooManyRequests, "RATE_LIMITED", "çok fazla giriş denemesi", map[string]any{"retryAfterSeconds": 60})
+	ip := clientIP(r)
+	if !a.allowRate(w, "admin_login_ip:"+ip, 5, 5*time.Minute, "çok fazla admin giriş denemesi yapıldı; lütfen 5 dakika sonra tekrar deneyin") {
 		return
 	}
 	var request struct {
@@ -69,7 +63,7 @@ func (a *API) adminLogin(w http.ResponseWriter, r *http.Request) {
 		serverError(w, err)
 		return
 	}
-	_ = a.store.RecordAdminActivity("admin.login", a.adminEmail, a.adminEmail, map[string]any{"ip": host})
+	_ = a.store.RecordAdminActivity("admin.login", a.adminEmail, a.adminEmail, map[string]any{"ip": ip})
 	jsonResponse(w, http.StatusOK, map[string]any{
 		"accessToken": token,
 		"expiresIn":   8 * 60 * 60,

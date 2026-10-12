@@ -30,6 +30,9 @@ type Config struct {
 	ResendAPIKey      string
 	ResendFromEmail   string
 	ResendAPIURL      string
+	SentryDSN         string
+	AppVersion        string
+	MaintenanceMode   bool
 }
 
 func Load() Config {
@@ -95,6 +98,9 @@ func Load() Config {
 		ResendAPIKey:           strings.TrimSpace(os.Getenv("RESEND_API_KEY")),
 		ResendFromEmail:        resendFromEmail(),
 		ResendAPIURL:           resendAPIURL(),
+		SentryDSN:              strings.TrimSpace(os.Getenv("SENTRY_DSN")),
+		AppVersion:             strings.TrimSpace(os.Getenv("APP_VERSION")),
+		MaintenanceMode:        strings.EqualFold(strings.TrimSpace(os.Getenv("MAINTENANCE_MODE")), "true"),
 	}
 }
 

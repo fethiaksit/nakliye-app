@@ -49,6 +49,8 @@ type API struct {
 	emailSender       service.EmailSender
 	resetRequestRate  *service.FixedWindowLimiter
 	resetVerifyRate   *service.FixedWindowLimiter
+	sentry            *service.SentryClient
+	maintenanceMode   bool
 }
 
 type mapsService interface {
@@ -80,6 +82,11 @@ type Options struct {
 	ResendAPIKey      string
 	ResendFromEmail   string
 	ResendAPIURL      string
+	SentryDSN         string
+	Environment       string
+	AppVersion        string
+	SentryClient      *service.SentryClient
+	MaintenanceMode   bool
 }
 
 func New(s *store.RedisStore, secret string) *API {
@@ -109,6 +116,10 @@ func NewWithOptions(s *store.RedisStore, options Options) *API {
 	if emailSender == nil {
 		emailSender = service.NewResendClient(options.ResendAPIKey, options.ResendFromEmail, options.ResendAPIURL)
 	}
+	sentryClient := options.SentryClient
+	if sentryClient == nil && options.SentryDSN != "" {
+		sentryClient = service.NewSentryClient(options.SentryDSN, options.Environment, options.AppVersion)
+	}
 	return &API{
 		store:             s,
 		pricing:           pricing,
@@ -127,6 +138,8 @@ func NewWithOptions(s *store.RedisStore, options Options) *API {
 		emailSender:       emailSender,
 		resetRequestRate:  service.NewFixedWindowLimiter(3, 5*time.Minute),
 		resetVerifyRate:   service.NewFixedWindowLimiter(10, 5*time.Minute),
+		sentry:            sentryClient,
+		maintenanceMode:   options.MaintenanceMode,
 	}
 }
 func (a *API) Routes() http.Handler {
@@ -257,7 +270,7 @@ func (a *API) Routes() http.Handler {
 	mux.Handle("GET /api/driver/documents", a.auth(http.HandlerFunc(a.listDriverDocuments)))
 	mux.Handle("POST /api/driver/documents", a.auth(http.HandlerFunc(a.uploadDriverDocument)))
 	mux.Handle("GET /api/driver/documents/{id}", a.auth(http.HandlerFunc(a.driverDocument)))
-	return requestID(logging(cors(mux)))
+	return requestID(a.recovery(a.maintenance(logging(cors(gzipMiddleware(mux))))))
 }
 func (a *API) health(w http.ResponseWriter, r *http.Request) {
 	if err := a.store.Ping(); err != nil {
@@ -267,6 +280,10 @@ func (a *API) health(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "ok", "service": "nakliye-api", "storage": "redis"})
 }
 func (a *API) register(w http.ResponseWriter, r *http.Request) {
+	ip := clientIP(r)
+	if !a.allowRate(w, "register_ip:"+ip, 10, time.Hour, "çok fazla kayıt denemesi yapıldı; lütfen daha sonra tekrar deneyin") {
+		return
+	}
 	var req struct{ Name, Email, Phone, Password, Role, AccountType, CompanyName string }
 	if !decode(w, r, &req) {
 		return
@@ -370,9 +387,22 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 	a.session(w, u)
 }
 func (a *API) login(w http.ResponseWriter, r *http.Request) {
+	ip := clientIP(r)
+	if !a.allowRate(w, "login_ip:"+ip, 30, time.Minute, "çok fazla giriş denemesi yapıldı; lütfen 1 dakika sonra tekrar deneyin") {
+		return
+	}
 	var req struct{ Email, Phone, Password string }
 	if !decode(w, r, &req) {
 		return
+	}
+	accountIdentifier := strings.TrimSpace(strings.ToLower(req.Email))
+	if accountIdentifier == "" {
+		accountIdentifier = normalizePhone(req.Phone)
+	}
+	if accountIdentifier != "" {
+		if !a.allowRate(w, "login_acc:"+accountIdentifier, 10, time.Minute, "bu hesap için çok fazla başarısız giriş denendi; lütfen 1 dakika sonra tekrar deneyin") {
+			return
+		}
 	}
 	var u models.User
 	var e error
@@ -477,23 +507,39 @@ func (a *API) forgotPassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ip := clientIP(r)
-	if !a.resetRequestRate.Allow(email) || !a.resetRequestRate.Allow("ip:"+ip) {
-		tooManyRequests(w, "çok fazla kod talebinde bulundunuz, lütfen 5 dakika sonra tekrar deneyin")
+	if !a.allowRate(w, "reset_req:"+email, 3, 5*time.Minute, "çok fazla kod talebinde bulundunuz, lütfen 5 dakika sonra tekrar deneyin") ||
+		!a.allowRate(w, "reset_req_ip:"+ip, 10, 5*time.Minute, "çok fazla kod talebinde bulundunuz, lütfen 5 dakika sonra tekrar deneyin") {
 		return
 	}
 
 	// Güvenlik: Kullanıcının var olup olmadığını dışarı sızdırma.
 	u, err := a.store.GetUserByEmail(email)
-	if err != nil || accountStatus(u) != models.AccountStatusActive || (u.Role != models.RoleCustomer && u.Role != models.RoleDriver) {
+	if err != nil {
+		log.Printf("[PASSWORD RESET] User lookup failed email=%s: %v", email, err)
+		jsonResponse(w, http.StatusOK, map[string]any{"success": true, "message": genericPasswordResetMessage})
+		return
+	}
+	if accountStatus(u) != models.AccountStatusActive {
+		log.Printf("[PASSWORD RESET] User account not active email=%s user_id=%s status=%s", email, u.ID, accountStatus(u))
+		jsonResponse(w, http.StatusOK, map[string]any{"success": true, "message": genericPasswordResetMessage})
+		return
+	}
+	userRole := strings.TrimSpace(strings.ToLower(u.Role))
+	if userRole != models.RoleCustomer && userRole != models.RoleCorporate && userRole != models.RoleDriver {
+		log.Printf("[PASSWORD RESET] Unsupported role email=%s user_id=%s role=%s", email, u.ID, u.Role)
 		jsonResponse(w, http.StatusOK, map[string]any{"success": true, "message": genericPasswordResetMessage})
 		return
 	}
 
 	// Müşteri / şoför rol kısıtlaması varsa kontrol et
 	reqRole := strings.TrimSpace(strings.ToLower(req.Role))
-	if reqRole != "" && u.Role != reqRole {
-		jsonResponse(w, http.StatusOK, map[string]any{"success": true, "message": genericPasswordResetMessage})
-		return
+	if reqRole != "" {
+		roleMatches := userRole == reqRole || (reqRole == models.RoleCustomer && userRole == models.RoleCorporate)
+		if !roleMatches {
+			log.Printf("[PASSWORD RESET] Role mismatch email=%s user_id=%s userRole=%s reqRole=%s", email, u.ID, userRole, reqRole)
+			jsonResponse(w, http.StatusOK, map[string]any{"success": true, "message": genericPasswordResetMessage})
+			return
+		}
 	}
 
 	code, err := generate6DigitCode()
@@ -526,6 +572,7 @@ func (a *API) forgotPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Printf("[PASSWORD RESET SUCCESS] email=%s user_id=%s role=%s", email, u.ID, u.Role)
 	jsonResponse(w, http.StatusOK, map[string]any{"success": true, "message": genericPasswordResetMessage})
 }
 
@@ -545,8 +592,8 @@ func (a *API) verifyResetCode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ip := clientIP(r)
-	if !a.resetVerifyRate.Allow("ip:" + ip) {
-		tooManyRequests(w, "çok fazla deneme yapıldı, lütfen biraz bekleyin")
+	if !a.allowRate(w, "reset_vfy:"+email, 5, 5*time.Minute, "çok fazla deneme yapıldı, lütfen biraz bekleyin") ||
+		!a.allowRate(w, "reset_vfy_ip:"+ip, 15, 5*time.Minute, "çok fazla deneme yapıldı, lütfen biraz bekleyin") {
 		return
 	}
 
@@ -617,35 +664,29 @@ func (a *API) resetPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var userID string
-	if strings.TrimSpace(req.ResetToken) != "" {
-		tokenRec, err := a.store.ConsumePasswordResetToken(strings.TrimSpace(req.ResetToken))
-		if err != nil || tokenRec == nil {
-			badRequest(w, "şifre sıfırlama oturumunun süresi dolmuş veya geçersiz, lütfen baştan başlayın")
-			return
-		}
-		if strings.ToLower(tokenRec.Email) != email {
-			badRequest(w, "geçersiz şifre sıfırlama oturumu")
-			return
-		}
-		userID = tokenRec.UserID
-	} else if strings.TrimSpace(req.Code) != "" && len(strings.TrimSpace(req.Code)) == 6 {
-		record, err := a.store.GetPasswordResetCode(email)
-		if err != nil || record == nil {
-			badRequest(w, "doğrulama kodunun süresi dolmuş veya kod geçersiz")
-			return
-		}
-		expectedHash := a.hashResetCode(email, req.Code)
-		if subtle.ConstantTimeCompare([]byte(record.HashedCode), []byte(expectedHash)) != 1 {
-			badRequest(w, "girdiğiniz doğrulama kodu hatalı")
-			return
-		}
-		userID = record.UserID
-		_ = a.store.DeletePasswordResetCode(email)
-	} else {
-		badRequest(w, "doğrulama belirteci veya kod zorunludur")
+	ip := clientIP(r)
+	if !a.allowRate(w, "reset_pwd:"+email, 5, 15*time.Minute, "çok fazla şifre sıfırlama denemesi yapıldı; lütfen 15 dakika sonra tekrar deneyin") ||
+		!a.allowRate(w, "reset_pwd_ip:"+ip, 10, 15*time.Minute, "çok fazla şifre sıfırlama denemesi yapıldı; lütfen 15 dakika sonra tekrar deneyin") {
 		return
 	}
+
+	var userID string
+	resetToken := strings.TrimSpace(req.ResetToken)
+	if resetToken == "" {
+		badRequest(w, "şifre sıfırlama doğrulama belirteci (resetToken) zorunludur; lütfen önce kodu doğrulayın")
+		return
+	}
+
+	tokenRec, err := a.store.ConsumePasswordResetToken(resetToken)
+	if err != nil || tokenRec == nil {
+		badRequest(w, "şifre sıfırlama oturumunun süresi dolmuş veya geçersiz, lütfen baştan başlayın")
+		return
+	}
+	if strings.ToLower(tokenRec.Email) != email {
+		badRequest(w, "geçersiz şifre sıfırlama oturumu")
+		return
+	}
+	userID = tokenRec.UserID
 
 	user, err := a.store.GetUser(userID)
 	if err != nil {
@@ -690,16 +731,47 @@ func generate6DigitCode() (string, error) {
 }
 
 func clientIP(r *http.Request) string {
+	// If X-Real-IP is provided by a configured reverse proxy (like Nginx), prefer it.
+	if realIP := strings.TrimSpace(r.Header.Get("X-Real-IP")); realIP != "" {
+		if ip := net.ParseIP(realIP); ip != nil {
+			return realIP
+		}
+	}
+	// For X-Forwarded-For: In standard reverse-proxy setups, the client's direct connection to the proxy
+	// is appended to the list, or the rightmost non-trusted entry is used.
+	// We parse and validate IP addresses from X-Forwarded-For.
 	forwarded := r.Header.Get("X-Forwarded-For")
 	if forwarded != "" {
 		parts := strings.Split(forwarded, ",")
-		return strings.TrimSpace(parts[0])
+		for i := len(parts) - 1; i >= 0; i-- {
+			p := strings.TrimSpace(parts[i])
+			if ip := net.ParseIP(p); ip != nil {
+				return p
+			}
+		}
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err == nil {
+	if err == nil && host != "" {
 		return host
 	}
 	return r.RemoteAddr
+}
+
+// allowRate checks Redis rate limit. If limit is exceeded, it sets Retry-After header and returns HTTP 429.
+func (a *API) allowRate(w http.ResponseWriter, key string, limit int, window time.Duration, msg string) bool {
+	if a.store == nil {
+		return true
+	}
+	allowed, _, retryAfter, err := a.store.AllowRateLimit(key, limit, window)
+	if err != nil {
+		log.Printf("[RATE_LIMIT_ERROR] key=%s err=%v", key, err)
+		return true // Fail open on Redis connectivity error to prevent system lockout
+	}
+	if !allowed {
+		tooManyRequests(w, msg, retryAfter)
+		return false
+	}
+	return true
 }
 func (a *API) me(w http.ResponseWriter, r *http.Request) {
 	p := current(r)
@@ -1020,20 +1092,12 @@ func (a *API) calculateRoute(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) allowLocationRequest(w http.ResponseWriter, r *http.Request) bool {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil || host == "" {
-		host = r.RemoteAddr
-	}
-	key := host
+	ip := clientIP(r)
+	key := ip
 	if authenticated := current(r); authenticated.ID != "" {
-		key = authenticated.ID + ":" + host
+		key = authenticated.ID + ":" + ip
 	}
-	if a.locationRate.Allow(key) {
-		return true
-	}
-	w.Header().Set("Retry-After", "60")
-	errorResponse(w, http.StatusTooManyRequests, "RATE_LIMITED", "çok fazla konum isteği gönderildi; lütfen kısa süre sonra tekrar deneyin", map[string]any{"retryAfterSeconds": 60})
-	return false
+	return a.allowRate(w, "location:"+key, 60, time.Minute, "çok fazla konum isteği gönderildi; lütfen kısa süre sonra tekrar deneyin")
 }
 
 func mapsMessage(operation string) string {
@@ -1478,6 +1542,9 @@ func (a *API) createLoad(w http.ResponseWriter, r *http.Request) {
 		forbidden(w)
 		return
 	}
+	if !a.allowRate(w, "create_load:"+p.ID, 30, time.Hour, "kısa sürede çok fazla ilan oluşturdunuz; lütfen bir süre bekleyin") {
+		return
+	}
 	var req loadRequest
 	if !decode(w, r, &req) {
 		return
@@ -1799,6 +1866,9 @@ func (a *API) createOffer(w http.ResponseWriter, r *http.Request) {
 	p := current(r)
 	if p.Role != models.RoleDriver {
 		forbidden(w)
+		return
+	}
+	if !a.allowRate(w, "create_offer:"+p.ID, 60, time.Minute, "kısa sürede çok fazla teklif verdiniz; lütfen 1 dakika bekleyin") {
 		return
 	}
 	l, e := a.store.GetLoad(r.PathValue("id"))
@@ -2615,11 +2685,14 @@ type messageRequest struct {
 }
 
 func (a *API) sendMessage(w http.ResponseWriter, r *http.Request) {
+	p := current(r)
+	if !a.allowRate(w, "send_msg:"+p.ID, 30, time.Minute, "kısa sürede çok fazla mesaj gönderdiniz; lütfen biraz bekleyin") {
+		return
+	}
 	l, ok := a.getMessageLoad(w, r)
 	if !ok {
 		return
 	}
-	p := current(r)
 	var req messageRequest
 	if !decode(w, r, &req) {
 		return
@@ -2784,6 +2857,12 @@ func (a *API) deleteMessage(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, a.messageView(l.ID, updated))
 }
 func (a *API) uploadPhoto(w http.ResponseWriter, r *http.Request) {
+	p := current(r)
+	ip := clientIP(r)
+	if !a.allowRate(w, "upload_usr:"+p.ID, 20, time.Minute, "kısa sürede çok fazla fotoğraf yüklediniz; lütfen 1 dakika bekleyin") ||
+		!a.allowRate(w, "upload_ip:"+ip, 40, time.Minute, "kısa sürede çok fazla fotoğraf yüklendi; lütfen 1 dakika bekleyin") {
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, a.maxUploadBytes+(1<<20))
 	if e := r.ParseMultipartForm(a.maxUploadBytes); e != nil {
 		badRequest(w, "fotoğraf boyutu limiti aşıldı")
@@ -2795,7 +2874,7 @@ func (a *API) uploadPhoto(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer file.Close()
-	url, e := a.savePhoto(file, header, current(r).ID, "")
+	url, e := a.savePhoto(file, header, p.ID, "")
 	if e != nil {
 		badRequest(w, e.Error())
 		return
@@ -2803,11 +2882,17 @@ func (a *API) uploadPhoto(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, 201, map[string]string{"url": url})
 }
 func (a *API) uploadLoadPhotos(w http.ResponseWriter, r *http.Request) {
+	p := current(r)
+	ip := clientIP(r)
+	if !a.allowRate(w, "upload_usr:"+p.ID, 20, time.Minute, "kısa sürede çok fazla fotoğraf yüklediniz; lütfen 1 dakika bekleyin") ||
+		!a.allowRate(w, "upload_ip:"+ip, 40, time.Minute, "kısa sürede çok fazla fotoğraf yüklendi; lütfen 1 dakika bekleyin") {
+		return
+	}
 	l, ok := a.getOwnedLoad(w, r)
 	if !ok {
 		return
 	}
-	if current(r).Role != models.RoleCustomer || l.CustomerID != current(r).ID {
+	if p.Role != models.RoleCustomer || l.CustomerID != p.ID {
 		forbidden(w)
 		return
 	}
@@ -3256,12 +3341,42 @@ func notFound(w http.ResponseWriter) {
 func conflict(w http.ResponseWriter, message string) {
 	errorResponse(w, http.StatusConflict, "CONFLICT", message, map[string]any{})
 }
-func tooManyRequests(w http.ResponseWriter, message string) {
-	errorResponse(w, http.StatusTooManyRequests, "RATE_LIMIT_EXCEEDED", message, map[string]any{})
+func tooManyRequests(w http.ResponseWriter, message string, retryAfterSeconds int) {
+	if retryAfterSeconds <= 0 {
+		retryAfterSeconds = 60
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(retryAfterSeconds))
+	errorResponse(w, http.StatusTooManyRequests, "RATE_LIMIT_EXCEEDED", message, map[string]any{
+		"retryAfterSeconds": retryAfterSeconds,
+	})
+}
+func (a *API) serverError(w http.ResponseWriter, r *http.Request, e error) {
+	reqID := w.Header().Get("X-Request-ID")
+	log.Printf("request_id=%s unexpected_api_error=%q", reqID, e)
+	if a.sentry != nil && a.sentry.Enabled() {
+		tags := map[string]string{
+			"requestId": reqID,
+		}
+		if r != nil {
+			if p := current(r); p.ID != "" {
+				tags["userId"] = p.ID
+				tags["role"] = p.Role
+			}
+		}
+		a.sentry.CaptureError(context.Background(), e, r, tags, map[string]any{"requestId": reqID})
+	}
+	errorResponse(w, http.StatusInternalServerError, "INTERNAL_ERROR", "sunucu hatası", map[string]any{})
 }
 func serverError(w http.ResponseWriter, e error) {
 	log.Printf("request_id=%s unexpected_api_error=%q", w.Header().Get("X-Request-ID"), e)
 	errorResponse(w, http.StatusInternalServerError, "INTERNAL_ERROR", "sunucu hatası", map[string]any{})
+}
+func (a *API) writeLoadStatusError(w http.ResponseWriter, r *http.Request, e error) {
+	if errors.Is(e, store.ErrLoadStatusConflict) || errors.Is(e, store.ErrInvalidLoadStatusTransition) {
+		conflict(w, "durum başka bir işlem tarafından değiştirildi veya geçiş artık geçerli değil")
+		return
+	}
+	a.serverError(w, r, e)
 }
 func writeLoadStatusError(w http.ResponseWriter, e error) {
 	if errors.Is(e, store.ErrLoadStatusConflict) || errors.Is(e, store.ErrInvalidLoadStatusTransition) {
@@ -3298,6 +3413,33 @@ func requestID(next http.Handler) http.Handler {
 		id := uuid.NewString()
 		w.Header().Set("X-Request-ID", id)
 		next.ServeHTTP(w, r.WithContext(service.WithRequestID(r.Context(), id)))
+	})
+}
+func (a *API) recovery(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				reqID := w.Header().Get("X-Request-ID")
+				log.Printf("request_id=%s PANIC_RECOVERED: %v", reqID, rec)
+				if a.sentry != nil && a.sentry.Enabled() {
+					a.sentry.CapturePanic(r.Context(), rec, r, nil)
+				}
+				errorResponse(w, http.StatusInternalServerError, "INTERNAL_ERROR", "sunucu hatası", map[string]any{})
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
+}
+func (a *API) maintenance(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if a.maintenanceMode {
+			path := r.URL.Path
+			if path != "/health" && path != "/api/health" && !strings.HasPrefix(path, "/api/admin") {
+				errorResponse(w, http.StatusServiceUnavailable, "MAINTENANCE_MODE", "Sistem planlı bakım çalışmasındadır; lütfen daha sonra tekrar deneyin", map[string]any{"service": "nakliye-api", "maintenance": true})
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 func logging(next http.Handler) http.Handler {

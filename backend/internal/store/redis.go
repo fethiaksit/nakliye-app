@@ -267,7 +267,7 @@ func (s *RedisStore) GetUser(id string) (models.User, error) {
 	return u, json.Unmarshal(b, &u)
 }
 func (s *RedisStore) GetUserByEmail(email string) (models.User, error) {
-	id, err := s.client.Get(s.ctx, "user-email:"+strings.ToLower(email)).Result()
+	id, err := s.client.Get(s.ctx, "user-email:"+strings.TrimSpace(strings.ToLower(email))).Result()
 	if err != nil {
 		return models.User{}, err
 	}
@@ -907,4 +907,66 @@ func (s *RedisStore) SetActiveVehicle(driverID, vehicleID string) error {
 	}
 	_, err = pipe.Exec(s.ctx)
 	return err
+}
+
+// AllowRateLimit performs an atomic sliding fixed-window rate check in Redis.
+// It returns allowed (bool), remaining (int), retryAfterSeconds (int), and any error.
+func (s *RedisStore) AllowRateLimit(key string, limit int, window time.Duration) (bool, int, int, error) {
+	if s == nil || s.client == nil {
+		return true, limit, 0, nil
+	}
+	// Lua script: INCR key, if count == 1 then EXPIRE key window
+	// Returns current count and remaining TTL
+	script := redis.NewScript(`
+local key = KEYS[1]
+local limit = tonumber(ARGV[1])
+local window = tonumber(ARGV[2])
+
+local current = redis.call('INCR', key)
+if current == 1 then
+    redis.call('EXPIRE', key, window)
+end
+local ttl = redis.call('TTL', key)
+if ttl < 0 then
+    ttl = window
+    redis.call('EXPIRE', key, window)
+end
+
+local allowed = 0
+if current <= limit then
+    allowed = 1
+end
+
+return {allowed, current, ttl}
+`)
+
+	windowSecs := int64(window.Seconds())
+	if windowSecs <= 0 {
+		windowSecs = 1
+	}
+
+	res, err := script.Run(s.ctx, s.client, []string{"ratelimit:" + key}, limit, windowSecs).Slice()
+	if err != nil {
+		// Redis error should fail open to prevent blocking legitimate traffic, but log
+		return true, limit, 0, err
+	}
+
+	allowedInt, _ := res[0].(int64)
+	currentInt, _ := res[1].(int64)
+	ttlInt, _ := res[2].(int64)
+
+	allowed := allowedInt == 1
+	remaining := limit - int(currentInt)
+	if remaining < 0 {
+		remaining = 0
+	}
+	retryAfter := 0
+	if !allowed {
+		retryAfter = int(ttlInt)
+		if retryAfter <= 0 {
+			retryAfter = 1
+		}
+	}
+
+	return allowed, remaining, retryAfter, nil
 }

@@ -5,6 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from './Icon';
 import { AppButton, InlineNotice, SegmentedControl, TextField } from './primitives';
 import { colors, radius, shadows, spacing, typography } from './theme';
+import { posthog } from '../posthog';
 
 const normalizePhone = value => { const digits = String(value || '').replace(/\D/g, '').replace(/^0/, ''); return digits.startsWith('90') ? `+${digits.slice(0, 12)}` : `+90${digits.slice(0, 10)}`; };
 const isPhone = value => /^\+905\d{9}$/.test(normalizePhone(value));
@@ -111,7 +112,7 @@ export default function AuthFlow({ auth, saveSession, apiError, onSession, conne
       const email = form.email.trim().toLowerCase();
       if (resetStep === 'email') {
         const sendFn = auth.forgotPassword || auth.reset;
-        await sendFn({ email, role: allowedRole });
+        await sendFn({ email, role: allowedRole || form.role || 'customer' });
         setServerNotice('Doğrulama kodu e-posta adresinize gönderildi. Lütfen gelen kutunuzu kontrol edin.');
         setCountdown(300);
         setResetStep('code');
@@ -141,7 +142,7 @@ export default function AuthFlow({ auth, saveSession, apiError, onSession, conne
     try {
       const email = form.email.trim().toLowerCase();
       const sendFn = auth.forgotPassword || auth.reset;
-      await sendFn({ email, role: allowedRole });
+      await sendFn({ email, role: allowedRole || form.role || 'customer' });
       setServerNotice('Yeni doğrulama kodu gönderildi.');
       setCountdown(300);
       setResetCode('');
@@ -171,6 +172,13 @@ export default function AuthFlow({ auth, saveSession, apiError, onSession, conne
       const { data } = mode === 'login' ? await auth.login(payload) : await auth.register(payload);
       if (allowedRole && data.user.role !== allowedRole) throw new Error(allowedRole === 'customer' ? 'Bu hesap Şoför uygulamasında kullanılmalıdır.' : 'Bu hesap Müşteri uygulamasında kullanılmalıdır.');
       await saveSession(data, remember);
+      try {
+        posthog.identify(data.user.id, { role: data.user.role, accountType: data.user.accountType });
+        posthog.capture(mode === 'login' ? 'user_logged_in' : 'user_registered', {
+          role: data.user.role,
+          accountType: data.user.accountType || 'individual',
+        });
+      } catch {}
       onSession(data.user);
     } catch (error) {
       setServerError(apiError(error));

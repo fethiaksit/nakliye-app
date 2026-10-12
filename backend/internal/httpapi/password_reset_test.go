@@ -182,6 +182,48 @@ func TestForgotPassword_DriverAndCustomerSeparation(t *testing.T) {
 	}
 }
 
+func TestForgotPassword_CorporateUserAndCustomerRole(t *testing.T) {
+	api, s, mockEmail, mr := setupTestAPI(t)
+	defer mr.Close()
+
+	email := "corporate@example.com"
+	createTestUser(t, s, email, "+905558887766", models.RoleCorporate, "CorpPass123")
+
+	// Kurumsal kullanıcı müşteri uygulamasından (role: customer) kod istediğinde başarılı olmalı
+	payload, _ := json.Marshal(map[string]string{
+		"email": email,
+		"role":  "customer",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/forgot-password", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	api.Routes().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+	if mockEmail.TotalSent() != 1 {
+		t.Fatalf("expected 1 email sent for corporate customer with role customer, got %d", mockEmail.TotalSent())
+	}
+
+	// Şoför uygulamasından kurumsal kullanıcı için istendiğinde engellenmeli
+	payloadDriver, _ := json.Marshal(map[string]string{
+		"email": email,
+		"role":  "driver",
+	})
+	reqDriver := httptest.NewRequest(http.MethodPost, "/api/auth/forgot-password", bytes.NewReader(payloadDriver))
+	reqDriver.Header.Set("Content-Type", "application/json")
+	wDriver := httptest.NewRecorder()
+	api.Routes().ServeHTTP(wDriver, reqDriver)
+
+	if wDriver.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", wDriver.Code)
+	}
+	if mockEmail.TotalSent() != 1 {
+		t.Fatalf("expected still 1 email (no new email) when corporate user requested with driver role, got %d", mockEmail.TotalSent())
+	}
+}
+
 func TestForgotPassword_RateLimitExceeded(t *testing.T) {
 	api, s, _, mr := setupTestAPI(t)
 	defer mr.Close()
@@ -423,5 +465,28 @@ func TestForgotPassword_ResendAPIError_Graceful(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &res)
 	if res["message"] != genericPasswordResetMessage {
 		t.Fatalf("expected generic message, got %v", res["message"])
+	}
+}
+
+func TestResetPassword_RequiresResetToken_NoCodeBypass(t *testing.T) {
+	api, s, _, mr := setupTestAPI(t)
+	defer mr.Close()
+
+	email := "nocode@example.com"
+	createTestUser(t, s, email, "+905553334455", models.RoleCustomer, "Eski12345")
+
+	// 1. Doğrudan 'code' ile resetleme denemesi artık reddedilmeli (K1 açığı koruması)
+	resetPayload, _ := json.Marshal(map[string]string{
+		"email":       email,
+		"code":        "123456",
+		"newPassword": "YeniGucluSifre2026",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/reset-password", bytes.NewReader(resetPayload))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	api.Routes().ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 Bad Request when attempting to reset password with code without resetToken, got %d: %s", w.Code, w.Body.String())
 	}
 }

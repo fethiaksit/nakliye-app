@@ -5,6 +5,13 @@ import DriverWalletAccounts from "./DriverWalletAccounts";
 import DriverPaymentAccountAdmin from "./DriverPaymentAccountAdmin";
 import DriverWalletAdmin from "./DriverWalletAdmin";
 import CorporateWalletAdmin, { WalletCustomer } from "./CorporateWalletAdmin";
+import { sentry } from "./sentry";
+import { posthog } from "../../shared/posthog";
+
+if (typeof window !== "undefined") {
+  sentry.init();
+  posthog.init({ appName: "nakliyego-admin", release: "1.0.0", platform: "web" });
+}
 
 type Tab = "dashboard" | "corporate-applications" | "users" | "drivers" | "loads" | "complaints" | "corporate-wallets" | "driver-wallets" | "activity";
 type DetailKind = "corporate-application" | "user" | "driver" | "load" | "complaint";

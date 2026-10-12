@@ -59,5 +59,9 @@ func main() {
 		ResendAPIKey:           cfg.ResendAPIKey,
 		ResendFromEmail:        cfg.ResendFromEmail,
 		ResendAPIURL:           cfg.ResendAPIURL,
+		SentryDSN:              cfg.SentryDSN,
+		Environment:            cfg.Environment,
+		AppVersion:             cfg.AppVersion,
+		MaintenanceMode:        cfg.MaintenanceMode,
 	}).Routes()))
 }

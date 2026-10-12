@@ -18,6 +18,11 @@ import { nativeGoogleMapsConfigured, nativeGoogleMapsMessage } from './src/confi
 import { CustomerHome, CustomerLoads } from './src/screens/CustomerScreens';
 import CustomerAccountScreens from './src/screens/CustomerAccountScreens';
 import { formatMoney, loadStatusLabel, resolveMediaUrl } from './src/utils/presentation';
+import { mobileSentry } from '../shared/sentry';
+import { posthog } from '../shared/posthog';
+
+mobileSentry.init({ appName: 'nakliyego-customer', release: '1.0.0' });
+posthog.init({ appName: 'nakliyego-customer', release: '1.0.0', platform: 'mobile' });
 
 const { buildPricingFields, validateLoadFormFields } = require('./src/utils/loadForm.cjs');
 const { buildRepeatDraft } = require('./src/utils/repeatLoad.cjs');
@@ -258,6 +263,10 @@ function CustomerApp() {
 
   const publish = useCallback(async () => {
     if (publishBusy.current) return;
+    if (!posthog.isFeatureEnabled('create_load_enabled', true)) {
+      showToast('Yeni ilan oluşturma geçici olarak durdurulmuştur.', { type: 'error', title: 'Özellik Devre Dışı' });
+      return;
+    }
     const { pickup, dropoff, stops = [], route } = routeDraft;
     const draft = {
       form,
@@ -347,6 +356,15 @@ function CustomerApp() {
         await loads.photos(draftId, normalizedPhotos);
       }
       await loads.publish(draftId);
+      try {
+        posthog.capture('load_created', {
+          loadId: draftId,
+          vehicleType: form.vehicleType || 'minivan',
+          urgencyType: form.urgencyType || 'immediate',
+          cargoType: form.cargoType || 'other',
+          distanceKm: route?.distance_km || 0,
+        });
+      } catch {}
       resetLoadWizard();
       setWizardOpen(false);
       setTab('loads');
@@ -422,6 +440,11 @@ function CustomerApp() {
     setConfirmationLoading(true);
     try {
       const { data: acceptedLoad } = await offers.accept(offer.id);
+      posthog.capture('offer_accepted', {
+        loadId: acceptedLoad?.id || offer.loadId,
+        offerId: offer.id,
+        isCorporate: user?.accountType === 'corporate',
+      });
       setConfirmation(null);
       if (user?.accountType === 'corporate') {
         await openLoad(acceptedLoad);
@@ -444,6 +467,10 @@ function CustomerApp() {
     setConfirmationLoading(true);
     try {
       await loads.status(load.id, 'cancelled');
+      posthog.capture('load_cancelled', {
+        loadId: load.id,
+        status: load.status,
+      });
       loadDetailRequest.current += 1;
       setSelectedLoad(null);
       setSelectedLoadWallet(null);
@@ -531,11 +558,19 @@ function CustomerApp() {
 
   const applyWalletCredit = useCallback(async amountCents => {
     if (!selectedLoad?.id || !Number.isSafeInteger(amountCents) || amountCents <= 0 || walletSaving) return;
+    if (!posthog.isFeatureEnabled('corporate_wallet_enabled', true)) {
+      showToast('Kurumsal cüzdan kullanımı geçici olarak durdurulmuştur.', { type: 'error', title: 'Özellik Devre Dışı' });
+      return;
+    }
     const requestID = loadDetailRequest.current;
     setWalletSaving(true);
     try {
       const { data } = await corporate.applyWallet(selectedLoad.id, amountCents);
       if (requestID !== loadDetailRequest.current) return;
+      posthog.capture('wallet_credit_applied', {
+        loadId: selectedLoad.id,
+        amountTl: amountCents / 100,
+      });
       setSelectedLoadWallet(data);
       showToast(`${formatMoney(amountCents / 100)} kurumsal kredi uygulandı.`, { type: 'success', title: 'Cüzdan kullanıldı' });
     } catch (error) { showToast(apiError(error), { type: 'error', title: 'Cüzdan kullanılamadı' }); }

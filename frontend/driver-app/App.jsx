@@ -16,6 +16,11 @@ import { DriverJobs, DriverOffers } from './src/screens/DriverScreens';
 import DriverAccountScreens from './src/screens/DriverAccountScreens';
 import { parseWalletUnits } from '../shared/walletMoney.mjs';
 import { driverStatusAction, formatMoney, loadStatusLabel, resolveMediaUrl, toFiniteNumber } from './src/utils/presentation';
+import { mobileSentry } from '../shared/sentry';
+import { posthog } from '../shared/posthog';
+
+mobileSentry.init({ appName: 'nakliyego-driver', release: '1.0.0' });
+posthog.init({ appName: 'nakliyego-driver', release: '1.0.0', platform: 'mobile' });
 
 const navItems = [
   { value: 'jobs', label: 'İşler', icon: 'briefcase-outline', activeIcon: 'briefcase' },
@@ -187,6 +192,10 @@ function DriverApp() {
   }, []);
   const saveOffer = useCallback(async () => {
     if (!selected) return;
+    if (!posthog.isFeatureEnabled('offers_enabled', true)) {
+      showToast('Teklif verme özelliği geçici olarak durdurulmuştur.', { type: 'error', title: 'Özellik Devre Dışı' });
+      return;
+    }
     const amountCents = parseWalletUnits(offerForm.amount);
     const amountTl = amountCents === null ? 0 : amountCents / 100;
     const estimatedArrivalMinutes = Math.round(toFiniteNumber(offerForm.eta));
@@ -204,6 +213,12 @@ function DriverApp() {
       if (selectedOffer) await offers.update(selectedOffer.id, payload);
       else await offers.create(selected.id, payload);
       const updated = Boolean(selectedOffer);
+      posthog.capture('offer_submitted', {
+        loadId: selected.id,
+        amountTl,
+        estimatedArrivalMinutes,
+        isUpdate: updated,
+      });
       setSelected(null);
       setSelectedOffer(null);
       await fetchJobs();
@@ -248,6 +263,10 @@ function DriverApp() {
     setDeliverySaving(true);
     try {
       await loads.completeDelivery(load.id, proof);
+      posthog.capture('delivery_completed', {
+        loadId: load.id,
+        hasPhotoProof: Boolean(proof?.photo),
+      });
       await fetchJobs();
       await fetchOffers();
       setSelected(null);

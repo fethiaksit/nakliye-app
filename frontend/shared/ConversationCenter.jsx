@@ -9,6 +9,7 @@ import Icon from './ui/Icon';
 import { ActionSheet, ConfirmationModal, useToast } from './ui/feedback';
 import { Badge, ScreenState } from './ui/primitives';
 import { colors, radius, shadows, spacing, typography } from './ui/theme';
+import { posthog } from './posthog';
 
 const { canSendMessage, draftAfterSendAttempt, normalizeMessageDraft } = require('./conversationComposer.cjs');
 
@@ -257,6 +258,10 @@ export default function ConversationCenter({ currentUser, api, apiError, resolve
 
   const sendPayload = useCallback(async payload => {
     if (!selectedID || sendBusy.current) return { ok: false, skipped: true };
+    if (!posthog.isFeatureEnabled('messaging_enabled', true)) {
+      showToast('Mesajlaşma özelliği geçici olarak durdurulmuştur.', { type: 'error', title: 'Özellik Devre Dışı' });
+      return { ok: false, disabled: true };
+    }
     sendBusy.current = true;
     setSending(true);
     const clientMessageId = payload.clientMessageId || newClientMessageID();
@@ -265,6 +270,11 @@ export default function ConversationCenter({ currentUser, api, apiError, resolve
     scrollToBottom();
     try {
       const { data } = await api.send(selectedID, { ...payload, clientMessageId });
+      posthog.capture('message_sent', {
+        loadId: selectedID,
+        isReply: Boolean(payload.replyToMessageId),
+        hasAttachment: Boolean(payload.photoUrl || payload.location),
+      });
       setChat(current => mergeByID(current.filter(item => item.id !== optimistic.id), [data]));
       setReplyTo(current => current?.id && current.id === payload.replyToMessageId ? null : current);
       void loadConversations(false);
@@ -276,7 +286,7 @@ export default function ConversationCenter({ currentUser, api, apiError, resolve
       sendBusy.current = false;
       setSending(false);
     }
-  }, [api, apiError, currentUser.id, currentUser.role, loadConversations, scrollToBottom, selectedID]);
+  }, [api, apiError, currentUser.id, currentUser.role, loadConversations, scrollToBottom, selectedID, showToast]);
 
   const sendText = useCallback(async () => {
     const body = normalizeMessageDraft(draft);
