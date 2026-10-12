@@ -6,6 +6,7 @@ import Icon from './Icon';
 import { AppButton, InlineNotice, SegmentedControl, TextField } from './primitives';
 import { colors, radius, shadows, spacing, typography } from './theme';
 import { posthog } from '../posthog';
+import LegalModal from './LegalModal';
 
 const normalizePhone = value => { const digits = String(value || '').replace(/\D/g, '').replace(/^0/, ''); return digits.startsWith('90') ? `+${digits.slice(0, 12)}` : `+90${digits.slice(0, 10)}`; };
 const isPhone = value => /^\+905\d{9}$/.test(normalizePhone(value));
@@ -38,6 +39,7 @@ export default function AuthFlow({ auth, saveSession, apiError, onSession, conne
   const [form, setForm] = useState({ name: '', phone: '', email: '', password: '', confirm: '', role: allowedRole || 'customer', accountType: 'individual', companyName: '' });
   const [errors, setErrors] = useState({});
   const [terms, setTerms] = useState(false);
+  const [legalDoc, setLegalDoc] = useState(null);
   const [remember, setRemember] = useState(true);
   const [busy, setBusy] = useState(false);
   const [serverError, setServerError] = useState('');
@@ -248,6 +250,13 @@ export default function AuthFlow({ auth, saveSession, apiError, onSession, conne
                   </View>
                 ) : null}
                 <Checkbox checked={terms} onPress={() => { setTerms(current => !current); setErrors(old => ({ ...old, terms: '' })); }} label="Kullanım koşullarını kabul ediyorum" error={errors.terms} />
+                <View style={styles.legalLinksRow}>
+                  <Pressable hitSlop={6} onPress={() => setLegalDoc('terms')}><Text style={styles.legalLink}>Kullanım Koşulları</Text></Pressable>
+                  <Text style={styles.legalLinkDot}>•</Text>
+                  <Pressable hitSlop={6} onPress={() => setLegalDoc('privacy')}><Text style={styles.legalLink}>Gizlilik Politikası</Text></Pressable>
+                  <Text style={styles.legalLinkDot}>•</Text>
+                  <Pressable hitSlop={6} onPress={() => setLegalDoc('kvkk')}><Text style={styles.legalLink}>KVKK Metni</Text></Pressable>
+                </View>
                 {serverError ? <InlineNotice tone="danger" title="İşlem tamamlanamadı" message={serverError} /> : null}
                 <AppButton loading={busy} label="Kayıt Ol" icon="person-add-outline" onPress={submit} style={styles.submit} />
               </>
@@ -340,6 +349,7 @@ export default function AuthFlow({ auth, saveSession, apiError, onSession, conne
           {connectionCheck}
         </ScrollView>
       </KeyboardAvoidingView>
+      <LegalModal visible={Boolean(legalDoc)} docType={legalDoc} onClose={() => setLegalDoc(null)} />
     </SafeAreaView>
   );
 }
@@ -379,4 +389,7 @@ const styles = StyleSheet.create({
   resendLink: { ...typography.smallMedium, color: colors.primary, textDecorationLine: 'underline', paddingVertical: spacing.xxs },
   stepBack: { alignItems: 'center', marginTop: spacing.sm },
   stepBackText: { ...typography.small, color: colors.textSecondary },
+  legalLinksRow: { alignItems: 'center', flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 6, marginTop: spacing.xs, marginBottom: spacing.xs },
+  legalLink: { ...typography.caption, color: colors.primary, textDecorationLine: 'underline' },
+  legalLinkDot: { ...typography.caption, color: colors.textMuted },
 });
