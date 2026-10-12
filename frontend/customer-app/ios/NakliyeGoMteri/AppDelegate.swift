@@ -32,7 +32,8 @@ GMSServices.provideAPIKey("AIzaSyCThpSvredlfQZITfd_elDaLIIkaowCvVE")
     bindReactNativeFactory(factory)
 
 #if os(iOS) || os(tvOS)
-    window = UIWindow(frame: UIScreen.main.bounds)
+    let window = UIWindow(frame: UIScreen.main.bounds)
+    self.window = window
     factory.startReactNative(
       withModuleName: "main",
       in: window,
@@ -59,6 +60,40 @@ GMSServices.provideAPIKey("AIzaSyCThpSvredlfQZITfd_elDaLIIkaowCvVE")
   ) -> Bool {
     let result = RCTLinkingManager.application(application, continue: userActivity, restorationHandler: restorationHandler)
     return super.application(application, continue: userActivity, restorationHandler: restorationHandler) || result
+  }
+}
+
+public class SceneDelegate: UIResponder, UIWindowSceneDelegate {
+  public var window: UIWindow?
+
+  public func scene(
+    _ scene: UIScene,
+    willConnectTo session: UISceneSession,
+    options connectionOptions: UIScene.ConnectionOptions
+  ) {
+    guard let windowScene = scene as? UIWindowScene else { return }
+
+    if let appDelegate = UIApplication.shared.delegate as? AppDelegate,
+       let appWindow = appDelegate.window {
+      self.window = appWindow
+      appWindow.windowScene = windowScene
+      appWindow.makeKeyAndVisible()
+    }
+
+    if let url = connectionOptions.urlContexts.first?.url {
+      _ = RCTLinkingManager.application(UIApplication.shared, open: url, options: [:])
+    } else if let userActivity = connectionOptions.userActivities.first {
+      _ = RCTLinkingManager.application(UIApplication.shared, continue: userActivity, restorationHandler: { _ in })
+    }
+  }
+
+  public func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
+    guard let url = URLContexts.first?.url else { return }
+    _ = RCTLinkingManager.application(UIApplication.shared, open: url, options: [:])
+  }
+
+  public func scene(_ scene: UIScene, continue userActivity: NSUserActivity) {
+    _ = RCTLinkingManager.application(UIApplication.shared, continue: userActivity, restorationHandler: { _ in })
   }
 }
 
