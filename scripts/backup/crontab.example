@@ -4,20 +4,23 @@
 # Not: AWS EC2 sunucu saati UTC olarak yapılandırılmıştır.
 # TSİ (Türkiye Saati / UTC+3) hesaplamaları baz alınmıştır.
 #
+# Ön hazırlık (Log dizini oluşturma):
+#   mkdir -p /home/ubuntu/nakliye-app/logs/backup
+#
 # Düzenlemek için:
 #   crontab -e
 # ==============================================================================
 
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-S3_BUCKET=nakliyego-backups
+S3_BUCKET=nakliyego-backups-292187657171
 AWS_REGION=eu-central-1
 
 # 1. Production Redis Günlük Yedekleme (TSİ 03:00 -> UTC 00:00)
-0 0 * * * /opt/nakliyego/scripts/redis-backup.sh prod >> /var/log/nakliyego-backup-prod.log 2>&1
+0 0 * * * /home/ubuntu/nakliye-app/scripts/backup/redis-backup.sh prod >> /home/ubuntu/nakliye-app/logs/backup/redis-backup-prod.log 2>&1
 
 # 2. Beta Redis Günlük Yedekleme (TSİ 03:15 -> UTC 00:15)
-15 0 * * * /opt/nakliyego/scripts/redis-backup.sh beta >> /var/log/nakliyego-backup-beta.log 2>&1
+15 0 * * * /home/ubuntu/nakliye-app/scripts/backup/redis-backup.sh beta >> /home/ubuntu/nakliye-app/logs/backup/redis-backup-beta.log 2>&1
 
 # 3. Haftalık İzole Restore Bütünlük Testi (Her Pazar TSİ 04:00 -> UTC 01:00)
-0 1 * * 0 /opt/nakliyego/scripts/redis-restore-test.sh prod >> /var/log/nakliyego-restore-test.log 2>&1
+0 1 * * 0 /home/ubuntu/nakliye-app/scripts/backup/redis-restore-test.sh prod >> /home/ubuntu/nakliye-app/logs/backup/redis-restore-test.log 2>&1
