@@ -1,0 +1,26 @@
+{
+  "Rules": [
+    {
+      "ID": "NakliyeGoRedisBackups30DaysRetention",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": "redis/"
+      },
+      "Transitions": [
+        {
+          "Days": 14,
+          "StorageClass": "STANDARD_IA"
+        }
+      ],
+      "Expiration": {
+        "Days": 30
+      },
+      "NoncurrentVersionExpiration": {
+        "NoncurrentDays": 7
+      },
+      "AbortIncompleteMultipartUpload": {
+        "DaysAfterInitiation": 7
+      }
+    }
+  ]
+}

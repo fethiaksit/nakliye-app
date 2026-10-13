@@ -3,6 +3,7 @@
 .env.*.local
 *.jks
 *.keystore
+*.pem
 .DS_Store
 ._*
 node_modules/
