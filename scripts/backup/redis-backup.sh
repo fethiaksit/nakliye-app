@@ -14,15 +14,15 @@
 # 5. Container içi RDB ve kopyalanan yerel RDB dosyası bütünlük kontrolünden geçirilir.
 # 6. Snapshot arşivlenir (.tar.gz) ve SHA-256 sağlama toplamı alınır.
 # 7. AWS S3'e sunucu taraflı şifreleme (AES256) ile EC2 IAM rolüyle yüklenir.
-# 8. S3 yüklemesinin boyutu yerel boyutla karşılaştırılır ve SHA-256 dosyası doğrulanır.
-# 9. Yerel geçici çalışma dosyaları temizlenir.
+# 8. S3 yüklemesi tam nesne anahtarıyla 'head-object' üzerinden bayt bayt doğrulanır.
+# 9. Yerel geçici çalışma dizini (/home/ubuntu/nakliyego-backup-work) temizlenir.
 # ==============================================================================
 
 set -euo pipefail
 
 ENV="${1:-prod}"
 TIMESTAMP="$(date +'%Y%m%d_%H%M%S')"
-BACKUP_DIR="${BACKUP_DIR:-/tmp/nakliyego-backups}"
+BACKUP_WORK_DIR="${BACKUP_WORK_DIR:-/home/ubuntu/nakliyego-backup-work}"
 S3_BUCKET="${S3_BUCKET:-nakliyego-backups-292187657171}"
 AWS_REGION="${AWS_REGION:-eu-central-1}"
 ALERT_WEBHOOK_URL="${ALERT_WEBHOOK_URL:-}"
@@ -42,7 +42,7 @@ else
 fi
 
 LOG_PREFIX="[$(date +'%Y-%m-%d %H:%M:%S')] [NakliyeGo Backup - $ENV_NAME]"
-TEMP_WORK_DIR="$BACKUP_DIR/${ENV}_${TIMESTAMP}"
+TEMP_WORK_DIR="$BACKUP_WORK_DIR/backup_${ENV}_${TIMESTAMP}"
 ARCHIVE_NAME="redis-${ENV}-${TIMESTAMP}.rdb.tar.gz"
 ARCHIVE_PATH="$TEMP_WORK_DIR/$ARCHIVE_NAME"
 
@@ -230,8 +230,10 @@ log "Yerel SHA-256: $LOCAL_SHA_CONTENT"
 # ------------------------------------------------------------------------------
 # 8. AWS S3'e Şifreli Aktarım (AES256)
 # ------------------------------------------------------------------------------
-S3_TARGET_URI="s3://$S3_BUCKET/$S3_PREFIX/$ARCHIVE_NAME"
-S3_SHA_TARGET_URI="s3://$S3_BUCKET/$S3_PREFIX/$ARCHIVE_NAME.sha256"
+S3_ARCHIVE_KEY="$S3_PREFIX/$ARCHIVE_NAME"
+S3_SHA_KEY="$S3_PREFIX/$ARCHIVE_NAME.sha256"
+S3_TARGET_URI="s3://$S3_BUCKET/$S3_ARCHIVE_KEY"
+S3_SHA_TARGET_URI="s3://$S3_BUCKET/$S3_SHA_KEY"
 
 log "S3'e yükleniyor (AES256 şifreli): $S3_TARGET_URI"
 aws s3 cp "$ARCHIVE_PATH" "$S3_TARGET_URI" \
@@ -243,14 +245,20 @@ aws s3 cp "$ARCHIVE_PATH.sha256" "$S3_SHA_TARGET_URI" \
     --sse AES256
 
 # ------------------------------------------------------------------------------
-# 9. S3 Boyut ve SHA-256 Dosyası Doğrulaması
+# 9. S3 Boyut ve SHA-256 Dosyası Doğrulaması (head-object)
 # ------------------------------------------------------------------------------
-log "S3 üzerindeki arşiv ve SHA-256 dosyaları doğrulanıyor..."
+log "S3 üzerindeki arşiv ve SHA-256 dosyaları doğrulanıyor (head-object)..."
 
-# 9.1. Arşiv dosya boyutu karşılaştırma
-REMOTE_ARCHIVE_BYTES=$(aws s3 ls "$S3_TARGET_URI" --region "$AWS_REGION" | awk '{print $3}')
-if [[ -z "$REMOTE_ARCHIVE_BYTES" ]] || [[ "$REMOTE_ARCHIVE_BYTES" -le 0 ]]; then
-    log_error "S3 üzerinde arşiv dosyası bulunamadı veya 0 byte: $S3_TARGET_URI"
+# 9.1. Arşiv dosya boyutu doğrulama (tam nesne anahtarıyla head-object)
+REMOTE_ARCHIVE_BYTES=$(aws s3api head-object \
+    --bucket "$S3_BUCKET" \
+    --key "$S3_ARCHIVE_KEY" \
+    --region "$AWS_REGION" \
+    --query ContentLength \
+    --output text 2>/dev/null || echo "")
+
+if [[ -z "$REMOTE_ARCHIVE_BYTES" ]] || ! [[ "$REMOTE_ARCHIVE_BYTES" =~ ^[0-9]+$ ]] || [[ "$REMOTE_ARCHIVE_BYTES" -le 0 ]]; then
+    log_error "S3 üzerinde arşiv nesnesi doğrulanamadı (head-object başarısız): bucket='$S3_BUCKET', key='$S3_ARCHIVE_KEY'"
     exit 1
 fi
 
@@ -260,15 +268,26 @@ if [[ "$REMOTE_ARCHIVE_BYTES" -ne "$LOCAL_ARCHIVE_BYTES" ]]; then
 fi
 log "S3 arşiv boyutu yerel boyutla birebir eşleşti: $REMOTE_ARCHIVE_BYTES bytes"
 
-# 9.2. SHA-256 kontrol dosyası doğrulaması
-REMOTE_SHA_BYTES=$(aws s3 ls "$S3_SHA_TARGET_URI" --region "$AWS_REGION" | awk '{print $3}')
-if [[ -z "$REMOTE_SHA_BYTES" ]] || [[ "$REMOTE_SHA_BYTES" -ne "$LOCAL_SHA_BYTES" ]]; then
+# 9.2. SHA-256 kontrol dosyası doğrulaması (tam nesne anahtarıyla head-object)
+REMOTE_SHA_BYTES=$(aws s3api head-object \
+    --bucket "$S3_BUCKET" \
+    --key "$S3_SHA_KEY" \
+    --region "$AWS_REGION" \
+    --query ContentLength \
+    --output text 2>/dev/null || echo "")
+
+if [[ -z "$REMOTE_SHA_BYTES" ]] || ! [[ "$REMOTE_SHA_BYTES" =~ ^[0-9]+$ ]] || [[ "$REMOTE_SHA_BYTES" -le 0 ]]; then
+    log_error "S3 üzerinde SHA-256 nesnesi doğrulanamadı (head-object başarısız): bucket='$S3_BUCKET', key='$S3_SHA_KEY'"
+    exit 1
+fi
+
+if [[ "$REMOTE_SHA_BYTES" -ne "$LOCAL_SHA_BYTES" ]]; then
     log_error "S3 SHA-256 kontrol dosyası boyutu ($REMOTE_SHA_BYTES bytes) yerel boyutla ($LOCAL_SHA_BYTES bytes) eşleşmiyor!"
     exit 1
 fi
 
-REMOTE_SHA_CONTENT=$(aws s3 cp "$S3_SHA_TARGET_URI" - --region "$AWS_REGION" | tr -d '\r\n')
-if [[ "$REMOTE_SHA_CONTENT" != "$LOCAL_SHA_CONTENT" ]]; then
+REMOTE_SHA_CONTENT=$(aws s3 cp "$S3_SHA_TARGET_URI" - --region "$AWS_REGION" 2>/dev/null | tr -d '\r\n')
+if [[ -z "$REMOTE_SHA_CONTENT" ]] || [[ "$REMOTE_SHA_CONTENT" != "$LOCAL_SHA_CONTENT" ]]; then
     log_error "S3 üzerindeki SHA-256 içeriği yerel özet ile uyuşmuyor! (Uzak: '$REMOTE_SHA_CONTENT', Yerel: '$LOCAL_SHA_CONTENT')"
     exit 1
 fi

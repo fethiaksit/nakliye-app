@@ -65,9 +65,10 @@ sudo sysctl vm.overcommit_memory=1
 echo "vm.overcommit_memory = 1" | sudo tee -a /etc/sysctl.conf
 ```
 
-### 3.2. Script İzinleri ve Log Dizini
+### 3.2. Çalışma ve Log Dizinleri
 ```bash
-# Log dizinini oluştur (ubuntu kullanıcısı için yazılabilir)
+# Çalışma ve log dizinlerini oluştur (ubuntu kullanıcısı için yazılabilir)
+mkdir -p /home/ubuntu/nakliyego-backup-work
 mkdir -p /home/ubuntu/nakliye-app/logs/backup
 
 # Scriptlere çalıştırma izni ver

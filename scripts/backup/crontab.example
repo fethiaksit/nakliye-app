@@ -4,8 +4,8 @@
 # Not: AWS EC2 sunucu saati UTC olarak yapılandırılmıştır.
 # TSİ (Türkiye Saati / UTC+3) hesaplamaları baz alınmıştır.
 #
-# Ön hazırlık (Log dizini oluşturma):
-#   mkdir -p /home/ubuntu/nakliye-app/logs/backup
+# Ön hazırlık (Çalışma ve log dizinlerini oluşturma):
+#   mkdir -p /home/ubuntu/nakliyego-backup-work /home/ubuntu/nakliye-app/logs/backup
 #
 # Düzenlemek için:
 #   crontab -e
@@ -15,6 +15,7 @@ SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 S3_BUCKET=nakliyego-backups-292187657171
 AWS_REGION=eu-central-1
+BACKUP_WORK_DIR=/home/ubuntu/nakliyego-backup-work
 
 # 1. Production Redis Günlük Yedekleme (TSİ 03:00 -> UTC 00:00)
 0 0 * * * /home/ubuntu/nakliye-app/scripts/backup/redis-backup.sh prod >> /home/ubuntu/nakliye-app/logs/backup/redis-backup-prod.log 2>&1

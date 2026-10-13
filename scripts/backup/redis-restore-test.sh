@@ -4,7 +4,7 @@
 # ==============================================================================
 # Desteklenen Ortamlar: prod | beta
 # Kullanım:
-#   ./redis-restore-test.sh [prod|beta] [opsiyonel: yerel_dosya_yolu_veya_s3_uri]
+#   ./redis-restore-test.sh [prod|beta] [opsiyonel: yerel_dosya_yolu_veya_s3_uri_veya_key]
 #
 # Çalışma Prensibi:
 # 1. Canlı/çalışan Redis container'larına KESİNLİKLE DOKUNMAZ.
@@ -12,24 +12,27 @@
 # 3. Mevcut hiçbir container'ı otomatik silmez; benzersiz test container adı üretir.
 # 4. S3'ten en güncel RDB yedeğini indirir (veya verilen hedefi kullanır).
 # 5. SHA-256 doğrulamasını ZORUNLU olarak gerçekleştirir; eksik/bozuksa başarısız olur.
-# 6. Arşivi geçici test dizinine açar ve redis-check-rdb ile inceler.
-# 7. İzole geçici container başlatır (--appendonly no ile RDB'yi okur).
-# 8. NakliyeGo key yapısını (loads, user:*, company:*, offers:*) sorgular.
-# 9. Yalnızca bu test tarafından başlatılan geçici container'ı ve dosyaları temizler.
+# 6. Arşivi izole test dizinine (/home/ubuntu/nakliyego-backup-work/restore) açar.
+# 7. RDB dosyasını redis-check-rdb ile inceler.
+# 8. İzole geçici container başlatır (--appendonly no ile RDB'yi okur).
+# 9. Geri yüklenen RDB'nin gerçekten Redis'e yüklendiğini (DBSIZE > 0, log doğrulaması)
+#    ve NakliyeGo key yapısını (loads, user:*, company:*, offers:*) doğrular.
+# 10. Yalnızca bu test tarafından başlatılan geçici container'ı ve dosyaları temizler.
 # ==============================================================================
 
 set -euo pipefail
 
 ENV="${1:-prod}"
 SPECIFIC_TARGET="${2:-}"
+BACKUP_WORK_DIR="${BACKUP_WORK_DIR:-/home/ubuntu/nakliyego-backup-work}"
 S3_BUCKET="${S3_BUCKET:-nakliyego-backups-292187657171}"
 AWS_REGION="${AWS_REGION:-eu-central-1}"
 TIMESTAMP="$(date +'%Y%m%d_%H%M%S')"
 RANDOM_SUFFIX="$(LC_ALL=C tr -dc 'a-z0-9' < /dev/urandom 2>/dev/null | head -c 8 || echo "$$")"
 
-# Benzersiz ve çakışmasız test container adı
+# Benzersiz ve çakışmasız test container adı ve restore çalışma dizini
 TEST_CONTAINER="nakliye-restore-test-${ENV}-${TIMESTAMP}-${RANDOM_SUFFIX}"
-TEMP_RESTORE_DIR="/tmp/nakliyego-restore-test-${ENV}-${TIMESTAMP}-${RANDOM_SUFFIX}"
+TEMP_RESTORE_DIR="$BACKUP_WORK_DIR/restore/${ENV}_${TIMESTAMP}_${RANDOM_SUFFIX}"
 CONTAINER_CREATED=false
 
 # Ortam Yapılandırması ve Ayrımı
@@ -60,7 +63,7 @@ cleanup() {
     local exit_code=$?
     log "Test temizliği başlatılıyor..."
 
-    # Yalnızca bu testin oluşturduğu container temizlenir; canlı container'lar asla silinmez
+    # Yalnızca bu testin oluşturduğu izole container temizlenir; canlı container'lar asla silinmez
     if [[ "$CONTAINER_CREATED" == true ]]; then
         if [[ "$TEST_CONTAINER" =~ ^nakliye-restore-test- ]] && [[ "$TEST_CONTAINER" != "$LIVE_CONTAINER" ]]; then
             if docker ps -a --format '{{.Names}}' | grep -q "^${TEST_CONTAINER}$"; then
@@ -70,9 +73,10 @@ cleanup() {
         fi
     fi
 
+    # Geçici restore dizini temizlenir
     if [[ -d "$TEMP_RESTORE_DIR" ]]; then
         rm -rf "$TEMP_RESTORE_DIR"
-        log "Geçici test çalışma dizini silindi: $TEMP_RESTORE_DIR"
+        log "Geçici restore test dizini temizlendi: $TEMP_RESTORE_DIR"
     fi
 
     exit "$exit_code"
@@ -85,6 +89,11 @@ trap cleanup EXIT
 # ------------------------------------------------------------------------------
 if ! command -v docker >/dev/null 2>&1; then
     log_error "docker komutu bulunamadı!"
+    exit 1
+fi
+
+if ! command -v aws >/dev/null 2>&1; then
+    log_error "aws CLI komutu bulunamadı!"
     exit 1
 fi
 
@@ -107,22 +116,15 @@ mkdir -p "$TEMP_RESTORE_DIR"
 # ------------------------------------------------------------------------------
 if [[ -n "$SPECIFIC_TARGET" ]]; then
     if [[ "$SPECIFIC_TARGET" =~ ^s3:// ]]; then
-        log "Belirtilen S3 hedefi kullanılıyor: $SPECIFIC_TARGET"
+        S3_TARGET_URI="$SPECIFIC_TARGET"
+        # s3://bucket/key formatından key ve bucket ayıkla
+        S3_TARGET_KEY="${SPECIFIC_TARGET#s3://*/}"
         ARCHIVE_FILE_NAME="$(basename "$SPECIFIC_TARGET")"
         ARCHIVE_PATH="$TEMP_RESTORE_DIR/$ARCHIVE_FILE_NAME"
-        SHA_TARGET="${SPECIFIC_TARGET}.sha256"
-
-        log "S3 üzerinde zorunlu SHA-256 kontrol dosyası denetleniyor: $SHA_TARGET"
-        if ! aws s3 ls "$SHA_TARGET" --region "$AWS_REGION" >/dev/null 2>&1; then
-            log_error "Zorunlu SHA-256 kontrol dosyası S3 üzerinde bulunamadı ($SHA_TARGET)! Bütünlük doğrulanamadığı için geri yükleme reddedildi."
-            exit 1
-        fi
-
-        log "Yedek arşivi ve SHA-256 dosyası indiriliyor..."
-        aws s3 cp "$SPECIFIC_TARGET" "$ARCHIVE_PATH" --region "$AWS_REGION"
-        aws s3 cp "$SHA_TARGET" "$ARCHIVE_PATH.sha256" --region "$AWS_REGION"
+        S3_SHA_KEY="${S3_TARGET_KEY}.sha256"
+        S3_SHA_URI="${S3_TARGET_URI}.sha256"
     elif [[ -f "$SPECIFIC_TARGET" ]]; then
-        log "Yerel dosya kullanılıyor: $SPECIFIC_TARGET"
+        log "Yerel arşiv dosyası kullanılıyor: $SPECIFIC_TARGET"
         ARCHIVE_FILE_NAME="$(basename "$SPECIFIC_TARGET")"
         ARCHIVE_PATH="$TEMP_RESTORE_DIR/$ARCHIVE_FILE_NAME"
         cp "$SPECIFIC_TARGET" "$ARCHIVE_PATH"
@@ -133,9 +135,51 @@ if [[ -n "$SPECIFIC_TARGET" ]]; then
             exit 1
         fi
         cp "$LOCAL_SHA_SOURCE" "$ARCHIVE_PATH.sha256"
+        S3_TARGET_KEY=""
     else
-        log_error "Belirtilen hedef dosya veya S3 adresi bulunamadı: $SPECIFIC_TARGET"
-        exit 1
+        # S3 key veya dosya adı formatında verilmişse
+        if [[ "$SPECIFIC_TARGET" =~ ^redis/ ]]; then
+            S3_TARGET_KEY="$SPECIFIC_TARGET"
+        else
+            S3_TARGET_KEY="$S3_PREFIX/$SPECIFIC_TARGET"
+        fi
+        S3_TARGET_URI="s3://$S3_BUCKET/$S3_TARGET_KEY"
+        S3_SHA_KEY="${S3_TARGET_KEY}.sha256"
+        S3_SHA_URI="s3://$S3_BUCKET/$S3_SHA_KEY"
+        ARCHIVE_FILE_NAME="$(basename "$S3_TARGET_KEY")"
+        ARCHIVE_PATH="$TEMP_RESTORE_DIR/$ARCHIVE_FILE_NAME"
+    fi
+
+    # Eğer S3 üzerinden çekiliyorsa head-object ile doğrula ve indir
+    if [[ -n "${S3_TARGET_KEY:-}" ]]; then
+        log "S3 üzerinde hedef arşiv doğrulanıyor (head-object): $S3_TARGET_KEY"
+        REMOTE_SIZE=$(aws s3api head-object \
+            --bucket "$S3_BUCKET" \
+            --key "$S3_TARGET_KEY" \
+            --region "$AWS_REGION" \
+            --query ContentLength \
+            --output text 2>/dev/null || echo "")
+
+        if [[ -z "$REMOTE_SIZE" ]] || ! [[ "$REMOTE_SIZE" =~ ^[0-9]+$ ]] || [[ "$REMOTE_SIZE" -le 0 ]]; then
+            log_error "S3 üzerinde hedef arşiv bulunamadı: bucket='$S3_BUCKET', key='$S3_TARGET_KEY'"
+            exit 1
+        fi
+
+        log "S3 üzerinde zorunlu SHA-256 kontrol dosyası denetleniyor (head-object): $S3_SHA_KEY"
+        if ! aws s3api head-object --bucket "$S3_BUCKET" --key "$S3_SHA_KEY" --region "$AWS_REGION" >/dev/null 2>&1; then
+            log_error "Zorunlu SHA-256 kontrol dosyası S3 üzerinde bulunamadı ($S3_SHA_KEY)! Bütünlük doğrulanamadığı için geri yükleme reddedildi."
+            exit 1
+        fi
+
+        log "Yedek arşivi ve SHA-256 dosyası indiriliyor..."
+        aws s3 cp "$S3_TARGET_URI" "$ARCHIVE_PATH" --region "$AWS_REGION"
+        aws s3 cp "$S3_SHA_URI" "$ARCHIVE_PATH.sha256" --region "$AWS_REGION"
+
+        LOCAL_SIZE=$(wc -c < "$ARCHIVE_PATH" | tr -d ' ')
+        if [[ "$REMOTE_SIZE" -ne "$LOCAL_SIZE" ]]; then
+            log_error "İndirilen dosya boyutu ($LOCAL_SIZE bytes) S3 üzerindeki boyutla ($REMOTE_SIZE bytes) uyuşmuyor!"
+            exit 1
+        fi
     fi
 else
     log "S3 üzerindeki en güncel yedek taranıyor: s3://$S3_BUCKET/$S3_PREFIX/"
@@ -148,12 +192,26 @@ else
 
     log "En güncel yedek tespit edildi: $LATEST_ARCHIVE"
     ARCHIVE_PATH="$TEMP_RESTORE_DIR/$LATEST_ARCHIVE"
-    S3_ARCHIVE_URI="s3://$S3_BUCKET/$S3_PREFIX/$LATEST_ARCHIVE"
-    S3_SHA_URI="s3://$S3_BUCKET/$S3_PREFIX/$LATEST_ARCHIVE.sha256"
+    S3_TARGET_KEY="$S3_PREFIX/$LATEST_ARCHIVE"
+    S3_SHA_KEY="$S3_PREFIX/$LATEST_ARCHIVE.sha256"
+    S3_ARCHIVE_URI="s3://$S3_BUCKET/$S3_TARGET_KEY"
+    S3_SHA_URI="s3://$S3_BUCKET/$S3_SHA_KEY"
 
-    # Zorunlu SHA-256 dosya kontrolü
-    if ! aws s3 ls "$S3_SHA_URI" --region "$AWS_REGION" >/dev/null 2>&1; then
-        log_error "ZORUNLU SHA-256 kontrol dosyası S3 üzerinde bulunamadı ($S3_SHA_URI)! Yedek eksik veya güvensiz olduğu için işlem durduruldu."
+    # S3 head-object doğrulamaları
+    REMOTE_SIZE=$(aws s3api head-object \
+        --bucket "$S3_BUCKET" \
+        --key "$S3_TARGET_KEY" \
+        --region "$AWS_REGION" \
+        --query ContentLength \
+        --output text 2>/dev/null || echo "")
+
+    if [[ -z "$REMOTE_SIZE" ]] || ! [[ "$REMOTE_SIZE" =~ ^[0-9]+$ ]] || [[ "$REMOTE_SIZE" -le 0 ]]; then
+        log_error "S3 üzerinde arşiv bulunamadı veya geçersiz: key='$S3_TARGET_KEY'"
+        exit 1
+    fi
+
+    if ! aws s3api head-object --bucket "$S3_BUCKET" --key "$S3_SHA_KEY" --region "$AWS_REGION" >/dev/null 2>&1; then
+        log_error "ZORUNLU SHA-256 kontrol dosyası S3 üzerinde bulunamadı ($S3_SHA_KEY)! Yedek eksik veya güvensiz olduğu için işlem durduruldu."
         exit 1
     fi
 
@@ -163,8 +221,6 @@ else
     log "Zorunlu SHA-256 kontrol dosyası indiriliyor: $S3_SHA_URI"
     aws s3 cp "$S3_SHA_URI" "$ARCHIVE_PATH.sha256" --region "$AWS_REGION"
 
-    # Boyut doğrulama
-    REMOTE_SIZE=$(aws s3 ls "$S3_ARCHIVE_URI" --region "$AWS_REGION" | awk '{print $3}')
     LOCAL_SIZE=$(wc -c < "$ARCHIVE_PATH" | tr -d ' ')
     if [[ "$REMOTE_SIZE" -ne "$LOCAL_SIZE" ]]; then
         log_error "İndirilen dosya boyutu ($LOCAL_SIZE bytes) S3 üzerindeki boyutla ($REMOTE_SIZE bytes) uyuşmuyor!"
@@ -207,8 +263,8 @@ log "RDB dosya formatı ve veri bütünlüğü doğrulandı."
 # 4. İzole Test Container'ı Başlatma
 # ------------------------------------------------------------------------------
 log "Benzersiz izole Redis test container başlatılıyor: $TEST_CONTAINER"
-# Not: Canlı Redis'e ait hiçbir volume mount edilmez.
-# Sadece geçici test dizini /data olarak bağlanır.
+# Canlı Redis'e ait hiçbir volume mount edilmez.
+# Sadece geçici test dizini (/home/ubuntu/nakliyego-backup-work/restore/...) /data olarak bağlanır.
 # Port çakışmasını önlemek için dinamik loopback portu kullanılır (127.0.0.1::6379).
 docker run -d \
     --name "$TEST_CONTAINER" \
@@ -239,14 +295,43 @@ fi
 log "İzole Redis container hazır (PONG alındı)."
 
 # ------------------------------------------------------------------------------
-# 5. NakliyeGo Veri Bütünlüğü Doğrulaması
+# 5. RDB Dosyasının Gerçekten Redis'e Yüklendiğini Doğrulama
+# ------------------------------------------------------------------------------
+log "RDB yükleme süreci doğrulanıyor..."
+
+# Redis persistence durumunda 'loading:0' olduğunu doğrula
+LOADING_STATUS=$(docker exec "$TEST_CONTAINER" redis-cli info persistence 2>/dev/null | grep '^loading:' | cut -d: -f2 | tr -d '\r')
+if [[ "$LOADING_STATUS" != "0" ]]; then
+    log_error "Redis henüz veritabanını yüklemeyi tamamlayamadı (loading=$LOADING_STATUS)!"
+    exit 1
+fi
+
+# Başlatma günlüğünü denetle
+CONTAINER_LOGS=$(docker logs "$TEST_CONTAINER" 2>&1 || true)
+if echo "$CONTAINER_LOGS" | grep -Ei "Fatal error loading the DB|Bad file format|Short read" >/dev/null; then
+    log_error "Redis loglarında RDB yükleme hatası tespit edildi!"
+    echo "$CONTAINER_LOGS" >&2
+    exit 1
+fi
+
+if echo "$CONTAINER_LOGS" | grep -Ei "Done loading RDB|DB loaded from disk" >/dev/null; then
+    log "Redis başlangıç günlüğünde RDB snapshot dosyasının diski okunarak belleğe başarıyla yüklendiği teyit edildi."
+fi
+
+# Toplam anahtar sayısı doğrulaması (DBSIZE > 0 olmalı)
+DB_SIZE=$(docker exec "$TEST_CONTAINER" redis-cli dbsize 2>/dev/null | tr -d '\r')
+if [[ -z "$DB_SIZE" ]] || ! [[ "$DB_SIZE" =~ ^[0-9]+$ ]] || [[ "$DB_SIZE" -le 0 ]]; then
+    log_error "DİKKAT: Geri yüklenen veritabanı boş (DBSIZE=0)! RDB dosyası veri içermiyor veya yüklenemedi."
+    exit 1
+fi
+
+# ------------------------------------------------------------------------------
+# 6. NakliyeGo Veri Bütünlüğü Doğrulaması
 # ------------------------------------------------------------------------------
 log "=========================================================="
 log "   NAKLIYEGO VERİ DOĞRULAMA TEST RAPORU ($ENV_NAME)       "
 log "=========================================================="
-
-DB_SIZE=$(docker exec "$TEST_CONTAINER" redis-cli dbsize 2>/dev/null | tr -d '\r')
-log "Toplam Anahtar Sayısı (DBSIZE): $DB_SIZE"
+log "Toplam Belleğe Yüklenen Anahtar Sayısı (DBSIZE): $DB_SIZE"
 
 # Yükler (loads zset)
 LOADS_COUNT=$(docker exec "$TEST_CONTAINER" redis-cli zcard loads 2>/dev/null | tr -d '\r' || echo "0")
@@ -265,10 +350,4 @@ OFFERS_COUNT=$(docker exec "$TEST_CONTAINER" redis-cli --scan --pattern "offers:
 log "Teklif Kayıtları ('offers:*' count): $OFFERS_COUNT"
 
 log "=========================================================="
-
-if [[ -z "$DB_SIZE" ]] || [[ "$DB_SIZE" -le 0 ]]; then
-    log_error "DİKKAT: Geri yüklenen veritabanı boş (DBSIZE=0)! Yedek geçerli veri içermiyor."
-    exit 1
-fi
-
-log "✅ Restore testi ve veri bütünlüğü doğrulaması BAŞARIYLA TAMAMLANDI."
+log "✅ Restore testi, RDB yükleme ve veri bütünlüğü doğrulaması BAŞARIYLA TAMAMLANDI."
