@@ -22,6 +22,7 @@ func registerCorporateTestUser(t *testing.T, handler http.Handler, suffix string
 		"name": "Yetkili " + suffix, "email": suffix + "@example.com", "phone": testPhone(suffix),
 		"password": "GucluSifre123", "role": models.RoleCustomer,
 		"accountType": models.AccountTypeCorporate, "companyName": "Firma " + suffix,
+		"termsAccepted": true, "termsVersion": "1.0.0",
 	})
 	if response.Code != http.StatusOK {
 		t.Fatalf("corporate register status=%d body=%s", response.Code, response.Body.String())

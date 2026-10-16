@@ -8,6 +8,7 @@ import (
 const (
 	AccountStatusActive  = "active"
 	AccountStatusBlocked = "blocked"
+	AccountStatusDeleted = "deleted"
 )
 
 const (
@@ -123,7 +124,7 @@ type ActivityEvent struct {
 }
 
 func ValidAccountStatus(status string) bool {
-	return status == AccountStatusActive || status == AccountStatusBlocked
+	return status == AccountStatusActive || status == AccountStatusBlocked || status == AccountStatusDeleted
 }
 
 func ValidVerificationStatus(status string) bool {

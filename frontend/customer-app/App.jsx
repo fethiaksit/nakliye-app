@@ -6,6 +6,7 @@ import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-cont
 import { colors, control, spacing, typography } from '../shared/ui/theme';
 import { ConfirmationModal, ToastProvider, useToast } from '../shared/ui/feedback';
 import { AppHeader, BottomNav } from '../shared/ui/navigation';
+import LegalModal from '../shared/ui/LegalModal';
 import { InlineNotice, ListSkeleton } from '../shared/ui/primitives';
 import { registerDevicePushToken, subscribeNotificationResponses, unregisterDevicePushToken } from '../shared/notifications';
 import { generateLoadDescription, generateLoadTitle } from '../shared/loadMetadata';
@@ -695,6 +696,22 @@ function CustomerApp() {
         loading={confirmationLoading}
         onCancel={() => setConfirmation(null)}
         onConfirm={() => confirmation?.type === 'accept' ? performAcceptOffer(confirmation.target) : confirmation?.type === 'cancel' ? performCancelLoad(confirmation.target) : performLogout()}
+      />
+
+      <LegalModal
+        visible={Boolean(user && user.termsUpdateRequired)}
+        docType="customerTerms"
+        onClose={() => setUser(current => current ? { ...current, termsUpdateRequired: false } : current)}
+        onAccept={async () => {
+          try {
+            await profile.updateAgreements({ termsAccepted: true, termsVersion: '1.0.0' });
+            setUser(current => current ? { ...current, termsUpdateRequired: false, termsVersion: '1.0.0' } : current);
+            showToast('Kullanım koşulları onayınız güncellendi.', { type: 'success' });
+          } catch (e) {
+            showToast(apiError(e), { type: 'error' });
+          }
+        }}
+        acceptLabel="Güncel Şartları Kabul Ediyorum"
       />
     </View>
   );

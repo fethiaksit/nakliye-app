@@ -9,7 +9,7 @@ import (
 
 func TestCorporateApprovalGatesWallet(t *testing.T) {
 	h := newAdminTestAPI(t)
-	pending := requestJSON(t, h, http.MethodPost, "/api/auth/register", "", map[string]any{"name": "Bekleyen Firma", "email": "pending-approval@example.com", "phone": testPhone("pending-approval"), "password": "GucluSifre123", "role": models.RoleCustomer, "accountType": models.AccountTypeCorporate, "companyName": "Bekleyen Firma"})
+	pending := requestJSON(t, h, http.MethodPost, "/api/auth/register", "", map[string]any{"name": "Bekleyen Firma", "email": "pending-approval@example.com", "phone": testPhone("pending-approval"), "password": "GucluSifre123", "role": models.RoleCustomer, "accountType": models.AccountTypeCorporate, "companyName": "Bekleyen Firma", "termsAccepted": true, "termsVersion": "1.0.0"})
 	if pending.Code != http.StatusOK {
 		t.Fatalf("register %d %s", pending.Code, pending.Body.String())
 	}

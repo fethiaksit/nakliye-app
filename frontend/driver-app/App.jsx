@@ -5,6 +5,7 @@ import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-cont
 
 import { ConfirmationModal, ToastProvider, useToast } from '../shared/ui/feedback';
 import { AppHeader, BottomNav } from '../shared/ui/navigation';
+import LegalModal from '../shared/ui/LegalModal';
 import { ListSkeleton } from '../shared/ui/primitives';
 import { colors, control, spacing, typography } from '../shared/ui/theme';
 import { registerDevicePushToken, subscribeNotificationResponses, unregisterDevicePushToken } from '../shared/notifications';
@@ -370,17 +371,33 @@ function DriverApp() {
     <AppHeader title="NakliyeGo" subtitle={tab === 'jobs' ? 'Şoför' : tab === 'offers' ? 'Tekliflerim' : tab === 'messages' ? 'Mesajlar' : 'Hesabım'} initials={user.name?.split(' ').map(part => part[0]).join('').slice(0, 2).toUpperCase()} topInset={insets.top} />
     {tab === 'messages' ? body : <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}><ScrollView contentContainerStyle={[styles.content, { paddingBottom: (showBottomNav ? control.bottomNavHeight + insets.bottom : insets.bottom) + spacing.xl }]} keyboardShouldPersistTaps="handled" keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'} showsVerticalScrollIndicator={false} refreshControl={refresh ? <RefreshControl refreshing={tab === 'jobs' ? jobsLoading : tab === 'offers' ? myOffersLoading : accountLoading} onRefresh={refresh} tintColor={colors.primary} /> : undefined}>{body}</ScrollView></KeyboardAvoidingView>}
     {showBottomNav ? <BottomNav items={navItems} value={tab} onChange={value => { setTab(value); setAccountPage('home'); if (value !== 'jobs') setSelected(null); }} bottomInset={insets.bottom} /> : null}
-    <ConfirmationModal
-      visible={Boolean(confirmation)}
-      title={confirmation?.type === 'withdraw' ? 'Teklifi geri çek' : confirmationAction?.title || 'Hesaptan çıkış'}
-      message={confirmation?.type === 'withdraw' ? 'Teklif müşterinin ekranından kaldırılacak.' : confirmationAction?.message || 'Hesabınızdan çıkış yapmak istediğinizden emin misiniz?'}
-      confirmLabel={confirmation?.type === 'withdraw' ? 'Geri çek' : confirmationAction?.confirmLabel || 'Çıkış yap'}
-      destructive={confirmation?.type !== 'status'}
-      loading={confirmationLoading}
-      onCancel={() => setConfirmation(null)}
-      onConfirm={() => confirmation?.type === 'withdraw' ? performWithdrawOffer(confirmation.target) : confirmation?.type === 'status' ? performUpdateJobStatus(confirmation.target, confirmation.status) : performLogout()}
-    />
-  </View>;
+      <ConfirmationModal
+        visible={Boolean(confirmation)}
+        title={confirmation?.type === 'withdraw' ? 'Teklifi geri çek' : confirmationAction?.title || 'Hesaptan çıkış'}
+        message={confirmation?.type === 'withdraw' ? 'Teklif müşterinin ekranından kaldırılacak.' : confirmationAction?.message || 'Hesabınızdan çıkış yapmak istediğinizden emin misiniz?'}
+        confirmLabel={confirmation?.type === 'withdraw' ? 'Geri çek' : confirmationAction?.confirmLabel || 'Çıkış yap'}
+        destructive={confirmation?.type !== 'status'}
+        loading={confirmationLoading}
+        onCancel={() => setConfirmation(null)}
+        onConfirm={() => confirmation?.type === 'withdraw' ? performWithdrawOffer(confirmation.target) : confirmation?.type === 'status' ? performUpdateJobStatus(confirmation.target, confirmation.status) : performLogout()}
+      />
+      <LegalModal
+        visible={Boolean(user && user.termsUpdateRequired)}
+        docType="driverTerms"
+        onClose={() => setUser(current => current ? { ...current, termsUpdateRequired: false } : current)}
+        onAccept={async () => {
+          try {
+            await profile.updateAgreements({ termsAccepted: true, termsVersion: '1.0.0' });
+            setUser(current => current ? { ...current, termsUpdateRequired: false, termsVersion: '1.0.0' } : current);
+            showToast('Şoför hizmet koşulları onayınız güncellendi.', { type: 'success' });
+          } catch (e) {
+            showToast(apiError(e), { type: 'error' });
+          }
+        }}
+        acceptLabel="Güncel Şartları Kabul Ediyorum"
+      />
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({

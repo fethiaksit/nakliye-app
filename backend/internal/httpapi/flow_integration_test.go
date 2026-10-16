@@ -101,6 +101,7 @@ func registerTestUser(t *testing.T, handler http.Handler, suffix, role string) t
 	recorder := requestJSON(t, handler, http.MethodPost, "/api/auth/register", "", map[string]any{
 		"name": "Test " + suffix, "email": suffix + "@example.com", "phone": testPhone(suffix),
 		"password": "GucluSifre123", "role": role,
+		"termsAccepted": true, "termsVersion": "1.0.0",
 	})
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("register %s status=%d body=%s", role, recorder.Code, recorder.Body.String())
@@ -137,6 +138,7 @@ func TestPhaseZeroCoreFlow(t *testing.T) {
 	duplicateAccount := requestJSON(t, handler, http.MethodPost, "/api/auth/register", "", map[string]any{
 		"name": "Duplicate", "email": "customer1@example.com", "phone": testPhone("customer1"),
 		"password": "GucluSifre123", "role": models.RoleCustomer,
+		"termsAccepted": true, "termsVersion": "1.0.0",
 	})
 	if duplicateAccount.Code != http.StatusConflict {
 		t.Fatalf("duplicate account status=%d body=%s", duplicateAccount.Code, duplicateAccount.Body.String())

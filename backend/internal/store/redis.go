@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -969,4 +970,70 @@ return {allowed, current, ttl}
 	}
 
 	return allowed, remaining, retryAfter, nil
+}
+
+func (s *RedisStore) SaveAgreementAudit(audit models.UserAgreementAudit) error {
+	b, err := json.Marshal(audit)
+	if err != nil {
+		return err
+	}
+	key := fmt.Sprintf("agreement-audit:%s:%d", audit.UserID, audit.CreatedAt.Unix())
+	return s.client.Set(s.ctx, key, b, 0).Err()
+}
+
+func (s *RedisStore) SaveAccountDeletionRequest(req models.AccountDeletionRequest) error {
+	b, err := json.Marshal(req)
+	if err != nil {
+		return err
+	}
+	key := "deletion-request:" + req.ID
+	pipe := s.client.TxPipeline()
+	pipe.Set(s.ctx, key, b, 0)
+	pipe.LPush(s.ctx, "deletion-requests", req.ID)
+	_, err = pipe.Exec(s.ctx)
+	return err
+}
+
+func (s *RedisStore) GetAccountDeletionRequest(id string) (models.AccountDeletionRequest, error) {
+	var req models.AccountDeletionRequest
+	b, err := s.client.Get(s.ctx, "deletion-request:"+id).Bytes()
+	if err != nil {
+		return req, err
+	}
+	return req, json.Unmarshal(b, &req)
+}
+
+func (s *RedisStore) UpdateAccountDeletionRequest(req models.AccountDeletionRequest) error {
+	b, err := json.Marshal(req)
+	if err != nil {
+		return err
+	}
+	return s.client.Set(s.ctx, "deletion-request:"+req.ID, b, 0).Err()
+}
+
+func (s *RedisStore) ListAccountDeletionRequests(status string) ([]models.AccountDeletionRequest, error) {
+	ids, err := s.client.LRange(s.ctx, "deletion-requests", 0, -1).Result()
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]bool, len(ids))
+	var items []models.AccountDeletionRequest
+	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		item, err := s.GetAccountDeletionRequest(id)
+		if err != nil {
+			continue
+		}
+		if status != "" && status != "all" && item.Status != status {
+			continue
+		}
+		items = append(items, item)
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].CreatedAt.After(items[j].CreatedAt)
+	})
+	return items, nil
 }

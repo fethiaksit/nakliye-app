@@ -1,69 +1,93 @@
 # NAKLİYEGO GİZLİLİK POLİTİKASI (PRIVACY POLICY)
 
-**Yürürlük Tarihi:** 13 Ekim 2026
+**Sürüm:** 1.0.0
+**Yürürlük Tarihi:** 14 Ekim 2026
+**Son Güncelleme:** 14 Ekim 2026
 
-NakliyeGo ("biz", "bizim" veya "Şirket"), kullanıcılarımızın ("siz" veya "kullanıcı") gizliliğine derin saygı duyar. Bu Gizlilik Politikası, NakliyeGo Müşteri Mobil Uygulaması, NakliyeGo Şoför Mobil Uygulaması ve web servislerimizi kullandığınızda bilgilerinizin nasıl toplandığını, kullanıldığını, korunduğunu ve paylaşıldığını açıklar.
+NakliyeGo dijital platformları (NakliyeGo Müşteri Mobil Uygulaması, NakliyeGo Şoför Mobil Uygulaması ve web arayüzleri, bundan böyle topluca "Platform" olarak anılacaktır), kullanıcılarımızın kişisel verilerinin korunmasına ve gizliliğine en üst düzeyde önem vermektedir.
 
----
-
-### 1. Toplanan Bilgiler
-
-Uygulamalarımızı kullandığınızda aşağıdaki bilgileri toplayabiliriz:
-
-- **Hesap Bilgileri:** Adınız, e-posta adresiniz, telefon numaranız, hesap türünüz (bireysel veya kurumsal), şirket unvanınız.
-- **Şoför ve Araç Bilgileri (Yalnızca Şoför Uygulaması):** Araç türü, plaka bilgisi, sürücü belgesi ve yetki dokümanları.
-- **Konum Bilgileri:**
-  - *Müşteri Uygulaması:* Yükleme ve teslimat adreslerinin seçilmesi, mesafe ve tahmini fiyat hesabı için ön plan konum verisi.
-  - *Şoför Uygulaması:* Yakındaki yük ilanlarının listelenmesi, varış süresi (ETA) hesabı ve aktif taşıma sırasında müşteriye canlı takip sunulması amacıyla ön plan ve kullanıcı izni dahilinde arka plan konum verisi.
-- **İçerik ve Medya:** İlan oluştururken yüklenen kargo fotoğrafları, teslimat tamamlanırken yüklenen kanıt fotoğrafları ve uygulama içi mesajlar.
-- **Cihaz ve Kullanım Verileri:** IP adresi, cihaz modeli, işletim sistemi sürümü, uygulama sürümü, push bildirim tokenları, hata/çökme logları.
+İşbu Gizlilik Politikası, Platform üzerinden sağlanan aracılık hizmetleri kapsamında hangi kişisel verilerin toplandığını, nasıl işlendiğini, kimlerle paylaşıldığını, nasıl korunduğunu ve kullanıcıların sahip olduğu yasal hakları açıklamaktadır.
 
 ---
 
-### 2. Bilgilerin Kullanımı
-
-Toplanan veriler aşağıdaki amaçlarla kullanılır:
-1. Yük taşıma taleplerinin oluşturulması, tekliflerin iletilmesi ve eşleşmenin sağlanması.
-2. 6 haneli güvenli teslimat kodu ve fotoğraf kanıtı ile teslimat doğrulaması.
-3. Taşıma sürecinde taraflar arası iletişim ve anlık bildirimlerin (push notifications) iletilmesi.
-4. Kurumsal cüzdan ve ödeme/bakiye operasyonlarının yönetimi.
-5. Dolandırıcılık, hesap çalınması, spam ve kötüye kullanımın engellenmesi.
-6. Uygulama kararlılığı ve performans optimizasyonu.
-
----
-
-### 3. Bilgilerin Paylaşımı ve Üçüncü Taraflar
-
-Kişisel verileriniz hiçbir koşulda üçüncü taraflara satılmaz veya pazarlama amaçlı kiralanmaz.
-Bilgileriniz yalnızca aşağıdaki taraflarla sınırlı olarak paylaşılır:
-- **Eşleşen Kullanıcı:** Taşıma teklifi onaylandığında, şoför ve müşteri arasında iletişim ve koordinasyon için ad, telefon ve taşıma adresi paylaşılır.
-- **Google Maps Platform:** Koordinat dönüştürme ve rota optimizasyonu için coğrafi koordinatlar iletilir.
-- **Resend:** E-posta doğrulama ve şifre sıfırlama bildirimleri için e-posta adresi iletilir.
-- **Sentry:** Uygulama çökmeleri ve teknik hataların tespiti için anonimleştirilmiş sistem logları iletilir (kişisel kimlik ve mesaj içerikleri filtrelenir).
-- **PostHog:** Kullanıcı deneyimini geliştirmek için anonim ürün kullanım metrikleri iletilir (KVKK ve App Store kurallarına uygun olarak açık adres, telefon veya metin içeriği iletilmez).
+### 1. Veri Sorumlusu Bilgileri
+- **Veri Sorumlusu Unvanı:** Feti Akşit Limited Şirketi [DOĞRULAMA GEREKLİ: Resmî Ticaret Sicil Unvanı Kontrolü]
+- **Marka:** NakliyeGo
+- **MERSİS Numarası:** [DOĞRULAMA GEREKLİ: MERSİS Numarası]
+- **Vergi Dairesi & No:** Hasan Tahsin Vergi Dairesi - VKN: 3850507457
+- **Fiziki Adres:** 6220 Sokak No: 12/A, Bornova / İzmir
+- **Elektronik Posta:** `zeytinavm@gmail.com`
+- **İnternet Adresi:** https://nakliyego.com
+- **KEP Adresi:** [DOĞRULAMA GEREKLİ: KEP Adresi]
 
 ---
 
-### 4. Veri Güvenliği
+### 2. Toplanan Kişisel Veriler
 
-- Tüm istemci-sunucu iletişimi TLS/HTTPS şifrelemesi ile korunur.
-- Parolalar endüstri standardı güçlü Argon2id özetleme algoritması ile saklanır; açık metin parola tutulmaz.
-- API uç noktaları IP ve kullanıcı bazlı hız sınırlaması (rate limiting) ile korunur.
-- Veri tabanı ve önbellek sistemleri doğrudan internet erişimine kapalıdır.
+NakliyeGo tarafından sunulan hizmetin doğası gereği aşağıdaki veri kategorileri işlenmektedir:
 
----
-
-### 5. Veri Silme ve Hesap Kapatma (App Store Gereksinimi)
-
-Kullanıcılar diledikleri zaman hesaplarını ve ilişkili kişisel verilerini silme hakkına sahiptir:
-- Mobil uygulamalarımızda **Hesabım > Güvenlik > Hesabımı Sil** adımlarını izleyerek hesabınızı silebilirsiniz.
-- Veya `destek@nakliyego.com` adresine kayıtlı e-postanızdan talepte bulunabilirsiniz.
-- Yasal zorunluluk (vergi mevzuatı ve taşıma kayıtları) kapsamındaki veriler yasal saklama süresi sonunda tamamen imha edilir.
+1. **Kimlik ve Hesap Verileri:** Ad, soyad, e-posta adresi, cep telefonu numarası, hesap türü (bireysel müşteri, kurumsal müşteri yetkilisi, bağımsız taşıyıcı şoför), şifrelenmiş parola özeti (Argon2id). Kurumsal hesaplar için ayrıca unvan, vergi kimlik numarası, vergi dairesi ve firma adresi.
+2. **Şoför ve Araç Verileri (Yalnızca Şoförler):** Araç türü (kamyonet, kamyon, panelvan vb.), marka, model, plaka, azami taşıma kapasitesi (kg), kasa boyutları (uzunluk, genişlik, yükseklik), ruhsat fotoğrafı, sürücü belgesi (ehliyet), SRC mesleki yeterlilik belgesi ve psikoteknik değerlendirme bilgileri.
+3. **Konum Verileri:**
+   - *Müşteri:* İlan oluştururken yükleme ve teslimat noktalarının haritada işaretlenmesi, adres önerilerinin getirilmesi ve mesafe/tahmini fiyat hesabı amacıyla ön plan konum verisi.
+   - *Şoför:* Yakındaki yük ilanlarının listelenmesi (ön plan) ve teklif kabul edildikten sonra aktif taşıma süresi boyunca yük sahibine tahmini varış süresi (ETA) ve rota takibi sunulması amacıyla ön plan ve kullanıcı izni dahilinde arka plan konum verisi.
+4. **Taşıma ve İlan Bilgileri:** Yük cinsi, ağırlığı, boyutları, kat/asansör durumu, yükleme ve boşaltma saat aralıkları, kargo tanıtım fotoğrafları, teslimat sırasında şoför tarafından yüklenen teslimat kanıt fotoğrafı ve 6 haneli güvenlik teslimat kodu doğrulaması.
+5. **İletişim ve Mesajlaşma Verileri:** Uygulama içi mesajlaşma merkezi üzerinden teklifi kabul edilmiş yüklerle ilgili alıcı, gönderici ve şoför arasında iletilen operasyonel metin mesajları, konum paylaşımları ve görsel ekler.
+6. **İşlem Güvenliği ve Cihaz Verileri:** IP adresi, cihaz işletim sistemi sürümü, donanım modeli, benzersiz cihaz tanımlayıcıları, uygulama sürümü, Expo Push Token (bildirim yönlendirme için), erişim logları ve oturum kayıtları (5651 sayılı Kanun gereği).
+7. **Finansal Bilgiler:** Kurumsal müşteriler için cüzdan bakiye hareketleri; şoförler için platform komisyonu mutabakat kayıtları ve banka hesap bilgileri (IBAN). Kredi kartı ile ödeme alınması durumunda kart numaraları doğrudan PCI-DSS uyumlu lisanslı ödeme kuruluşu altyapısında işlenir; NakliyeGo sunucularında kart numarası, son kullanma tarihi veya CVV saklanmaz.
 
 ---
 
-### 6. İletişim
+### 3. Kişisel Verilerin İşlenme Amaçları
 
-Gizlilik Politikamız veya kişisel verilerinizle ilgili sorularınız için bizimle iletişime geçebilirsiniz:
-- **E-posta:** `privacy@nakliyego.com`
-- **Web:** https://nakliyego.com
+Toplanan veriler aşağıdaki amaçlarla sınırlı olarak işlenmektedir:
+- Nakliye ilanlarının yayınlanması, taşıyıcı tekliflerinin toplanması ve eşleştirilmesi,
+- 6 haneli güvenlik teslimat kodu ve teslimat kanıt görseli aracılığıyla taşımanın güvenli biçimde tamamlandığının teyidi,
+- Taşıma süresince tarafların uygulama içi iletişim kurabilmesi ve durum bildirimlerinin iletilmesi,
+- Şoförlerin mesleki yetkinlik ve araç uygunluk belgelerinin idari kontrolü,
+- Kurumsal cüzdan ve faturalandırma süreçlerinin yürütülmesi,
+- Dolandırıcılık, hesap güvenliği ihlali, sahte teklif ve suistimallerin tespiti ve önlenmesi,
+- 5651 sayılı İnternet Ortamında Yapılan Yayınların Düzenlenmesi Kanunu, 6102 sayılı Türk Ticaret Kanunu, 213 sayılı Vergi Usul Kanunu ve 4925 sayılı Karayolu Taşıma Kanunu uyarınca yasal yükümlülüklerin yerine getirilmesi,
+- Kullanıcı talep, şikâyet ve uyuşmazlıklarının çözümlenmesi.
+
+---
+
+### 4. Kişisel Verilerin Paylaşımı ve Aktarımı
+
+Kişisel verileriniz hiçbir surette üçüncü taraflara ticari amaçlarla satılmaz, kiralanmaz veya pazarlama amacıyla paylaşılmaz. Veriler yalnızca aşağıdaki alıcı gruplarına aktarılır:
+
+1. **Eşleşen Taşıma Tarafları:** Taşıma teklifinin müşteri tarafından kabul edilmesiyle birlikte, taşımanın ifası amacıyla şoför ve müşteri arasında ad-soyad, telefon numarası ve taşıma adresi karşılıklı olarak paylaşılır.
+2. **Teknoloji ve Altyapı Sağlayıcıları:**
+   - **Google Maps Platform:** Adres arama (autocomplete), tersine coğrafi kodlama ve rota hesaplama için yalnızca koordinat ve arama metni iletilir.
+   - **E-posta Altyapısı (Resend):** Doğrulama ve şifre sıfırlama e-postaları için e-posta adresi iletilir.
+   - **Hata ve Çökme İzleme (Sentry):** Uygulama kararlılığını sağlamak amacıyla teknik hata ve çökme kayıtları iletilir; PII filtresiyle e-posta, telefon, parola, açık adres ve mesaj içerikleri filtrelenir.
+   - **Ürün Analitiği (PostHog):** Sözde-anonim kullanım metrikleri toplanır; ad, telefon, e-posta veya mesaj metni kesinlikle aktarılmaz.
+   - **Push Bildirim Servisi (Expo / Apple APNs / Google FCM):** İşlem bildirimlerinin cihaza ulaştırılması amacıyla şifrelenmiş token kullanılır.
+3. **Yetkili Kamu Kurum ve Kuruluşları:** Yasal zorunluluk halinde mahkemeler, savcılıklar, emniyet birimleri ve düzenleyici kurumların talebi üzerine yürürlükteki mevzuat uyarınca aktarım yapılır.
+
+---
+
+### 5. Veri Güvenliği Önlemleri
+
+- Tüm istemci-sunucu trafiği TLS 1.2+ şifrelemesi (HTTPS/WSS) ile iletilir.
+- Kullanıcı parolaları tek yönlü Argon2id özet fonksiyonu kullanılarak tuzlanmış (salted) biçimde saklanır; ham parola hiçbir biçimde görüntülenemez ve saklanmaz.
+- API uç noktaları IP ve kullanıcı bazlı hız sınırlandırması (Rate Limiting) ile korunmaktadır.
+- Veri tabanı ve önbellek mekanizmaları dış ağ erişimine kapalıdır.
+- İstemci cihazlarda oturum anahtarları iOS Keychain ve Android Keystore (Expo SecureStore) güvencesiyle saklanır.
+
+---
+
+### 6. Hesap Silme ve Veri İmha Hakları (App Store & Google Play Uyumu)
+
+Kullanıcılarımız diledikleri zaman hesaplarını ve ilişkili kişisel verilerini silme hakkına sahiptir:
+- **Mobil Uygulama Üzerinden:** Müşteri ve Şoför uygulamalarımızda `Profil > Hesap İşlemleri > Hesabımı Sil` adımlarını izleyerek şifrenizi doğrulamak suretiyle hesabınızı silebilirsiniz.
+- **Web Üzerinden:** Google Play ve App Store gereksinimleri uyarınca kamuya açık [DOĞRULAMA GEREKLİ: https://nakliyego.com/account-deletion] sayfamız üzerinden de hesap silme talebi oluşturabilirsiniz.
+- **Talebin Sonucu:** Hesap silindiğinde oturumlar kapatılır, profil verileri anonimleştirilir, aktif olmayan veriler imha edilir. Türk Ticaret Kanunu ve Vergi Usul Kanunu uyarınca saklanması zorunlu mali ve operasyonel belgeler yasal zamanaşımı süresi boyunca tecrit edilmiş güvenli arşivde saklanır ve sürenin bitiminde imha edilir.
+
+---
+
+### 7. İletişim ve İlgili Kişi Başvuruları
+
+Gizlilik Politikamız veya kişisel verilerinizle ilgili hak taleplerinizi iletmek için:
+- **E-posta:** `zeytinavm@gmail.com`
+- **Adres:** 6220 Sokak No: 12/A, Bornova / İzmir

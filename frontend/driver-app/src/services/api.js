@@ -213,6 +213,8 @@ export const profile = {
   get: () => client.get('/api/me'),
   update: data => client.patch('/api/me', data),
   changePassword: data => client.patch('/api/me/password', data),
+  updateAgreements: data => client.post('/api/me/agreements', data),
+  deleteAccount: data => client.post('/api/me/delete-account', data),
 };
 export const support = {
   list: () => client.get('/api/complaints/mine'),

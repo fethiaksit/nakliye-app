@@ -10,7 +10,9 @@ import {
   AccountMenuItem,
   AccountMenuSection,
   AccountProfileCard,
+  DeleteAccountPage,
   DeviceNotificationsPage,
+  LegalIndexPage,
   LegalPage,
   PasswordPage,
   SupportDetailPage,
@@ -22,10 +24,17 @@ import { DetailRow, ListingCard } from '../../../shared/ui/listing';
 import { useToast } from '../../../shared/ui/feedback';
 import { AppButton, ListSkeleton, ScreenState, SectionCard, SegmentedControl, TextField } from '../../../shared/ui/primitives';
 import { colors, radius, spacing, typography } from '../../../shared/ui/theme';
-import { apiError, corporate, loads, support } from '../services/api';
+import { apiError, corporate, loads, profile, support } from '../services/api';
 import { formatMoney, loadStatusLabel, resolveMediaUrl } from '../utils/presentation';
 
-const backPage = page => ({ 'company-edit': 'company', 'support-new': 'support', 'support-detail': 'support' }[page] || 'home');
+const backPage = page => ({
+  'company-edit': 'company',
+  'support-new': 'support',
+  'support-detail': 'support',
+  'legal-doc': 'legal-index',
+  'legal-index': 'home',
+  'delete-account': 'home',
+}[page] || 'home');
 const initialSupportForm = () => ({ type: 'complaint', subject: '', reason: '', description: '', loadId: '' });
 const companyFormFor = company => ({
   name: company?.name || '', authorizedPerson: company?.authorizedPerson || '', taxNumber: company?.taxNumber || '',
@@ -138,8 +147,23 @@ export default function CorporateAccountScreens({ page, onPageChange, account, f
   const [supportForm, setSupportForm] = useState(initialSupportForm);
   const [state, setState] = useState({ loading: true, error: '' });
   const [saving, setSaving] = useState(false);
+  const [selectedLegalDoc, setSelectedLegalDoc] = useState('terms');
+  const [deleteLoading, setDeleteLoading] = useState(false);
 
   useAccountBack(page, onPageChange, backPage);
+
+  const handleDeleteAccount = async payload => {
+    setDeleteLoading(true);
+    try {
+      await profile.deleteAccount(payload);
+      showToast('Kurumsal hesabınız silindi ve yetkili verileriniz anonimleştirildi.', { type: 'success', title: 'Hesap Silindi' });
+      await logout();
+    } catch (delError) {
+      showToast(apiError(delError), { type: 'error', title: 'Hesap silinemedi' });
+    } finally {
+      setDeleteLoading(false);
+    }
+  };
 
   const fetchDashboard = useCallback(async () => {
     setState({ loading: true, error: '' });
@@ -254,6 +278,12 @@ export default function CorporateAccountScreens({ page, onPageChange, account, f
   if (page === 'support-new') return <SupportNewPage form={supportForm} setForm={setSupportForm} loads={accountLoads.filter(load => load.assignedDriverId)} loading={saving} onSubmit={submitSupport} onBack={() => onPageChange('support')} />;
   if (page === 'support-detail') return <SupportDetailPage item={selectedTicket} onBack={() => onPageChange('support')} />;
 
+  if (page === 'legal-index') return <LegalIndexPage onSelectDoc={docKey => { setSelectedLegalDoc(docKey); onPageChange('legal-doc'); }} onBack={() => onPageChange('home')} />;
+  if (page === 'legal-doc') return <LegalPage type={selectedLegalDoc} onBack={() => onPageChange('legal-index')} />;
+  if (page === 'privacy') return <LegalPage type="privacy" onBack={() => onPageChange('home')} />;
+  if (page === 'terms') return <LegalPage type="terms" onBack={() => onPageChange('home')} />;
+  if (page === 'delete-account') return <DeleteAccountPage loading={deleteLoading} onDelete={handleDeleteAccount} onBack={() => onPageChange('home')} />;
+
   const counts = dashboard?.counts || {};
   const profileAccount = { ...account, name: dashboard?.company?.name || company?.name || account?.name, phone: dashboard?.company?.phone || account?.phone, email: dashboard?.company?.email || account?.email };
   return <>
@@ -267,7 +297,11 @@ export default function CorporateAccountScreens({ page, onPageChange, account, f
     {dashboard?.recentActiveLoads?.length ? <SectionCard title="Son aktif işler" icon="navigate-outline">{dashboard.recentActiveLoads.map(load => <ListingCard key={load.id} load={load} onPress={() => onOpenLoad(load)} statusLabel={loadStatusLabel} formatMoney={formatMoney} resolveMediaUrl={resolveMediaUrl} />)}</SectionCard> : null}
     {dashboard?.recentCompletedLoads?.length ? <SectionCard title="Son tamamlanan işler" icon="checkmark-done-outline">{dashboard.recentCompletedLoads.map(load => <ListingCard key={load.id} load={load} onPress={() => onOpenLoad(load)} statusLabel={loadStatusLabel} formatMoney={formatMoney} resolveMediaUrl={resolveMediaUrl} />)}</SectionCard> : null}
     {dashboard?.recentWalletTransactions?.length ? <SectionCard title="Son cüzdan hareketleri" icon="wallet-outline"><WalletTransactions compact items={dashboard.recentWalletTransactions} /></SectionCard> : null}
-    <AccountMenuSection title="Firma"><AccountMenuItem icon="business-outline" label="Firma Bilgileri" description="Vergi ve iletişim bilgileri" last onPress={() => onPageChange('company')} /></AccountMenuSection>
+    <AccountMenuSection title="Firma ve Hesap">
+      <AccountMenuItem icon="business-outline" label="Firma Bilgileri" description="Vergi ve iletişim bilgileri" onPress={() => onPageChange('company')} />
+      <AccountMenuItem icon="lock-closed-outline" label="Şifre Değiştir" onPress={() => onPageChange('password')} />
+      <AccountMenuItem icon="trash-outline" label="Hesabımı Sil" description="Kurumsal hesabı kalıcı olarak kapat" danger last onPress={() => onPageChange('delete-account')} />
+    </AccountMenuSection>
     <AccountMenuSection title="Nakliye">
       <AccountMenuItem icon="navigate-outline" label="Aktif Nakliyeler" onPress={() => onPageChange('active-jobs')} />
       <AccountMenuItem icon="time-outline" label="Geçmiş Nakliyeler" onPress={() => onPageChange('history-jobs')} />
@@ -276,11 +310,13 @@ export default function CorporateAccountScreens({ page, onPageChange, account, f
       <AccountMenuItem icon="wallet-outline" label="Cüzdanım" description={centsMoney(dashboard?.wallet?.balanceCents)} last onPress={() => onPageChange('wallet')} />
     </AccountMenuSection>
     <AccountMenuSection title="Destek"><AccountMenuItem icon="chatbox-ellipses-outline" label="Şikâyet ve Öneri" last onPress={() => onPageChange('support')} /></AccountMenuSection>
+    <AccountMenuSection title="Yasal Bilgiler ve KVKK">
+      <AccountMenuItem icon="shield-checkmark-outline" label="Yasal Belgeler ve KVKK" description="Tüm sözleşmeler, aydınlatma ve rıza metinleri" onPress={() => onPageChange('legal-index')} />
+      <AccountMenuItem icon="document-text-outline" label="Kullanım Koşulları" onPress={() => onPageChange('terms')} />
+      <AccountMenuItem icon="lock-closed-outline" label="Gizlilik Politikası" last onPress={() => onPageChange('privacy')} />
+    </AccountMenuSection>
     <AccountMenuSection title="Uygulama">
-      <AccountMenuItem icon="lock-closed-outline" label="Şifre Değiştir" onPress={() => onPageChange('password')} />
-      <AccountMenuItem icon="notifications-outline" label="Bildirim Ayarları" onPress={() => onPageChange('notifications')} />
-      <AccountMenuItem icon="shield-checkmark-outline" label="Gizlilik Politikası" onPress={() => onPageChange('privacy')} />
-      <AccountMenuItem icon="document-text-outline" label="Kullanım Koşulları" last onPress={() => onPageChange('terms')} />
+      <AccountMenuItem icon="notifications-outline" label="Bildirim Ayarları" last onPress={() => onPageChange('notifications')} />
     </AccountMenuSection>
     <AccountMenuSection title="Oturum"><AccountMenuItem icon="log-out-outline" label="Çıkış Yap" danger last onPress={logout} /></AccountMenuSection>
   </>;

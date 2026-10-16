@@ -13,7 +13,7 @@ if (typeof window !== "undefined") {
   posthog.init({ appName: "nakliyego-admin", release: "1.0.0", platform: "web" });
 }
 
-type Tab = "dashboard" | "corporate-applications" | "users" | "drivers" | "loads" | "complaints" | "corporate-wallets" | "driver-wallets" | "activity";
+type Tab = "dashboard" | "corporate-applications" | "users" | "drivers" | "loads" | "complaints" | "corporate-wallets" | "driver-wallets" | "activity" | "account-deletions";
 type DetailKind = "corporate-application" | "user" | "driver" | "load" | "complaint";
 type AnyRecord = Record<string, any>;
 
@@ -28,6 +28,7 @@ const navigation: { id: Tab; label: string; mark: string }[] = [
   { id: "complaints", label: "Şikâyetler", mark: "06" },
   { id: "driver-wallets", label: "Şoför Hesapları", mark: "09" },
   { id: "corporate-wallets", label: "Kurumsal Cüzdan Yönetimi", mark: "07" },
+  { id: "account-deletions", label: "Hesap Silme Talepleri", mark: "10" },
   { id: "activity", label: "Hareketler", mark: "08" },
 ];
 
@@ -127,6 +128,7 @@ export default function AdminPanel() {
       if (target === "driver-wallets") params.set("walletStatus", filter);
       else if (target === "drivers") params.set("verificationStatus", filter);
       else if (target === "corporate-applications") params.set("status", filter);
+      else if (target === "account-deletions") params.set("status", filter);
       else if (target === "users" || target === "loads" || target === "complaints") params.set("status", filter);
     }
     const suffix = params.size ? `?${params}` : "";
@@ -136,6 +138,8 @@ export default function AdminPanel() {
       ? "/activity?limit=80"
       : target === "corporate-applications"
       ? `/corporate-accounts${suffix}`
+      : target === "account-deletions"
+      ? `/account-deletion-requests${suffix}`
       : `/${target}${suffix}`;
   }, [filter, query]);
 
@@ -247,6 +251,22 @@ export default function AdminPanel() {
     finally { setActionBusy(false); }
   }
 
+  async function handleProcessDeletionRequest(id: string, status: "completed" | "rejected", note?: string) {
+    setActionBusy(true); setError("");
+    try {
+      await request(`/account-deletion-requests/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status, adminNote: note || "" }),
+      });
+      setNotice(status === "completed" ? "Hesap silme işlemi onaylandı ve kişisel veriler anonimleştirildi." : "Hesap silme talebi reddedildi.");
+      await loadTab(tab);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "İşlem tamamlanamadı.");
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
   if (!hydrated) return <div className="boot">Yönetim merkezi hazırlanıyor…</div>;
   if (!token) return <LoginScreen login={login} loading={loading} error={error} />;
 
@@ -289,7 +309,7 @@ export default function AdminPanel() {
         {notice && <div className="alert success-alert" role="status">{notice}<button onClick={() => setNotice("")}>Kapat</button></div>}
         {tab !== "corporate-wallets" && tab !== "dashboard" && tab !== "activity" && <Toolbar tab={tab} query={query} setQuery={setQuery} filter={filter} setFilter={setFilter} search={() => void loadTab(tab)} />}
         {tab === "driver-wallets" ? <DriverPaymentAccountAdmin request={request} /> : null}
-        {loading ? <LoadingRows /> : tab === "corporate-wallets" ? <CorporateWalletAdmin request={request} items={data?.items || []} /> : tab === "driver-wallets" ? <DriverWalletAccounts data={data as any} onOpenDriver={id => void openDetail("driver", id)} onPage={offset => void loadTab(tab, offset)} /> : <PanelContent tab={tab} data={data} openDetail={openDetail} />}
+        {loading ? <LoadingRows /> : tab === "corporate-wallets" ? <CorporateWalletAdmin request={request} items={data?.items || []} /> : tab === "driver-wallets" ? <DriverWalletAccounts data={data as any} onOpenDriver={id => void openDetail("driver", id)} onPage={offset => void loadTab(tab, offset)} /> : <PanelContent tab={tab} data={data} openDetail={openDetail} onProcessDeletion={handleProcessDeletionRequest} />}
       </section>
       {detail && detailKind && <DetailDrawer kind={detailKind} data={detail} close={() => { setDetail(null); if (tab === "driver-wallets") void loadTab(tab, data?.offset || 0); }} note={actionNote} setNote={setActionNote} busy={actionBusy} mutate={mutate} request={request} refresh={() => void openDetail(detailKind, detailId(detailKind, detail))} />}
     </main>
@@ -333,7 +353,7 @@ function Toolbar({ tab, query, setQuery, filter, setFilter, search }: { tab: Tab
     );
   }
 
-  const options = tab === "driver-wallets" ? ["funded", "reserved", "empty"] : tab === "drivers" ? ["pending", "verified", "rejected"] : tab === "users" ? ["active", "blocked"] : tab === "complaints" ? ["open", "reviewing", "resolved", "rejected"] : ["draft", "published", "driver_selected", "driver_en_route", "at_pickup", "picked_up", "en_route_to_delivery", "delivered", "completed", "cancelled"];
+  const options = tab === "account-deletions" ? ["pending", "completed", "rejected"] : tab === "driver-wallets" ? ["funded", "reserved", "empty"] : tab === "drivers" ? ["pending", "verified", "rejected"] : tab === "users" ? ["active", "blocked"] : tab === "complaints" ? ["open", "reviewing", "resolved", "rejected"] : ["draft", "published", "driver_selected", "driver_en_route", "at_pickup", "picked_up", "en_route_to_delivery", "delivered", "completed", "cancelled"];
   return (
     <form className="toolbar" onSubmit={event => { event.preventDefault(); search(); }}>
       <label>
@@ -341,7 +361,7 @@ function Toolbar({ tab, query, setQuery, filter, setFilter, search }: { tab: Tab
         <input
           value={query}
           onChange={event => setQuery(event.target.value)}
-          placeholder={tab === "driver-wallets" ? "Şoför adı, telefon, e-posta veya ID" : tab === "users" ? "Ad, e-posta, telefon veya ID" : "Kayıtlarda ara"}
+          placeholder={tab === "account-deletions" ? "E-posta veya telefon ile ara" : tab === "driver-wallets" ? "Şoför adı, telefon, e-posta veya ID" : tab === "users" ? "Ad, e-posta, telefon veya ID" : "Kayıtlarda ara"}
         />
       </label>
       <label>
@@ -362,12 +382,13 @@ function Toolbar({ tab, query, setQuery, filter, setFilter, search }: { tab: Tab
 
 function LoadingRows() { return <div className="loading-card"><span /><span /><span /><span /></div>; }
 
-function PanelContent({ tab, data, openDetail }: { tab: Tab; data: AnyRecord | null; openDetail: (kind: DetailKind, id: string) => void }) {
+function PanelContent({ tab, data, openDetail, onProcessDeletion }: { tab: Tab; data: AnyRecord | null; openDetail: (kind: DetailKind, id: string) => void; onProcessDeletion?: (id: string, action: "approve" | "reject", note?: string) => Promise<void> }) {
   if (!data) return <Empty title="Veri bulunamadı" />;
   if (tab === "dashboard") return <Dashboard data={data} openDetail={openDetail} />;
   if (tab === "activity") return <Activity data={data} />;
   const items = data.items || [];
   if (!items.length) return <Empty title="Bu filtreye uygun kayıt yok" />;
+  if (tab === "account-deletions") return <AccountDeletionsTable items={items} onProcess={onProcessDeletion!} />;
   if (tab === "corporate-applications") return <CorporateTable items={items} openDetail={openDetail} />;
   if (tab === "users") return <UserTable items={items} openDetail={openDetail} />;
   if (tab === "drivers") return <DriverTable items={items} openDetail={openDetail} />;
@@ -476,6 +497,112 @@ function UserTable({ items, openDetail }: { items: AnyRecord[]; openDetail: (kin
 function DriverTable({ items, openDetail }: { items: AnyRecord[]; openDetail: (kind: DetailKind, id: string) => void }) { return <Table headings={["Şoför", "Araç", "Belge", "Son görülme", "Doğrulama", ""]}>{items.map(driver => <tr key={driver.id}><td><Person user={driver} /></td><td>{driver.vehicleCount || 0}</td><td>{driver.documentCount || 0} <small className="muted">({driver.pendingDocuments || 0} bekliyor)</small></td><td>{formatDate(driver.lastSeenAt)}</td><td><Status value={driver.verificationStatus} /></td><td><button className="table-action" onClick={() => void openDetail("driver", driver.id)}>Doğrula</button></td></tr>)}</Table>; }
 function LoadTable({ items, openDetail }: { items: AnyRecord[]; openDetail: (kind: DetailKind, id: string) => void }) { return <Table headings={["İlan", "Rota", "Müşteri", "Tutar", "Durum", ""]}>{items.map(item => { const load = item?.load ?? (item?.id ? item : null); if (!load?.id) return null; return <tr key={load.id}><td><b>{load.title || "Başlıksız ilan"}</b><small className="cell-sub">{load.id.slice(0, 8)}</small></td><td>{load.pickup?.district || load.pickup?.city || "—"} → {load.delivery?.district || load.delivery?.city || "—"}</td><td>{item.customer?.name || "—"}</td><td>{formatMoney(load.agreedPriceTl || load.basePriceTl)}</td><td><Status value={load.status} /></td><td><button className="table-action" onClick={() => void openDetail("load", load.id)}>Detay</button></td></tr>; })}</Table>; }
 function ComplaintTable({ items, openDetail }: { items: AnyRecord[]; openDetail: (kind: DetailKind, id: string) => void }) { return <Table headings={["Şikâyet", "Şikâyet eden", "Şikâyet edilen", "Mesaj", "Durum", ""]}>{items.map(item => { const complaint = item?.complaint ?? (item?.id && item?.reason ? item : null); if (!complaint?.id) return null; return <tr key={complaint.id}><td><b>{label(complaint.reason)}</b><small className="cell-sub">{formatDate(complaint.createdAt)}</small></td><td>{item?.reporter?.name || "—"}</td><td>{item?.reportedUser?.name || "—"}</td><td className="message-cell">{item?.message?.body || "Silinmiş veya medya mesajı"}</td><td><Status value={complaint.status} /></td><td><button className="table-action" onClick={() => void openDetail("complaint", complaint.id)}>İncele</button></td></tr>; })}</Table>; }
+
+function AccountDeletionsTable({ items, onProcess }: { items: AnyRecord[]; onProcess: (id: string, action: "approve" | "reject", note?: string) => Promise<void> }) {
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [adminNote, setAdminNote] = useState("");
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  const handleAction = async (id: string, action: "approve" | "reject") => {
+    if (action === "approve") {
+      const confirmed = window.confirm("Bu işlem kullanıcının kişisel verilerini geri döndürülemez biçimde anonimleştirecek ve hesabını kapatacaktır. Onaylıyor musunuz?");
+      if (!confirmed) return;
+    }
+    setBusyId(id);
+    try {
+      await onProcess(id, action, adminNote);
+      setSelectedId(null);
+      setAdminNote("");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <Table headings={["Tarih", "İletişim", "Kullanıcı ID / Rol", "Gerekçe", "Durum", "İşlem Notu", "Aksiyon"]}>
+      {items.map(req => {
+        const isPending = req.status === "pending";
+        const isSelected = selectedId === req.id;
+        return (
+          <tr key={req.id}>
+            <td>{formatDate(req.createdAt)}</td>
+            <td>
+              <div><b>{req.email || "—"}</b></div>
+              <small className="cell-sub">{req.phone || "—"}</small>
+            </td>
+            <td>
+              <code>{req.userId ? req.userId.slice(0, 8) : "—"}</code>
+              {req.role ? <small className="cell-sub">{label(req.role)}</small> : null}
+            </td>
+            <td>
+              <span>{req.reason || "Belirtilmedi"}</span>
+              {req.details ? <small className="cell-sub" style={{ display: "block" }}>{req.details}</small> : null}
+            </td>
+            <td><Status value={req.status} /></td>
+            <td>
+              {req.processedAt ? (
+                <div>
+                  <small>{formatDate(req.processedAt)}</small>
+                  {req.adminNote ? <div style={{ fontSize: "12px", color: "var(--muted)" }}>{req.adminNote}</div> : null}
+                </div>
+              ) : isSelected ? (
+                <input
+                  type="text"
+                  placeholder="Yönetici notu (isteğe bağlı)..."
+                  value={adminNote}
+                  onChange={e => setAdminNote(e.target.value)}
+                  style={{ width: "100%", padding: "4px 8px", fontSize: "12px" }}
+                />
+              ) : (
+                <span className="muted">—</span>
+              )}
+            </td>
+            <td>
+              {isPending ? (
+                isSelected ? (
+                  <div style={{ display: "flex", gap: "6px" }}>
+                    <button
+                      className="primary-button"
+                      style={{ background: "#dc2626", borderColor: "#dc2626", padding: "4px 8px", fontSize: "12px" }}
+                      disabled={busyId === req.id}
+                      onClick={() => void handleAction(req.id, "approve")}
+                    >
+                      {busyId === req.id ? "İşleniyor…" : "Onayla & Kapat"}
+                    </button>
+                    <button
+                      className="outline-button"
+                      style={{ padding: "4px 8px", fontSize: "12px" }}
+                      disabled={busyId === req.id}
+                      onClick={() => void handleAction(req.id, "reject")}
+                    >
+                      Reddet
+                    </button>
+                    <button
+                      className="outline-button"
+                      style={{ padding: "4px 8px", fontSize: "12px" }}
+                      onClick={() => setSelectedId(null)}
+                    >
+                      İptal
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    className="table-action"
+                    onClick={() => { setSelectedId(req.id); setAdminNote(""); }}
+                  >
+                    İşlem Yap
+                  </button>
+                )
+              ) : (
+                <span className="muted" style={{ fontSize: "12px" }}>Tamamlandı</span>
+              )}
+            </td>
+          </tr>
+        );
+      })}
+    </Table>
+  );
+}
 
 function Activity({ data }: { data: AnyRecord }) {
   const totals = data.stats?.totals || {};

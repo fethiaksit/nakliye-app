@@ -150,7 +150,7 @@ type testSession struct {
 }
 
 func registerTestCustomer(t *testing.T, handler http.Handler, email, phone string) testSession {
-	payload := `{"name":"Test Customer","email":"` + email + `","phone":"` + phone + `","password":"Password123!","role":"customer","accountType":"individual"}`
+	payload := `{"name":"Test Customer","email":"` + email + `","phone":"` + phone + `","password":"Password123!","role":"customer","accountType":"individual","termsAccepted":true,"termsVersion":"1.0.0"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/register", strings.NewReader(payload))
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)

@@ -158,7 +158,13 @@ export const conversations = {
     return client.post(`/api/conversations/${id}/attachments`, formData, { timeout: 60000, onUploadProgress });
   },
 };
-export const profile = { get: () => client.get('/api/me'), update: data => client.patch('/api/me', data), changePassword: data => client.patch('/api/me/password', data) };
+export const profile = {
+  get: () => client.get('/api/me'),
+  update: data => client.patch('/api/me', data),
+  changePassword: data => client.patch('/api/me/password', data),
+  updateAgreements: data => client.post('/api/me/agreements', data),
+  deleteAccount: data => client.post('/api/me/delete-account', data),
+};
 export const support = {
   list: () => client.get('/api/complaints/mine'),
   get: id => client.get(`/api/complaints/${id}`),

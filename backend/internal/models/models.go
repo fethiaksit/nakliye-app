@@ -9,6 +9,8 @@ const (
 	RoleAdmin     = "admin"
 )
 
+const CurrentTermsVersion = "1.0.0"
+
 const (
 	LoadStatusDraft             = "draft"
 	LoadStatusPublished         = "published"
@@ -202,10 +204,18 @@ type User struct {
 	// LastSeenAt records a real authenticated API activity. It deliberately does
 	// not imply a live socket connection, so clients must present it as
 	// "son görülme" rather than "çevrimiçi".
-	LastSeenAt    time.Time  `json:"lastSeenAt,omitempty"`
-	AccountStatus string     `json:"accountStatus,omitempty"`
-	BlockedAt     *time.Time `json:"blockedAt,omitempty"`
-	BlockedReason string     `json:"blockedReason,omitempty"`
+	LastSeenAt               time.Time  `json:"lastSeenAt,omitempty"`
+	AccountStatus            string     `json:"accountStatus,omitempty"`
+	BlockedAt                *time.Time `json:"blockedAt,omitempty"`
+	BlockedReason            string     `json:"blockedReason,omitempty"`
+	TermsAccepted            bool       `json:"termsAccepted,omitempty"`
+	TermsVersion             string     `json:"termsVersion,omitempty"`
+	TermsAcceptedAt          *time.Time `json:"termsAcceptedAt,omitempty"`
+	MarketingConsent         bool       `json:"marketingConsent,omitempty"`
+	MarketingConsentAt       *time.Time `json:"marketingConsentAt,omitempty"`
+	KVKKAcknowledged         bool       `json:"kvkkAcknowledged,omitempty"`
+	DeletedAt                *time.Time `json:"deletedAt,omitempty"`
+	DeleteReason             string     `json:"deleteReason,omitempty"`
 }
 
 type DriverProfile struct {
@@ -328,4 +338,28 @@ type MessageReply struct {
 	Body          string     `json:"body,omitempty"`
 	AttachmentURL string     `json:"attachmentUrl,omitempty"`
 	DeletedAt     *time.Time `json:"deletedAt,omitempty"`
+}
+
+type UserAgreementAudit struct {
+	UserID           string    `json:"userId"`
+	TermsVersion     string    `json:"termsVersion"`
+	TermsAccepted    bool      `json:"termsAccepted"`
+	MarketingConsent bool      `json:"marketingConsent"`
+	KVKKAcknowledged bool      `json:"kvkkAcknowledged"`
+	IPAddress        string    `json:"ipAddress"`
+	UserAgent        string    `json:"userAgent"`
+	CreatedAt        time.Time `json:"createdAt"`
+}
+
+type AccountDeletionRequest struct {
+	ID          string     `json:"id"`
+	UserID      string     `json:"userId,omitempty"`
+	Email       string     `json:"email"`
+	Phone       string     `json:"phone,omitempty"`
+	Reason      string     `json:"reason,omitempty"`
+	Status      string     `json:"status"` // "pending", "completed", "rejected"
+	CreatedAt   time.Time  `json:"createdAt"`
+	ProcessedAt *time.Time `json:"processedAt,omitempty"`
+	ProcessedBy string     `json:"processedBy,omitempty"`
+	AdminNote   string     `json:"adminNote,omitempty"`
 }

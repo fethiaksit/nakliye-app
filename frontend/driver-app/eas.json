@@ -19,7 +19,11 @@
       "environment": "preview"
     },
     "production": {
-      "autoIncrement": true
+      "autoIncrement": true,
+      "environment": "production",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://nakliyesofor.youpp.com.tr/api"
+      }
     }
   },
   "submit": {

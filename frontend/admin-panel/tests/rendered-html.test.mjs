@@ -86,3 +86,20 @@ test("rejects a previous tab payload instead of crashing wallet accounts", async
   const html = await walletAccountsHTML({ counts: { drivers: 4 } });
   assert.match(html, /Hesaplar yüklenemedi/);
 });
+
+test("server-renders the public legal routes without authentication", async () => {
+  const routes = ["/privacy", "/terms", "/kvkk", "/account-deletion", "/contact"];
+  for (const route of routes) {
+    const workerUrl = new URL("../dist/server/index.js", import.meta.url);
+    workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}-${route.replace(/\//g, "-")}`);
+    const { default: worker } = await import(workerUrl.href);
+    const res = await worker.fetch(new Request(`http://localhost${route}`, { headers: { accept: "text/html" } }), {
+      ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) },
+    }, { waitUntil() {}, passThroughOnException() {} });
+
+    assert.equal(res.status, 200, `Failed for route ${route}`);
+    const html = await res.text();
+    assert.match(html, /NakliyeGo/);
+    assert.match(html, /Yasal Bilgilendirme Merkezi/);
+  }
+});

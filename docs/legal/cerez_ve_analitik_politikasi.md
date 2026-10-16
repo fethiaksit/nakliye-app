@@ -1,39 +1,37 @@
-# NAKLİYEGO ÇEREZ VE ÜÇÜNCÜ TARAF ANALİTİK POLİTİKASI
+# NAKLİYEGO ÇEREZ VE ANALİTİK POLİTİKASI (COOKIE POLICY)
 
-**Son Güncelleme:** 13 Ekim 2026
+**Sürüm:** 1.0.0
+**Yürürlük Tarihi:** 14 Ekim 2026
+**Son Güncelleme:** 14 Ekim 2026
 
-NakliyeGo dijital platformlarında güvenliği artırmak, sistem hatalarını tespit etmek ve kullanıcı deneyimini iyileştirmek için sınırlı üçüncü taraf izleme ve analitik teknolojileri kullanılmaktadır.
-
----
-
-### 1. Çerez ve Yerel Depolama (Local Storage) Kullanımı
-
-Web admin panelimizde ve mobil uygulamalarımızda yalnızca **Zorunlu ve İşlevsel Çerezler / Yerel Depolama Anahtarları** kullanılır:
-- **Oturum ve Kimlik Doğrulama:** Kullanıcının giriş durumunu korumak ve güvenli API çağrıları yapabilmek için JWT erişim anahtarları cihazın güvenli saklama alanında (SecureStore / Keychain) tutulur.
-- **Güvenlik Çerezleri:** CSRF saldırılarını engellemek ve şüpheli oturumları tespit etmek için kullanılır.
-- **Pazarlama ve Reklam Çerezleri:** Platformumuzda kullanıcıları diğer sitelerde takip eden üçüncü taraf reklam/hedefleme çerezleri **kullanılmaz**.
+İşbu Çerez ve Analitik Politikası ("Politika"), Feti Akşit Limited Şirketi [DOĞRULAMA GEREKLİ: Resmî Ticaret Sicil Unvanı Kontrolü] tarafından işletilen web portalları ve mobil uygulamalarda kullanılan çerezler (cookies), yerel depolama (Local Storage / SecureStore) anahtarları ve üçüncü taraf teknik izleme teknolojileri hakkında kullanıcıları bilgilendirmek amacıyla hazırlanmıştır.
 
 ---
 
-### 2. Entegre Edilen İzleme Sistemleri ve Gizlilik Tedbirleri
-
-Platformumuzda iki ana teknik izleme sistemi bulunmaktadır:
-
-#### A. Sentry (Hata İzleme ve Çökme Raporlama)
-- **Amaç:** Uygulama çökmelerini, sunucu 500 hatalarını ve performans darboğazlarını gerçek zamanlı tespit etmek.
-- **Gizlilik Koruması:**
-  - `beforeSend` veri temizleme katmanı uygulanmıştır.
-  - Authorization başlıkları, Cookie bilgileri, JWT tokenları, parola alanları ve açık kimlik bilgileri loglardan **kesinlikle filtrelenir**.
-  - Yalnızca anonim stack trace ve hata türü iletilir.
-
-#### B. PostHog (Ürün Analitiği ve Özellik Yönetimi)
-- **Amaç:** Hangi özelliklerin kullanıldığını (ilan oluşturma, teklif verme, teslimat tamamlama) ve uzaktan özellik bayraklarını (Feature Flags) yönetmek.
-- **KVKK ve Gizlilik Koruması:**
-  - Müşteri veya şoförün telefon numarası, e-posta adresi, açık adresi, IBAN numarası, T.C. kimlik numarası veya mesajlaşma metinleri **asla PostHog sunucularına gönderilmez**.
-  - Yalnızca operasyonel metrikler (örneğin: araç sınıfı, mesafe aralığı, buton tıklanması) sözde-anonim kullanıcı kimliği (UUID) ile iletilir.
+### 1. Çerez (Cookie) ve Yerel Depolama Nedir?
+Çerezler, bir web sitesini ziyaret ettiğinizde tarayıcınız aracılığıyla cihazınıza kaydedilen küçük metin dosyalarıdır. Mobil uygulamalarda ise çerezler yerine güvenli anahtar-değer depolama alanları (iOS Keychain, Android Keystore) ve uygulama yerel önbellekleri kullanılır.
 
 ---
 
-### 3. Kullanıcı Hakları ve İtiraz
+### 2. Platformumuzda Kullanılan Çerez ve Depolama Türleri
 
-Kullanıcılar cihaz ayarlarından analitik izleme tercihlerini değiştirebilir veya KVKK madde 11 kapsamında verilerinin işlenmesine ilişkin itiraz haklarını `kvkk@nakliyego.com` adresinden kullanabilirler.
+NakliyeGo web ve mobil platformlarında yalnızca **Zorunlu ve İşlevsel Teknolojiler** kullanılmaktadır:
+
+1. **Zorunlu Güvenlik ve Oturum Çerezleri / Anahtarları:**
+   - **Amaç:** Kullanıcının giriş yapmış oturumunu korumak, API isteklerini yetkilendirmek (JWT token doğrulaması) ve siteler arası istek sahteciliği (CSRF) saldırılarına karşı koruma sağlamak.
+   - **Hukuki Sebep:** Bir sözleşmenin kurulması veya ifası (KVKK m. 5/2-c) ve meşru menfaat (m. 5/2-f). Bu çerezler olmadan sistemin temel işlevleri çalışamaz.
+2. **Performans ve Hata İzleme Teknolojileri (Sentry):**
+   - **Amaç:** Web arayüzlerinde ve mobil uygulamalarda ortaya çıkan JavaScript/React veya Go sunucu hatalarını, çökmeleri ve ağ performans darboğazlarını gerçek zamanlı tespit etmek.
+   - **Gizlilik Tedbiri:** Sentry katmanında `beforeSend` veri temizleme filtresi uygulanmaktadır. Parolalar, yetkilendirme başlıkları, kullanıcı tokenları, telefon, e-posta ve mesaj metinleri **kesinlikle loglara dahil edilmez**.
+3. **Ürün Analitiği ve Özellik Yönetimi (PostHog):**
+   - **Amaç:** Hangi ekranların ve butonların kullanıldığını (örneğin ilan tamamlama adımları) anlamak ve kullanıcı deneyimini iyileştirmek.
+   - **Gizlilik Tedbiri:** Kullanıcının adı, soyadı, açık adresi, telefon numarası veya IBAN bilgisi **asla PostHog sunucularına iletilmez**. Yalnızca rastgele üretilmiş sözde-anonim kullanıcı kimliği (UUID) ve teknik metrikler iletilir.
+4. **Reklam ve Hedefleme Çerezleri:**
+   - Platformumuzda kullanıcıları diğer sitelerde veya sosyal medyada takip eden, profil çıkaran üçüncü taraf reklam/hedefleme çerezleri **kesinlikle kullanılmamaktadır**.
+
+---
+
+### 3. Çerez ve İzleme Tercihlerinin Yönetimi
+- **Web Tarayıcılarında:** Tarayıcınızın (Chrome, Safari, Firefox, Edge) "Gizlilik ve Güvenlik" ayarlarından dilediğiniz zaman çerezleri silebilir veya engelleyebilirsiniz. Ancak zorunlu oturum çerezleri engellendiğinde giriş yapamayabilirsiniz.
+- **Mobil Cihazlarda:** Cihazınızın Ayarlar menüsünden uygulama izinlerini ve analitik veri paylaşım tercihlerini değiştirebilirsiniz.
+- **İletişim:** Çerez kullanımına ilişkin sorularınız için `zeytinavm@gmail.com` adresine başvurabilirsiniz.

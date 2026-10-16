@@ -246,20 +246,20 @@ func TestAdminCorporateAccountManagementFlow(t *testing.T) {
 	indivCustomer := registerTestUser(t, handler, "indivcust", models.RoleCustomer)
 	_ = registerTestUser(t, handler, "testdriver", models.RoleDriver)
 
-	corp1Res := requestJSON(t, handler, http.MethodPost, "/api/auth/register", "", map[string]string{
+	corp1Res := requestJSON(t, handler, http.MethodPost, "/api/auth/register", "", map[string]any{
 		"name": "Ahmet Yılmaz", "email": "ahmet@megalojistik.com", "phone": "05551112233",
 		"password": "Password123!", "role": models.RoleCustomer, "accountType": models.AccountTypeCorporate,
-		"companyName": "Mega Lojistik A.Ş.",
+		"companyName": "Mega Lojistik A.Ş.", "termsAccepted": true, "termsVersion": "1.0.0",
 	})
 	if corp1Res.Code != http.StatusOK {
 		t.Fatalf("corp1 register status=%d body=%s", corp1Res.Code, corp1Res.Body.String())
 	}
 	corp1Session := decodeResponse[testSession](t, corp1Res)
 
-	corp2Res := requestJSON(t, handler, http.MethodPost, "/api/auth/register", "", map[string]string{
+	corp2Res := requestJSON(t, handler, http.MethodPost, "/api/auth/register", "", map[string]any{
 		"name": "Mehmet Demir", "email": "mehmet@alfatasima.com", "phone": "05552223344",
 		"password": "Password123!", "role": models.RoleCustomer, "accountType": models.AccountTypeCorporate,
-		"companyName": "Alfa Taşımacılık Ltd.",
+		"companyName": "Alfa Taşımacılık Ltd.", "termsAccepted": true, "termsVersion": "1.0.0",
 	})
 	if corp2Res.Code != http.StatusOK {
 		t.Fatalf("corp2 register status=%d body=%s", corp2Res.Code, corp2Res.Body.String())
@@ -570,14 +570,16 @@ func TestAdminCorporateAccountStatusRequiresCorporateIDAndOnlyUpdatesOwner(t *te
 
 	registerPending := func(label string) testSession {
 		t.Helper()
-		response := requestJSON(t, handler, http.MethodPost, "/api/auth/register", "", map[string]string{
-			"name":        "Yetkili " + label,
-			"email":       label + "@example.com",
-			"phone":       testPhone(label),
-			"password":    "GucluSifre123",
-			"role":        models.RoleCustomer,
-			"accountType": models.AccountTypeCorporate,
-			"companyName": "Firma " + label,
+		response := requestJSON(t, handler, http.MethodPost, "/api/auth/register", "", map[string]any{
+			"name":          "Yetkili " + label,
+			"email":         label + "@example.com",
+			"phone":         testPhone(label),
+			"password":      "GucluSifre123",
+			"role":          models.RoleCustomer,
+			"accountType":   models.AccountTypeCorporate,
+			"companyName":   "Firma " + label,
+			"termsAccepted": true,
+			"termsVersion":  "1.0.0",
 		})
 		if response.Code != http.StatusOK {
 			t.Fatalf("register pending corporate %s status=%d body=%s", label, response.Code, response.Body.String())

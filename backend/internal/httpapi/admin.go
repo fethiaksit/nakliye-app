@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"nakliye-api/internal/models"
+	"nakliye-api/internal/store"
 )
 
 const adminScope = "admin-panel"
@@ -130,6 +131,9 @@ func currentAdmin(r *http.Request) adminPrincipal {
 }
 
 func accountStatus(user models.User) string {
+	if user.AccountStatus == models.AccountStatusDeleted || user.DeletedAt != nil {
+		return models.AccountStatusDeleted
+	}
 	if user.AccountStatus == models.AccountStatusBlocked || user.BlockedAt != nil {
 		return models.AccountStatusBlocked
 	}
@@ -1424,4 +1428,132 @@ func (a *API) recordLoadStatus(loadID, from, to, actorID, actorRole, source, not
 	if err := a.store.SaveLoadStatusEvent(event); err != nil {
 		log.Printf("load status history could not be persisted: %v", err)
 	}
+}
+
+func (a *API) adminAccountDeletionRequests(w http.ResponseWriter, r *http.Request) {
+	status := strings.TrimSpace(r.URL.Query().Get("status"))
+	items, err := a.store.ListAccountDeletionRequests(status)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	if items == nil {
+		items = []models.AccountDeletionRequest{}
+	}
+	jsonResponse(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (a *API) adminProcessAccountDeletionRequest(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	reqRecord, err := a.store.GetAccountDeletionRequest(id)
+	if err != nil {
+		notFound(w)
+		return
+	}
+	var request struct {
+		Status    string `json:"status"`
+		Action    string `json:"action"`
+		AdminNote string `json:"adminNote"`
+	}
+	if !decode(w, r, &request) {
+		return
+	}
+	if request.Status == "" && request.Action != "" {
+		if strings.EqualFold(request.Action, "approve") {
+			request.Status = "completed"
+		} else if strings.EqualFold(request.Action, "reject") {
+			request.Status = "rejected"
+		}
+	}
+	request.Status = strings.ToLower(strings.TrimSpace(request.Status))
+	if request.Status != "completed" && request.Status != "rejected" {
+		badRequest(w, "geçersiz işlem durumu; 'completed' veya 'rejected' olmalıdır")
+		return
+	}
+	if reqRecord.Status == "completed" {
+		badRequest(w, "bu hesap silme talebi zaten tamamlanmış")
+		return
+	}
+
+	now := time.Now().UTC()
+	adminEmail := currentAdmin(r).Email
+
+	if request.Status == "completed" {
+		var targetUser *models.User
+		if reqRecord.UserID != "" {
+			if u, err := a.store.GetUser(reqRecord.UserID); err == nil && u.ID != "" {
+				targetUser = &u
+			}
+		}
+		if targetUser == nil && reqRecord.Email != "" {
+			if u, err := a.store.GetUserByEmail(reqRecord.Email); err == nil && u.ID != "" {
+				targetUser = &u
+			}
+		}
+		if targetUser == nil && reqRecord.Phone != "" {
+			if u, err := a.store.GetUserByPhone(reqRecord.Phone); err == nil && u.ID != "" {
+				targetUser = &u
+			}
+		}
+
+		if targetUser == nil {
+			badRequest(w, "eşleşen aktif kullanıcı hesabı bulunamadı; talep yalnızca reddedilebilir")
+			return
+		}
+
+		if targetUser.AccountStatus != models.AccountStatusDeleted {
+			activeStatuses := map[string]bool{
+				models.LoadStatusDriverSelected:    true,
+				models.LoadStatusDriverEnRoute:     true,
+				models.LoadStatusAtPickup:          true,
+				models.LoadStatusPickedUp:          true,
+				models.LoadStatusEnRouteToDelivery: true,
+			}
+			if targetUser.Role == models.RoleCustomer {
+				loads, _, err := a.store.ListLoads(targetUser.ID, "", store.LoadFilter{}, 0, 100)
+				if err == nil {
+					for _, l := range loads {
+						if activeStatuses[l.Status] {
+							badRequest(w, "kullanıcının devam eden aktif nakliyesi bulunmaktadır; talep tamamlanamaz")
+							return
+						}
+					}
+				}
+			} else if targetUser.Role == models.RoleDriver {
+				loads, _, err := a.store.ListLoads("", targetUser.ID, store.LoadFilter{}, 0, 100)
+				if err == nil {
+					for _, l := range loads {
+						if activeStatuses[l.Status] {
+							badRequest(w, "şoförün devam eden aktif taşıma görevi bulunmaktadır; talep tamamlanamaz")
+							return
+						}
+					}
+				}
+			}
+
+			if err := a.anonymizeAndCloseAccount(*targetUser, reqRecord.Reason); err != nil {
+				serverError(w, err)
+				return
+			}
+		}
+		reqRecord.UserID = targetUser.ID
+	}
+
+	reqRecord.Status = request.Status
+	reqRecord.ProcessedAt = &now
+	reqRecord.ProcessedBy = adminEmail
+	reqRecord.AdminNote = strings.TrimSpace(request.AdminNote)
+
+	if err := a.store.UpdateAccountDeletionRequest(reqRecord); err != nil {
+		serverError(w, err)
+		return
+	}
+
+	a.adminAudit("account_deletion.processed", r, reqRecord.ID, map[string]any{
+		"status":    request.Status,
+		"userId":    reqRecord.UserID,
+		"adminNote": reqRecord.AdminNote,
+	})
+
+	jsonResponse(w, http.StatusOK, reqRecord)
 }

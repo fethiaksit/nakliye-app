@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -62,4 +63,21 @@ func (s *RedisStore) DeletePushToken(userID, token string) error {
 
 func (s *RedisStore) MarkPushOnce(key string) (bool, error) {
 	return s.client.SetNX(s.ctx, "push-once:"+key, "1", 30*24*time.Hour).Result()
+}
+
+func (s *RedisStore) RevokeAllUserPushTokens(userID string) error {
+	if strings.TrimSpace(userID) == "" {
+		return nil
+	}
+	values, err := s.client.SMembers(s.ctx, "user-push-tokens:"+userID).Result()
+	if err != nil && err != redis.Nil {
+		return err
+	}
+	pipe := s.client.TxPipeline()
+	for _, val := range values {
+		pipe.Del(s.ctx, "push-token:"+val)
+	}
+	pipe.Del(s.ctx, "user-push-tokens:"+userID)
+	_, err = pipe.Exec(s.ctx)
+	return err
 }

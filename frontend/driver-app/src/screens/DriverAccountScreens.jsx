@@ -9,7 +9,9 @@ import {
   AccountMenuItem,
   AccountMenuSection,
   AccountProfileCard,
+  DeleteAccountPage,
   DeviceNotificationsPage,
+  LegalIndexPage,
   LegalPage,
   PasswordPage,
   PersonalInfoPage,
@@ -26,11 +28,12 @@ import { DetailRow } from '../../../shared/ui/listing';
 import { ActionSheet, useToast } from '../../../shared/ui/feedback';
 import { AppButton, Badge, ListSkeleton, ScreenState, SectionCard, TextField } from '../../../shared/ui/primitives';
 import { colors, radius, spacing, typography } from '../../../shared/ui/theme';
-import { apiError, documents, loads, media, support, vehicles } from '../services/api';
+import { apiError, documents, loads, media, profile, support, vehicles } from '../services/api';
 import { formatMoney, loadStatusLabel, resolveMediaUrl, toFiniteNumber } from '../utils/presentation';
 
 const backPage = page => ({
   'profile-edit': 'personal', 'document-detail': 'documents', 'vehicle-detail': 'vehicles', 'vehicle-edit': 'vehicle-detail', 'vehicle-add': 'vehicles', 'support-new': 'support', 'support-detail': 'support',
+  'legal-doc': 'legal-index', 'legal-index': 'home', 'delete-account': 'home',
 }[page] || 'home');
 const initialSupportForm = () => ({ type: 'complaint', subject: '', reason: '', description: '', loadId: '' });
 const emptyVehicleForm = () => ({ vehicleType: '', brand: '', model: '', licensePlate: '', capacityKg: '', lengthCm: '', widthCm: '', heightCm: '', photoUrl: '', photoAsset: null });
@@ -304,8 +307,23 @@ export default function DriverAccountScreens({ page, onPageChange, loading, erro
   const [selectedTicket, setSelectedTicket] = useState(null);
   const [supportForm, setSupportForm] = useState(initialSupportForm);
   const [supportSaving, setSupportSaving] = useState(false);
+  const [selectedLegalDoc, setSelectedLegalDoc] = useState('driverTerms');
+  const [deleteLoading, setDeleteLoading] = useState(false);
 
   useAccountBack(page, onPageChange, backPage);
+
+  const handleDeleteAccount = async payload => {
+    setDeleteLoading(true);
+    try {
+      await profile.deleteAccount(payload);
+      showToast('Şoför hesabınız silindi ve kişisel verileriniz anonimleştirildi.', { type: 'success', title: 'Hesap Silindi' });
+      await logout();
+    } catch (delError) {
+      showToast(apiError(delError), { type: 'error', title: 'Hesap silinemedi' });
+    } finally {
+      setDeleteLoading(false);
+    }
+  };
 
   const fetchDocuments = useCallback(async () => {
     setDocumentsState(current => ({ ...current, loading: true, error: '' }));
@@ -488,18 +506,22 @@ export default function DriverAccountScreens({ page, onPageChange, loading, erro
     if (page === 'support-new') return <SupportNewPage form={supportForm} setForm={setSupportForm} loads={accountJobs} loading={supportSaving} onSubmit={submitSupport} onBack={() => onPageChange('support')} />;
     if (page === 'support-detail') return <SupportDetailPage item={selectedTicket} onBack={() => onPageChange('support')} />;
     if (page === 'notifications') return <DeviceNotificationsPage onBack={() => onPageChange('home')} onPermissionGranted={onPermissionGranted}><SectionCard title="Yakındaki iş bildirimleri" icon="navigate-outline"><View style={styles.notificationRow}><View style={styles.notificationCopy}><Text style={styles.notificationTitle}>Yeni uygun ilanlar</Text><Text style={styles.notificationText}>Yakınınızdaki uygun işler yayınlandığında bildirim alın.</Text></View><Switch disabled={notificationSaving} value={Boolean(account.driverProfile?.nearbyLoadNotifications)} onValueChange={onNotificationChange} trackColor={{ false: colors.border, true: colors.primarySoft }} thumbColor={account.driverProfile?.nearbyLoadNotifications ? colors.primary : colors.textMuted} /></View></SectionCard></DeviceNotificationsPage>;
+    if (page === 'legal-index') return <LegalIndexPage onSelectDoc={docKey => { setSelectedLegalDoc(docKey); onPageChange('legal-doc'); }} onBack={() => onPageChange('home')} />;
+    if (page === 'legal-doc') return <LegalPage type={selectedLegalDoc} onBack={() => onPageChange('legal-index')} />;
     if (page === 'privacy') return <LegalPage type="privacy" onBack={() => onPageChange('home')} />;
-    if (page === 'terms') return <LegalPage type="terms" onBack={() => onPageChange('home')} />;
+    if (page === 'terms') return <LegalPage type="driverTerms" onBack={() => onPageChange('home')} />;
+    if (page === 'delete-account') return <DeleteAccountPage loading={deleteLoading} onDelete={handleDeleteAccount} onBack={() => onPageChange('home')} />;
 
     const driver = account.driverProfile || {};
     const status = verification(driver.verificationStatus || driver.licenseStatus);
     return <>
       <AccountProfileCard account={account} roleLabel="Şoför hesabı" meta={`Doğrulama: ${status.label}`} stats={[{ label: 'Puan', value: driver.rating > 0 ? Number(driver.rating).toFixed(1) : '—' }, { label: 'Tamamlanan iş', value: String(driver.completedJobs || 0) }]} />
-      <AccountMenuSection title="Profil">
+      <AccountMenuSection title="Profil ve Hesap">
         <AccountMenuItem icon="person-outline" label="Kişisel Bilgiler" onPress={() => onPageChange('personal')} />
         <AccountMenuItem icon="shield-checkmark-outline" label="Şoför Bilgileri" badge={status} onPress={() => onPageChange('driver-info')} />
         <AccountMenuItem icon="documents-outline" label="Belgelerim" onPress={() => onPageChange('documents')} />
-        <AccountMenuItem icon="lock-closed-outline" label="Şifre Değiştir" last onPress={() => onPageChange('password')} />
+        <AccountMenuItem icon="lock-closed-outline" label="Şifre Değiştir" onPress={() => onPageChange('password')} />
+        <AccountMenuItem icon="trash-outline" label="Hesabımı Sil" description="Şoför hesabını kalıcı olarak sil" danger last onPress={() => onPageChange('delete-account')} />
       </AccountMenuSection>
       <AccountMenuSection title="Araç">
         <AccountMenuItem icon="car-sport-outline" label="Araçlarım" onPress={() => onPageChange('vehicles')} />
@@ -511,10 +533,13 @@ export default function DriverAccountScreens({ page, onPageChange, loading, erro
         <AccountMenuItem icon="checkmark-done-outline" label="Tamamlanan İşler" last onPress={() => onPageChange('completed-jobs')} />
       </AccountMenuSection>
       <AccountMenuSection title="Destek"><AccountMenuItem icon="chatbox-ellipses-outline" label="Şikâyet ve Öneri" last onPress={() => onPageChange('support')} /></AccountMenuSection>
+      <AccountMenuSection title="Yasal Bilgiler ve KVKK">
+        <AccountMenuItem icon="shield-checkmark-outline" label="Yasal Belgeler ve KVKK" description="Tüm sözleşmeler, aydınlatma ve rıza metinleri" onPress={() => onPageChange('legal-index')} />
+        <AccountMenuItem icon="document-text-outline" label="Şoför Hizmet Koşulları" onPress={() => onPageChange('terms')} />
+        <AccountMenuItem icon="lock-closed-outline" label="Gizlilik Politikası" last onPress={() => onPageChange('privacy')} />
+      </AccountMenuSection>
       <AccountMenuSection title="Uygulama">
-        <AccountMenuItem icon="notifications-outline" label="Bildirim Ayarları" onPress={() => onPageChange('notifications')} />
-        <AccountMenuItem icon="shield-checkmark-outline" label="Gizlilik Politikası" onPress={() => onPageChange('privacy')} />
-        <AccountMenuItem icon="document-text-outline" label="Kullanım Koşulları" last onPress={() => onPageChange('terms')} />
+        <AccountMenuItem icon="notifications-outline" label="Bildirim Ayarları" last onPress={() => onPageChange('notifications')} />
       </AccountMenuSection>
       <AccountMenuSection title="Oturum"><AccountMenuItem icon="log-out-outline" label="Çıkış Yap" danger last onPress={logout} /></AccountMenuSection>
     </>;

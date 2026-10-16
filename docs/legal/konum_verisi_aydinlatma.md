@@ -1,36 +1,44 @@
-# NAKLİYEGO KONUM VERİSİ İŞLEME VE İZİN AYDINLATMASI
+# NAKLİYEGO KONUM VERİLERİNİN İŞLENMESİNE İLİŞKİN BİLGİLENDİRME
 
-**Yürürlük Tarihi:** 13 Ekim 2026
+**Sürüm:** 1.0.0
+**Yürürlük Tarihi:** 14 Ekim 2026
+**Son Güncelleme:** 14 Ekim 2026
 
-NakliyeGo Müşteri ve Şoför uygulamaları, lojistik ve taşımacılık operasyonlarının güvenli, doğru ve zamanında gerçekleşebilmesi için konum verilerinizi işlemektedir.
-
----
-
-### 1. Müşteri Uygulamasında Konum Kullanımı
-
-- **Ön Plan Konum İzni:** Yükleme yapılacak başlangıç adresinin ve teslimat adresinin harita üzerinde kolayca işaretlenebilmesi için kullanılır.
-- **Canlı Takip:** Taşıma başladığında, yalnızca ilgili ilana atanmış şoförün konumu müşteriye gösterilir; müşterinin anlık konumu taşıma sırasında sürekli takip edilmez.
-- **Arka Plan Konumu:** Müşteri uygulamasında arka plan konum takibi **yapılmaz**.
+İşbu Bilgilendirme Metni, NakliyeGo Müşteri ve Şoför mobil uygulamalarında konum verilerinin toplanma yöntemlerini, işlenme amaçlarını, saklama sürelerini ve kullanıcıların bu konudaki hak ve kontrol mekanizmalarını açıklamak amacıyla hazırlanmıştır.
 
 ---
 
-### 2. Şoför Uygulamasında Konum Kullanımı (Foreground & Background)
-
-Şoför uygulaması, niteliği gereği konum tabanlı iş eşleştirme ve takip mekanizmasına dayanır:
-
-1. **Yakındaki İşlerin Listelenmesi (Ön Plan):**
-   - Şoförün mevcut konumuna en yakın yük ilanlarını listelemek ve boş kilometre maliyetini düşürmek amacıyla konum verisi okunur.
-
-2. **Canlı Sefer Takibi ve ETA Hesabı (Ön Plan ve Arka Plan):**
-   - Şoför bir yükü teslim almak üzere yola çıktığında ve teslimat noktasına seyrederken, uygulamanın arka plana atılması (veya ekranın kapanması) durumunda dahi müşteriye tahmini varış süresi (ETA) ve yük güvenliği takibi sunulabilmesi için arka plan konum izni talep edilir.
-   - **Önemli İlke:** Arka plan konum takibi yalnızca şoförün üzerinde **aktif ve devam eden bir taşıma görevi ("yolda", "yüklendi")** varken çalışır. Şoför aktif bir iş taşımıyorken arka plan konumu işlenmez.
+### 1. Müşteri Mobil Uygulamasında Konum Verisi Kullanımı
+- **Ön Plan Konum İzni:** Müşteri ilanı oluştururken kalkış ve varış adreslerini harita üzerinde kolayca işaretleyebilmesi ve tersine coğrafi kodlama (reverse geocoding) ile adresin otomatik tamamlanabilmesi amacıyla kullanılır.
+- **Mesafe ve Fiyat Hesaplama:** Başlangıç ve varış koordinatları Google Maps Rota API'sine iletilerek güvenli rota mesafesi ve tahmini süre hesaplanır.
+- **Arka Plan Konumu:** Müşteri uygulamasında kesinlikle arka plan konum takibi **yapılmaz**. Uygulama kapalıyken veya arka plandayken müşteri konumu hiçbir şekilde okunmaz veya kaydedilmez.
 
 ---
 
-### 3. Konum Verilerinin Korunması ve Sınırları
+### 2. Şoför Mobil Uygulamasında Konum Verisi Kullanımı (Ön Plan ve Arka Plan)
+Taşımacılık hizmetinin niteliği ve güvenliği gereği Şoför uygulamasında konum verisi iki farklı düzeyde işlenir:
 
-- Şoförün kesin konumu diğer şoförlerle veya halka açık olarak paylaşılmaz.
-- Yalnızca teklifi kabul edilmiş ve o anda taşınmakta olan yükün sahibi olan müşteri, aktif sefer süresince aracı takip edebilir.
-- Teslimat kodu girilip taşıma tamamlandığı anda canlı konum paylaşımı derhal sonlandırılır.
-- Konum geçmişi, rota optimizasyon analizleri ve olası hukuki itirazlar haricinde harici üçüncü taraflarla ticari amaçla paylaşılmaz.
-- Kullanıcılar istedikleri zaman cihaz ayarlarından (iOS: Ayarlar > NakliyeGo > Konum, Android: Ayarlar > Uygulamalar > NakliyeGo > İzinler) konum izinlerini değiştirebilir veya kapatabilir.
+1. **Yakındaki Yüklerin Listelenmesi (Ön Plan):**
+   - Şoför ana sayfayı açtığında bulunduğu coğrafi konuma en yakın yük ilanları listelenir. Böylece şoför boş kilometre yapmadan iş fırsatlarına ulaşabilir.
+2. **Aktif Sefer Sırasında Canlı Takip ve ETA Hesabı (Ön Plan ve Arka Plan):**
+   - Şoför bir yük için teklif verip müşteri teklifi onayladıktan sonra; şoförün aracı teslim alma noktasına sürmesi ("driver_en_route", "at_pickup") ve yükleme yapıldıktan sonra teslimat adresine seyahati ("picked_up", "en_route_to_delivery") evresinde konum takibi yapılır.
+   - Bu süreçte şoförün navigasyon ekranını arka plana atması, telefonunu kilitlemesi veya çağrı yanıtlaması halinde dahi yük sahibine doğru Tahmini Varış Süresi (ETA) ve yük güvenliği takibi sunulabilmesi için arka plan konum izni kullanılır.
+3. **Arka Plan Takibinin Kesin Sınırları:**
+   - Şoförün üzerinde **aktif bir taşıma görevi yoksa**, arka plan konum takibi kesinlikle **çalışmaz ve veri toplanmaz**.
+   - Alıcı tarafından 6 haneli güvenlik teslimat kodu verilip şoför tarafından sisteme girildiği ve teslimat tamamlandığı anda canlı konum paylaşımı derhal **sonlandırılır**.
+
+---
+
+### 3. Konum Verilerinin Güvenliği ve Paylaşım Sınırları
+- Şoförün canlı konumu üçüncü kişilerle veya diğer şoförlerle asla paylaşılmaz; sadece o an taşınmakta olan yükün sahibi olan müşteri tarafından görüntülenebilir.
+- Harita rota hesaplamalarında yalnızca enlem/boylam koordinatları kullanılır; kişisel kimlik veya araç plaka verileri harita sağlayıcılarına iletilmez.
+- Geçmiş sefer rotaları, olası kaza, kayıp, hasar veya yasal itiraz durumlarında inceleme yapılabilmesi amacıyla güvenlik loglarında saklanır.
+
+---
+
+### 4. Konum İzinlerinin Yönetimi ve Kapatılması
+Kullanıcılar cihaz işletim sistemi ayarlarından konum izinlerini istedikleri an değiştirebilir:
+- **iOS:** Ayarlar > NakliyeGo > Konum > "Asla", "Uygulamayı Kullanırken" veya "Her Zaman" seçenekleri.
+- **Android:** Ayarlar > Uygulamalar > NakliyeGo > İzinler > Konum > "Yalnızca uygulama kullanılırken izin ver" veya "Her zaman izin ver".
+
+Konum izninin tamamen kapatılması durumunda harita üzerinde manuel adres seçimi yapılabilir; ancak şoförler için canlı sefer takibi gerektiren aktif iş süreçleri aksayabilir.

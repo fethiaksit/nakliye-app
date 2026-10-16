@@ -39,6 +39,7 @@ export default function AuthFlow({ auth, saveSession, apiError, onSession, conne
   const [form, setForm] = useState({ name: '', phone: '', email: '', password: '', confirm: '', role: allowedRole || 'customer', accountType: 'individual', companyName: '' });
   const [errors, setErrors] = useState({});
   const [terms, setTerms] = useState(false);
+  const [marketingConsent, setMarketingConsent] = useState(false);
   const [legalDoc, setLegalDoc] = useState(null);
   const [remember, setRemember] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -68,6 +69,8 @@ export default function AuthFlow({ auth, saveSession, apiError, onSession, conne
 
   const changeMode = next => {
     setMode(next);
+    setTerms(false);
+    setMarketingConsent(false);
     setResetStep('email');
     setResetCode('');
     setResetToken('');
@@ -169,6 +172,10 @@ export default function AuthFlow({ auth, saveSession, apiError, onSession, conne
     try {
       const payload = mode === 'login' ? { phone: normalizePhone(form.phone), password: form.password } : {
         name: form.name.trim(), phone: normalizePhone(form.phone), email: form.email.trim().toLowerCase(), password: form.password, role: allowedRole || form.role,
+        termsAccepted: terms,
+        termsVersion: '1.0.0',
+        marketingConsent: Boolean(marketingConsent),
+        kvkkAcknowledged: true,
         ...(allowedRole === 'customer' ? { accountType: form.accountType, companyName: form.accountType === 'corporate' ? form.companyName.trim() : '' } : {}),
       };
       const { data } = mode === 'login' ? await auth.login(payload) : await auth.register(payload);
@@ -249,13 +256,37 @@ export default function AuthFlow({ auth, saveSession, apiError, onSession, conne
                     </View>
                   </View>
                 ) : null}
-                <Checkbox checked={terms} onPress={() => { setTerms(current => !current); setErrors(old => ({ ...old, terms: '' })); }} label="Kullanım koşullarını kabul ediyorum" error={errors.terms} />
+                <View style={styles.kvkkNoticeBox}>
+                  <Icon name="information-circle-outline" size={18} color={colors.primary} />
+                  <Text style={styles.kvkkNoticeText}>
+                    Kişisel verileriniz{' '}
+                    <Text style={styles.legalLink} onPress={() => setLegalDoc('kvkk')}>KVKK Aydınlatma Metni</Text>
+                    {' '}doğrultusunda işlenmektedir.
+                  </Text>
+                </View>
+                <Checkbox
+                  checked={terms}
+                  onPress={() => { setTerms(current => !current); setErrors(old => ({ ...old, terms: '' })); }}
+                  label="Kullanım Koşulları ve Sözleşmeleri okudum, kabul ediyorum (Zorunlu)"
+                  error={errors.terms}
+                />
+                <Checkbox
+                  checked={marketingConsent}
+                  onPress={() => setMarketingConsent(current => !current)}
+                  label="Ticari elektronik ileti ve kampanya duyuruları almayı onaylıyorum (İsteğe bağlı)"
+                />
                 <View style={styles.legalLinksRow}>
                   <Pressable hitSlop={6} onPress={() => setLegalDoc('terms')}><Text style={styles.legalLink}>Kullanım Koşulları</Text></Pressable>
                   <Text style={styles.legalLinkDot}>•</Text>
-                  <Pressable hitSlop={6} onPress={() => setLegalDoc('privacy')}><Text style={styles.legalLink}>Gizlilik Politikası</Text></Pressable>
+                  <Pressable hitSlop={6} onPress={() => setLegalDoc(allowedRole === 'driver' ? 'driverTerms' : 'customerTerms')}><Text style={styles.legalLink}>{allowedRole === 'driver' ? 'Şoför Koşulları' : 'Müşteri Koşulları'}</Text></Pressable>
                   <Text style={styles.legalLinkDot}>•</Text>
-                  <Pressable hitSlop={6} onPress={() => setLegalDoc('kvkk')}><Text style={styles.legalLink}>KVKK Metni</Text></Pressable>
+                  <Pressable hitSlop={6} onPress={() => setLegalDoc('privacy')}><Text style={styles.legalLink}>Gizlilik</Text></Pressable>
+                  <Text style={styles.legalLinkDot}>•</Text>
+                  <Pressable hitSlop={6} onPress={() => setLegalDoc('consent')}><Text style={styles.legalLink}>Açık Rıza</Text></Pressable>
+                  <Text style={styles.legalLinkDot}>•</Text>
+                  <Pressable hitSlop={6} onPress={() => setLegalDoc('location')}><Text style={styles.legalLink}>Konum İzni</Text></Pressable>
+                  <Text style={styles.legalLinkDot}>•</Text>
+                  <Pressable hitSlop={6} onPress={() => setLegalDoc('cookies')}><Text style={styles.legalLink}>Çerezler</Text></Pressable>
                 </View>
                 {serverError ? <InlineNotice tone="danger" title="İşlem tamamlanamadı" message={serverError} /> : null}
                 <AppButton loading={busy} label="Kayıt Ol" icon="person-add-outline" onPress={submit} style={styles.submit} />
@@ -392,4 +423,6 @@ const styles = StyleSheet.create({
   legalLinksRow: { alignItems: 'center', flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 6, marginTop: spacing.xs, marginBottom: spacing.xs },
   legalLink: { ...typography.caption, color: colors.primary, textDecorationLine: 'underline' },
   legalLinkDot: { ...typography.caption, color: colors.textMuted },
+  kvkkNoticeBox: { alignItems: 'center', backgroundColor: colors.surfaceMuted, borderColor: colors.border, borderRadius: radius.md, borderWidth: 1, flexDirection: 'row', gap: spacing.xs, marginVertical: spacing.sm, padding: spacing.sm },
+  kvkkNoticeText: { ...typography.caption, color: colors.textSecondary, flex: 1, lineHeight: 17 },
 });

@@ -9,6 +9,7 @@ config.resolver.extraNodeModules = {
   ...(config.resolver.extraNodeModules || {}),
   react: path.resolve(__dirname, 'node_modules/react'),
   'react-native': path.resolve(__dirname, 'node_modules/react-native'),
+  expo: path.resolve(__dirname, 'node_modules/expo'),
   'react-native-safe-area-context': path.resolve(__dirname, 'node_modules/react-native-safe-area-context'),
   'expo-clipboard': path.resolve(__dirname, 'node_modules/expo-clipboard'),
   'expo-image-picker': path.resolve(__dirname, 'node_modules/expo-image-picker'),

@@ -135,12 +135,162 @@ export function DeviceNotificationsPage({ onBack, onPermissionGranted, children 
   </>;
 }
 
-export function LegalPage({ type, onBack }) {
-  const privacy = type === 'privacy';
+import { LEGAL_DOCS } from '../legalTexts';
+import { Alert } from 'react-native';
+
+export const LEGAL_LIST_ITEMS = [
+  { key: 'terms', title: 'Kullanım Koşulları', subtitle: 'Platform genel kullanım şartları', icon: 'document-text-outline' },
+  { key: 'privacy', title: 'Gizlilik Politikası', subtitle: 'Kişisel veri güvenliği ve ilkelerimiz', icon: 'shield-checkmark-outline' },
+  { key: 'kvkk', title: 'KVKK Aydınlatma Metni', subtitle: '6698 sayılı kanun kapsamında bilgilendirme', icon: 'ribbon-outline' },
+  { key: 'consent', title: 'Açık Rıza Metinleri', subtitle: 'Ticari ileti ve pazarlama onayları', icon: 'checkmark-circle-outline' },
+  { key: 'location', title: 'Konum Verisi Aydınlatması', subtitle: 'Canlı takip ve mesafe hesaplama izinleri', icon: 'location-outline' },
+  { key: 'deletion', title: 'Hesap ve Veri Silme Politikası', subtitle: 'Hesap kapatma ve imha prosedürleri', icon: 'trash-outline' },
+  { key: 'customerTerms', title: 'Müşteri Hizmet Koşulları', subtitle: 'Yük taşıma talebi ve teslim alma kuralları', icon: 'cube-outline' },
+  { key: 'driverTerms', title: 'Şoför Hizmet Koşulları', subtitle: 'Taşıyıcı sorumlulukları ve iş kuralları', icon: 'car-outline' },
+  { key: 'dispute', title: 'İptal ve Uyuşmazlık Prosedürü', subtitle: 'Hasar, iptal ve şikâyet çözüm süreci', icon: 'alert-circle-outline' },
+  { key: 'retention', title: 'Veri Saklama ve İmha Politikası', subtitle: 'Yasal saklama süreleri ve periyodik imha', icon: 'archive-outline' },
+  { key: 'cookies', title: 'Çerez ve Analitik Politikası', subtitle: 'Web teknolojileri ve izleme tercihleri', icon: 'globe-outline' },
+];
+
+export function LegalIndexPage({ onSelectDoc, onBack }) {
   return <>
-    <AccountBackHeader title={privacy ? 'Gizlilik Politikası' : 'Kullanım Koşulları'} onBack={onBack} />
-    <SectionCard title="İçerik hazırlanıyor" icon={privacy ? 'shield-checkmark-outline' : 'document-text-outline'}>
-      <Text style={styles.legalText}>{privacy ? 'Onaylı gizlilik politikası metni henüz uygulamaya eklenmemiştir. Bu ekran, yayımlanacak gerçek metin için hazırlanmıştır.' : 'Onaylı kullanım koşulları metni henüz uygulamaya eklenmemiştir. Bu ekran, yayımlanacak gerçek metin için hazırlanmıştır.'}</Text>
+    <AccountBackHeader title="Yasal Bilgiler ve KVKK" subtitle="Şeffaflık, haklarınız ve sözleşmeler" onBack={onBack} />
+    <AccountMenuSection title="Temel Yasal Belgeler">
+      {LEGAL_LIST_ITEMS.slice(0, 5).map(item => (
+        <AccountMenuItem
+          key={item.key}
+          icon={item.icon}
+          label={item.title}
+          description={item.subtitle}
+          onPress={() => onSelectDoc(item.key)}
+        />
+      ))}
+    </AccountMenuSection>
+    <AccountMenuSection title="Hizmet ve Operasyon">
+      {LEGAL_LIST_ITEMS.slice(5, 9).map(item => (
+        <AccountMenuItem
+          key={item.key}
+          icon={item.icon}
+          label={item.title}
+          description={item.subtitle}
+          onPress={() => onSelectDoc(item.key)}
+        />
+      ))}
+    </AccountMenuSection>
+    <AccountMenuSection title="Veri Saklama ve Web">
+      {LEGAL_LIST_ITEMS.slice(9).map((item, idx) => (
+        <AccountMenuItem
+          key={item.key}
+          icon={item.icon}
+          label={item.title}
+          description={item.subtitle}
+          last={idx === LEGAL_LIST_ITEMS.slice(9).length - 1}
+          onPress={() => onSelectDoc(item.key)}
+        />
+      ))}
+    </AccountMenuSection>
+  </>;
+}
+
+export function LegalPage({ type, onBack }) {
+  const doc = LEGAL_DOCS[type] || LEGAL_DOCS.terms;
+  return <>
+    <AccountBackHeader title={doc?.title || 'Yasal Belge'} subtitle={doc?.subtitle || 'Yasal Bilgilendirme'} onBack={onBack} />
+    <View style={styles.legalMetaBadge}>
+      <Icon name="shield-checkmark" size={14} color={colors.primary} />
+      <Text style={styles.legalMetaText}>Sürüm {doc?.version || '1.0.0'} · Son Güncelleme: {doc?.updatedAt || '14 Ekim 2026'}</Text>
+    </View>
+    <SectionCard title="Belge Metni" icon="document-text-outline">
+      <Text style={styles.legalText}>{doc?.content || 'İçerik hazırlanıyor...'}</Text>
+    </SectionCard>
+  </>;
+}
+
+export function DeleteAccountPage({ loading, onDelete, onBack }) {
+  const [password, setPassword] = useState('');
+  const [reason, setReason] = useState('');
+  const [confirmed, setConfirmed] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleDelete = () => {
+    if (!password) {
+      setError('Hesabınızı silmek için mevcut şifrenizi girmeniz zorunludur.');
+      return;
+    }
+    if (!confirmed) {
+      setError('Devam etmek için silme şartlarını onaylamanız gerekir.');
+      return;
+    }
+    setError('');
+    Alert.alert(
+      'Hesabınızı Silmek İstediğinize Emin Misiniz?',
+      'Bu işlem geri alınamaz. Adınız, telefonunuz ve e-postanız anonimleştirilecek, tüm oturumlarınız kapatılacaktır.',
+      [
+        { text: 'Vazgeç', style: 'cancel' },
+        {
+          text: 'Evet, Hesabımı Sil',
+          style: 'destructive',
+          onPress: () => onDelete({ password, reason }),
+        },
+      ]
+    );
+  };
+
+  return <>
+    <AccountBackHeader title="Hesabımı Sil" subtitle="Kişisel veri ve hesap kapatma işlemi" onBack={onBack} />
+    <View style={styles.dangerNotice}>
+      <View style={styles.dangerNoticeHeader}>
+        <Icon name="warning" size={20} color={colors.danger} />
+        <Text style={styles.dangerNoticeTitle}>Önemli Güvenlik ve Yasal Bilgilendirme</Text>
+      </View>
+      <Text style={styles.dangerNoticeItem}>• Devam eden aktif veya atanmış nakliyeniz varsa hesabınız silinemez.</Text>
+      <Text style={styles.dangerNoticeItem}>• Ad, soyad, telefon ve e-posta gibi kişisel kimlik verileriniz silinir veya geri döndürülemez biçimde anonimleştirilir.</Text>
+      <Text style={styles.dangerNoticeItem}>• Bildirim jetonları iptal edilir ve tüm cihaz oturumlarınız derhal sonlandırılır.</Text>
+      <Text style={styles.dangerNoticeItem}>• Türk Ticaret Kanunu ve Vergi Usul Kanunu uyarınca finansal/fatura kayıtları ve uyuşmazlık belgeleri yasal saklama sürelerince kilitli arşivde tutulur.</Text>
+      <Text style={styles.dangerNoticeItem}>• Bu işlem tamamlandığında hesabınıza bir daha giriş yapılamaz.</Text>
+    </View>
+
+    <SectionCard title="Kimlik Doğrulama" icon="lock-closed-outline">
+      <TextField
+        required
+        label="Mevcut Şifreniz"
+        value={password}
+        onChangeText={v => { setPassword(v); setError(''); }}
+        secureTextEntry
+        leftIcon="key-outline"
+        placeholder="Mevcut hesap şifrenizi girin"
+      />
+      <TextField
+        label="Silme Nedeni (İsteğe bağlı)"
+        value={reason}
+        onChangeText={setReason}
+        multiline
+        maxLength={300}
+        placeholder="Ayrılma nedeninizi belirtebilirsiniz..."
+        helper="Hizmetlerimizi geliştirmemiz için geri bildiriminiz önemlidir."
+      />
+      <Pressable
+        accessibilityRole="checkbox"
+        accessibilityState={{ checked: confirmed }}
+        onPress={() => { setConfirmed(c => !c); setError(''); }}
+        style={styles.confirmRow}
+      >
+        <View style={[styles.confirmBox, confirmed && styles.confirmBoxChecked]}>
+          {confirmed ? <Icon name="checkmark" size={14} color={colors.white} /> : null}
+        </View>
+        <Text style={styles.confirmText}>
+          Hesabımın kalıcı olarak silinmesini, kişisel verilerimin anonimleştirilmesini ve bu işlemin geri alınamaz olduğunu anladım, onaylıyorum.
+        </Text>
+      </Pressable>
+      {error ? <Text style={styles.actionError}>{error}</Text> : null}
+      <AppButton
+        label="Hesabımı Kalıcı Olarak Sil"
+        icon="trash-outline"
+        variant="outlineDanger"
+        loading={loading}
+        onPress={handleDelete}
+        style={styles.cardAction}
+      />
     </SectionCard>
   </>;
 }
@@ -209,5 +359,16 @@ const styles = StyleSheet.create({
   profileCard: { backgroundColor: colors.ink, borderRadius: radius.xl, marginBottom: spacing.xl, overflow: 'hidden', padding: spacing.lg }, profileTop: { alignItems: 'center', flexDirection: 'row' }, avatar: { alignItems: 'center', backgroundColor: colors.primary, borderColor: 'rgba(255,255,255,.18)', borderRadius: 32, borderWidth: 1, height: 64, justifyContent: 'center', marginRight: spacing.md, width: 64 }, avatarText: { ...typography.h2, color: colors.white }, profileCopy: { flex: 1 }, profileName: { ...typography.h2, color: colors.white }, profileContact: { ...typography.caption, color: '#C5D0DB', marginTop: 2 }, profileRole: { ...typography.caption, color: '#8DD0BF', fontWeight: '800', marginTop: spacing.xs, textTransform: 'uppercase' }, profileMeta: { ...typography.small, borderTopColor: 'rgba(255,255,255,.12)', borderTopWidth: 1, color: '#C5D0DB', marginTop: spacing.md, paddingTop: spacing.sm }, stats: { borderTopColor: 'rgba(255,255,255,.12)', borderTopWidth: 1, flexDirection: 'row', marginTop: spacing.md, paddingTop: spacing.md }, stat: { flex: 1 }, statValue: { ...typography.h3, color: colors.white }, statLabel: { ...typography.caption, color: '#AAB7C4', marginTop: 2 },
   menuSection: { marginBottom: spacing.lg }, menuSectionTitle: { ...typography.caption, color: colors.textMuted, fontWeight: '800', letterSpacing: .8, marginBottom: spacing.xs, paddingHorizontal: spacing.xs, textTransform: 'uppercase' }, menuCard: { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.lg, borderWidth: 1, overflow: 'hidden' }, menuItem: { alignItems: 'center', flexDirection: 'row', minHeight: 66, paddingHorizontal: spacing.md, paddingVertical: spacing.sm }, menuDivider: { borderBottomColor: colors.border, borderBottomWidth: StyleSheet.hairlineWidth }, menuIcon: { alignItems: 'center', backgroundColor: colors.primarySoft, borderRadius: radius.sm, height: 38, justifyContent: 'center', marginRight: spacing.sm, width: 38 }, menuIconDanger: { backgroundColor: colors.dangerSoft }, menuCopy: { flex: 1, paddingRight: spacing.sm }, menuLabel: { ...typography.bodyMedium, color: colors.ink }, menuLabelDanger: { color: colors.danger }, menuDescription: { ...typography.caption, color: colors.textSecondary, marginTop: 2 },
   personalHero: { alignItems: 'center', marginBottom: spacing.lg }, personalAvatar: { alignItems: 'center', backgroundColor: colors.primary, borderRadius: 38, height: 76, justifyContent: 'center', width: 76 }, personalAvatarText: { ...typography.h1, color: colors.white }, personalName: { ...typography.h2, color: colors.ink, marginTop: spacing.sm }, secondaryAction: { marginTop: spacing.xs }, cardAction: { marginTop: spacing.md }, topAction: { marginBottom: spacing.md }, helper: { ...typography.caption, color: colors.textSecondary, marginTop: spacing.sm }, legalText: { ...typography.body, color: colors.textSecondary, lineHeight: 24 },
+  legalMetaBadge: { alignItems: 'center', alignSelf: 'flex-start', backgroundColor: colors.primarySoft, borderRadius: radius.sm, flexDirection: 'row', gap: 6, marginBottom: spacing.md, paddingHorizontal: spacing.sm, paddingVertical: 4 },
+  legalMetaText: { ...typography.caption, color: colors.primaryDark, fontWeight: '700' },
+  dangerNotice: { backgroundColor: colors.dangerSoft, borderColor: colors.danger, borderRadius: radius.lg, borderWidth: 1, marginBottom: spacing.lg, padding: spacing.md },
+  dangerNoticeHeader: { alignItems: 'center', flexDirection: 'row', gap: spacing.xs, marginBottom: spacing.xs },
+  dangerNoticeTitle: { ...typography.smallMedium, color: colors.danger, fontWeight: '800' },
+  dangerNoticeItem: { ...typography.caption, color: colors.text, lineHeight: 18, marginTop: 4 },
+  confirmRow: { alignItems: 'flex-start', flexDirection: 'row', gap: spacing.xs, marginTop: spacing.md },
+  confirmBox: { alignItems: 'center', borderColor: colors.borderStrong, borderRadius: radius.xs, borderWidth: 1.5, height: 20, justifyContent: 'center', marginTop: 2, width: 20 },
+  confirmBoxChecked: { backgroundColor: colors.danger, borderColor: colors.danger },
+  confirmText: { ...typography.caption, color: colors.textSecondary, flex: 1, lineHeight: 18 },
+  actionError: { ...typography.caption, color: colors.danger, marginTop: spacing.xs },
   ticketCard: { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.lg, borderWidth: 1, marginBottom: spacing.sm, padding: spacing.md }, ticketHeader: { alignItems: 'center', flexDirection: 'row' }, ticketIcon: { alignItems: 'center', backgroundColor: colors.primarySoft, borderRadius: radius.sm, height: 40, justifyContent: 'center', marginRight: spacing.sm, width: 40 }, ticketCopy: { flex: 1 }, ticketTitle: { ...typography.bodyMedium, color: colors.ink }, ticketMeta: { ...typography.caption, color: colors.textSecondary, marginTop: 3 }, descriptionLabel: { ...typography.caption, color: colors.textMuted, marginTop: spacing.md, textTransform: 'uppercase' }, description: { ...typography.body, color: colors.text, lineHeight: 23, marginTop: spacing.xs }, pressed: { opacity: .72 },
 });

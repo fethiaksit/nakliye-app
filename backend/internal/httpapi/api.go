@@ -190,9 +190,14 @@ func (a *API) Routes() http.Handler {
 	mux.Handle("GET /api/admin/corporate-wallets/{id}", a.adminAuth(http.HandlerFunc(a.adminWallet)))
 	mux.Handle("PATCH /api/admin/corporate-wallets/{id}/rate", a.adminAuth(http.HandlerFunc(a.adminWalletRate)))
 	mux.Handle("POST /api/admin/corporate-wallets/{id}/adjustments", a.adminAuth(http.HandlerFunc(a.adminWalletAdjustment)))
+	mux.Handle("GET /api/admin/account-deletion-requests", a.adminAuth(http.HandlerFunc(a.adminAccountDeletionRequests)))
+	mux.Handle("PATCH /api/admin/account-deletion-requests/{id}", a.adminAuth(http.HandlerFunc(a.adminProcessAccountDeletionRequest)))
 	mux.Handle("GET /api/me", a.auth(http.HandlerFunc(a.me)))
 	mux.Handle("PATCH /api/me", a.auth(http.HandlerFunc(a.updateMe)))
 	mux.Handle("PATCH /api/me/password", a.auth(http.HandlerFunc(a.updatePassword)))
+	mux.Handle("POST /api/me/agreements", a.auth(http.HandlerFunc(a.updateAgreements)))
+	mux.Handle("POST /api/me/delete-account", a.auth(http.HandlerFunc(a.deleteMyAccount)))
+	mux.HandleFunc("POST /api/account-deletion-requests", a.requestAccountDeletionPublic)
 	mux.Handle("GET /api/corporate/company", a.auth(http.HandlerFunc(a.corporateCompany)))
 	mux.Handle("PATCH /api/corporate/company", a.auth(http.HandlerFunc(a.updateCorporateCompany)))
 	mux.Handle("GET /api/corporate/dashboard", a.auth(http.HandlerFunc(a.corporateDashboard)))
@@ -284,8 +289,18 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 	if !a.allowRate(w, "register_ip:"+ip, 10, time.Hour, "çok fazla kayıt denemesi yapıldı; lütfen daha sonra tekrar deneyin") {
 		return
 	}
-	var req struct{ Name, Email, Phone, Password, Role, AccountType, CompanyName string }
+	var req struct {
+		Name, Email, Phone, Password, Role, AccountType, CompanyName string
+		TermsAccepted                                                *bool  `json:"termsAccepted"`
+		TermsVersion                                                 string `json:"termsVersion"`
+		MarketingConsent                                             bool   `json:"marketingConsent"`
+		KVKKAcknowledged                                             bool   `json:"kvkkAcknowledged"`
+	}
 	if !decode(w, r, &req) {
+		return
+	}
+	if req.TermsAccepted == nil || !*req.TermsAccepted {
+		badRequest(w, "kayıt olmak için kullanım koşullarını kabul etmelisiniz")
 		return
 	}
 	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
@@ -329,16 +344,29 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().UTC()
+	termsAccepted := *req.TermsAccepted
+	termsVer := strings.TrimSpace(req.TermsVersion)
+	if termsVer == "" {
+		termsVer = models.CurrentTermsVersion
+	}
 	u := models.User{
-		ID:            uuid.NewString(),
-		Name:          strings.TrimSpace(req.Name),
-		Email:         req.Email,
-		Phone:         req.Phone,
-		Role:          req.Role,
-		AccountType:   req.AccountType,
-		PasswordHash:  hash,
-		AccountStatus: models.AccountStatusActive,
-		CreatedAt:     now,
+		ID:               uuid.NewString(),
+		Name:             strings.TrimSpace(req.Name),
+		Email:            req.Email,
+		Phone:            req.Phone,
+		Role:             req.Role,
+		AccountType:      req.AccountType,
+		PasswordHash:     hash,
+		AccountStatus:    models.AccountStatusActive,
+		CreatedAt:        now,
+		TermsAccepted:    termsAccepted,
+		TermsVersion:     termsVer,
+		TermsAcceptedAt:  &now,
+		MarketingConsent: req.MarketingConsent,
+		KVKKAcknowledged: req.KVKKAcknowledged,
+	}
+	if req.MarketingConsent {
+		u.MarketingConsentAt = &now
 	}
 	if models.CustomerAccountType(u) == models.AccountTypeCorporate {
 		u.CorporateStatus = models.CorporateStatusPending
@@ -379,6 +407,17 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 		serverError(w, createErr)
 		return
 	}
+
+	_ = a.store.SaveAgreementAudit(models.UserAgreementAudit{
+		UserID:           u.ID,
+		TermsVersion:     termsVer,
+		TermsAccepted:    termsAccepted,
+		MarketingConsent: req.MarketingConsent,
+		KVKKAcknowledged: req.KVKKAcknowledged,
+		IPAddress:        ip,
+		UserAgent:        r.UserAgent(),
+		CreatedAt:        now,
+	})
 
 	log.Printf("[REGISTER USER CREATED]\nuser_id=%s", u.ID)
 	log.Printf("[REGISTER PROFILE CREATED]\nuser_id=%s", u.ID)
@@ -878,6 +917,283 @@ func (a *API) updatePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+func (a *API) updateAgreements(w http.ResponseWriter, r *http.Request) {
+	p := current(r)
+	u, err := a.store.GetUser(p.ID)
+	if err != nil {
+		notFound(w)
+		return
+	}
+	var req struct {
+		TermsAccepted    *bool  `json:"termsAccepted"`
+		TermsVersion     string `json:"termsVersion"`
+		MarketingConsent *bool  `json:"marketingConsent"`
+		KVKKAcknowledged *bool  `json:"kvkkAcknowledged"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	now := time.Now().UTC()
+	updated := u
+	if req.TermsAccepted != nil && *req.TermsAccepted {
+		updated.TermsAccepted = true
+		termsVer := strings.TrimSpace(req.TermsVersion)
+		if termsVer == "" {
+			termsVer = models.CurrentTermsVersion
+		}
+		updated.TermsVersion = termsVer
+		updated.TermsAcceptedAt = &now
+	}
+	if req.MarketingConsent != nil {
+		updated.MarketingConsent = *req.MarketingConsent
+		if *req.MarketingConsent {
+			updated.MarketingConsentAt = &now
+		} else {
+			updated.MarketingConsentAt = nil
+		}
+	}
+	if req.KVKKAcknowledged != nil {
+		updated.KVKKAcknowledged = *req.KVKKAcknowledged
+	}
+	if err := a.store.SaveUser(updated); err != nil {
+		serverError(w, err)
+		return
+	}
+	_ = a.store.SaveAgreementAudit(models.UserAgreementAudit{
+		UserID:           updated.ID,
+		TermsVersion:     updated.TermsVersion,
+		TermsAccepted:    updated.TermsAccepted,
+		MarketingConsent: updated.MarketingConsent,
+		KVKKAcknowledged: updated.KVKKAcknowledged,
+		IPAddress:        clientIP(r),
+		UserAgent:        r.UserAgent(),
+		CreatedAt:        now,
+	})
+	jsonResponse(w, http.StatusOK, a.publicUser(updated))
+}
+
+func (a *API) deleteMyAccount(w http.ResponseWriter, r *http.Request) {
+	p := current(r)
+	u, err := a.store.GetUser(p.ID)
+	if err != nil {
+		notFound(w)
+		return
+	}
+	var req struct {
+		Password string `json:"password"`
+		Reason   string `json:"reason,omitempty"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	if !verifyPassword(u.PasswordHash, req.Password) {
+		badRequest(w, "şifre hatalı; hesap silme işlemi doğrulanamadı")
+		return
+	}
+
+	activeStatuses := map[string]bool{
+		models.LoadStatusDriverSelected:    true,
+		models.LoadStatusDriverEnRoute:     true,
+		models.LoadStatusAtPickup:          true,
+		models.LoadStatusPickedUp:          true,
+		models.LoadStatusEnRouteToDelivery: true,
+	}
+
+	if u.Role == models.RoleCustomer {
+		loads, _, err := a.store.ListLoads(u.ID, "", store.LoadFilter{}, 0, 100)
+		if err == nil {
+			for _, l := range loads {
+				if activeStatuses[l.Status] {
+					badRequest(w, "devam eden aktif nakliyeniz bulunmaktadır; lütfen önce nakliyenizi tamamlayın veya iptal edin")
+					return
+				}
+			}
+		}
+	} else if u.Role == models.RoleDriver {
+		loads, _, err := a.store.ListLoads("", u.ID, store.LoadFilter{}, 0, 100)
+		if err == nil {
+			for _, l := range loads {
+				if activeStatuses[l.Status] {
+					badRequest(w, "üzerinizde devam eden aktif taşıma görevi bulunmaktadır; lütfen önce teslimatı tamamlayın")
+					return
+				}
+			}
+		}
+	}
+
+	now := time.Now().UTC()
+	prevEmail := u.Email
+	prevPhone := u.Phone
+
+	if err := a.anonymizeAndCloseAccount(u, req.Reason); err != nil {
+		serverError(w, err)
+		return
+	}
+
+	_ = a.store.SaveAccountDeletionRequest(models.AccountDeletionRequest{
+		ID:          uuid.NewString(),
+		UserID:      u.ID,
+		Email:       prevEmail,
+		Phone:       prevPhone,
+		Reason:      req.Reason,
+		Status:      "completed",
+		CreatedAt:   now,
+		ProcessedAt: &now,
+		ProcessedBy: "user",
+	})
+
+	jsonResponse(w, http.StatusOK, map[string]any{
+		"status":  "ok",
+		"message": "Hesabınız ve kişisel verileriniz başarıyla silindi ve anonimleştirildi.",
+	})
+}
+
+func (a *API) anonymizeAndCloseAccount(u models.User, reason string) error {
+	now := time.Now().UTC()
+	prev := u
+	u.AccountStatus = models.AccountStatusDeleted
+	u.DeletedAt = &now
+	u.DeleteReason = strings.TrimSpace(reason)
+	u.Name = "Silinmiş Kullanıcı"
+	u.PasswordHash = ""
+	tombstoneEmail := fmt.Sprintf("deleted-%s@deleted.nakliyego.local", u.ID)
+	u.Email = tombstoneEmail
+	uPrefix := u.ID
+	if len(uPrefix) > 8 {
+		uPrefix = uPrefix[:8]
+	}
+	u.Phone = fmt.Sprintf("+9000%s", uPrefix)
+
+	// 1. Şoför profil bilgilerini anonimleştir
+	if u.Role == models.RoleDriver {
+		u.DriverProfile.LicensePlate = ""
+		u.DriverProfile.ServiceArea = ""
+		u.DriverProfile.VehicleModel = ""
+		u.DriverProfile.VehicleType = ""
+		u.DriverProfile.VerificationNote = "Hesap silindi ve anonimleştirildi"
+		u.DriverProfile.NearbyLoadNotifications = false
+
+		// 2. Araç kayıtlarını deaktive et ve plaka/görsel verilerini anonimleştir
+		if vehicles, err := a.store.ListVehicles(u.ID); err == nil {
+			for _, v := range vehicles {
+				v.IsActive = false
+				if strings.HasPrefix(v.PhotoURL, "/api/photos/") {
+					photoID := strings.TrimPrefix(v.PhotoURL, "/api/photos/")
+					_ = a.store.DeletePhoto(photoID)
+					v.PhotoURL = ""
+				}
+				vPrefix := v.ID
+				if len(vPrefix) > 8 {
+					vPrefix = vPrefix[:8]
+				}
+				v.LicensePlate = "SİLİNDİ-" + vPrefix
+				v.VerificationNote = "Hesap silindi; araç deaktive edildi"
+				_ = a.store.SaveVehicle(v)
+			}
+		}
+
+		// 3. Şoför mesleki belgeleri ve depolama dosyaları:
+		// 4925 s. Karayolu Taşıma Kanunu ve zamanaşımı gereğince, onaylanmış resmi belgeler (ehliyet, SRC, psikoteknik, ruhsat)
+		// idari denetim için 3 yıl yasal arşivde saklanır (Status = "archived").
+		// Yasal saklama gereği olmayan (onaysız, reddedilen veya "other" türündeki) belgelerin gerçek dosyaları storage'dan silinir.
+		if docs, err := a.store.ListDriverDocuments(u.ID); err == nil {
+			for _, d := range docs {
+				isStatutoryLegalDoc := d.Kind == "driver_license" || d.Kind == "src" || d.Kind == "psychotechnic" || d.Kind == "vehicle_registration"
+				if isStatutoryLegalDoc && d.Status == "verified" {
+					d.Status = "archived"
+					d.ReviewNote = "Hesap silindi; 4925 sayılı Kanun gereği 3 yıl yasal arşivde saklanmaktadır"
+					_ = a.store.SaveDriverDocument(d)
+				} else {
+					if strings.HasPrefix(d.FileURL, "/api/photos/") {
+						photoID := strings.TrimPrefix(d.FileURL, "/api/photos/")
+						_ = a.store.DeletePhoto(photoID)
+					}
+					d.FileURL = ""
+					d.Status = "deleted"
+					d.ReviewNote = "Yasal saklama yükümlülüğü bulunmadığından dosya ve veriler güvenli silindi"
+					_ = a.store.SaveDriverDocument(d)
+				}
+			}
+		}
+	}
+
+	// 4. Kullanıcı ana kaydını ve email/telefon indekslerini güncelle
+	if err := a.store.UpdateUser(prev, u); err != nil {
+		return err
+	}
+
+	// 5. Aktif oturum ve push bildirim tokenlarını iptal et
+	_ = a.store.RevokeAllUserSessions(u.ID)
+	_ = a.store.RevokeAllUserPushTokens(u.ID)
+
+	return nil
+}
+
+func (a *API) requestAccountDeletionPublic(w http.ResponseWriter, r *http.Request) {
+	ip := clientIP(r)
+	if !a.allowRate(w, "public_deletion_ip:"+ip, 5, time.Hour, "çok fazla talep gönderildi; lütfen daha sonra tekrar deneyin") {
+		return
+	}
+	var req struct {
+		Email   string `json:"email"`
+		Phone   string `json:"phone"`
+		Reason  string `json:"reason"`
+		Confirm bool   `json:"confirm"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
+	req.Phone = normalizePhone(req.Phone)
+	if !req.Confirm || (req.Email == "" && req.Phone == "") {
+		badRequest(w, "onay kutusu ve e-posta veya telefon bilgisi zorunludur")
+		return
+	}
+
+	existingRequests, _ := a.store.ListAccountDeletionRequests("pending")
+	for _, er := range existingRequests {
+		if (req.Email != "" && strings.EqualFold(er.Email, req.Email)) || (req.Phone != "" && er.Phone == req.Phone) {
+			jsonResponse(w, http.StatusOK, map[string]any{
+				"status":  "received",
+				"message": "Hesap silme talebiniz zaten alınmıştır ve inceleme sırasındadır. Güvenlik doğrulaması amacıyla kayıtlı iletişim adresiniz üzerinden sizinle iletişime geçilecektir.",
+			})
+			return
+		}
+	}
+
+	var foundUser *models.User
+	if req.Email != "" {
+		if u, err := a.store.GetUserByEmail(req.Email); err == nil && u.ID != "" {
+			foundUser = &u
+		}
+	}
+	if foundUser == nil && req.Phone != "" {
+		if u, err := a.store.GetUserByPhone(req.Phone); err == nil && u.ID != "" {
+			foundUser = &u
+		}
+	}
+
+	now := time.Now().UTC()
+	reqRecord := models.AccountDeletionRequest{
+		ID:        uuid.NewString(),
+		Email:     req.Email,
+		Phone:     req.Phone,
+		Reason:    strings.TrimSpace(req.Reason),
+		Status:    "pending",
+		CreatedAt: now,
+	}
+	if foundUser != nil {
+		reqRecord.UserID = foundUser.ID
+	}
+	_ = a.store.SaveAccountDeletionRequest(reqRecord)
+
+	jsonResponse(w, http.StatusOK, map[string]any{
+		"status":  "received",
+		"message": "Hesap silme talebiniz başarıyla alınmıştır. Güvenlik doğrulaması amacıyla kayıtlı iletişim adresiniz üzerinden sizinle iletişime geçilecektir.",
+	})
+}
+
 func (a *API) loads(w http.ResponseWriter, r *http.Request) {
 	p := current(r)
 	if p.Role == models.RoleDriver {
@@ -3311,6 +3627,19 @@ func (a *API) publicUser(u models.User) map[string]any {
 		user["corporate"] = nil
 		user["company"] = nil
 	}
+	user["termsAccepted"] = u.TermsAccepted
+	user["termsVersion"] = u.TermsVersion
+	if u.TermsAcceptedAt != nil {
+		user["termsAcceptedAt"] = u.TermsAcceptedAt
+	}
+	user["marketingConsent"] = u.MarketingConsent
+	if u.MarketingConsentAt != nil {
+		user["marketingConsentAt"] = u.MarketingConsentAt
+	}
+	user["kvkkAcknowledged"] = u.KVKKAcknowledged
+	user["currentTermsVersion"] = models.CurrentTermsVersion
+	user["termsUpdateRequired"] = u.TermsVersion != models.CurrentTermsVersion
+
 	return user
 }
 func decode(w http.ResponseWriter, r *http.Request, target any) bool {
