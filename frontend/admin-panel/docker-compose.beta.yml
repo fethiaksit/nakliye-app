@@ -1,3 +1,31 @@
-      ADMIN_EMAIL: "admin@mail.com"
-      ADMIN_PASSWORD: "123456789asd"
-      ADMIN_JWT_SECRET: "a30b0aa847c0cf124567ed719a6456696fde94909b64429981ddd6c3a2ff9557"
+services:
+  admin-panel-beta:
+    container_name: nakliyego-admin-panel-beta
+    build:
+      context: ..
+      dockerfile: admin-panel/Dockerfile
+      args:
+        NEXT_PUBLIC_ADMIN_API_URL: ${NEXT_PUBLIC_ADMIN_API_URL:-https://beta-api-18-157-76-136.sslip.io/api/admin}
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://beta-api-18-157-76-136.sslip.io}
+        NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN:-}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3001:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - HOSTNAME=0.0.0.0
+      - NODE_OPTIONS=--max-old-space-size=384
+      - NEXT_PUBLIC_ADMIN_API_URL=${NEXT_PUBLIC_ADMIN_API_URL:-https://beta-api-18-157-76-136.sslip.io/api/admin}
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-https://beta-api-18-157-76-136.sslip.io}
+      - NEXT_PUBLIC_SENTRY_DSN=${NEXT_PUBLIC_SENTRY_DSN:-}
+    deploy:
+      resources:
+        limits:
+          memory: 450M
+    mem_limit: 450m
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

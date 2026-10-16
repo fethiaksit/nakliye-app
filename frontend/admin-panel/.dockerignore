@@ -1,0 +1,15 @@
+node_modules
+.next
+dist
+.wrangler
+.git
+.github
+.vscode
+.idea
+*.log
+.DS_Store
+*.local
+.env
+.env.*
+!.env.example
+!.env.beta.example

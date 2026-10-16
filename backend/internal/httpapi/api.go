@@ -23,6 +23,7 @@ import (
 	"nakliye-api/internal/store"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strconv"
@@ -3724,14 +3725,80 @@ func errorResponse(w http.ResponseWriter, status int, code, message string, deta
 		"requestId": w.Header().Get("X-Request-ID"),
 	})
 }
+func isAllowedOrigin(origin string) bool {
+	if origin == "" {
+		return false
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return false
+	}
+	scheme := strings.ToLower(u.Scheme)
+	hostname := strings.ToLower(u.Hostname())
+
+	// Local development
+	if scheme == "http" || scheme == "https" {
+		if hostname == "localhost" || hostname == "127.0.0.1" {
+			return true
+		}
+	}
+
+	// Remote origins require HTTPS
+	if scheme == "https" {
+		// Production & staging NakliyeGo domains
+		if hostname == "nakliyego.com" || strings.HasSuffix(hostname, ".nakliyego.com") {
+			return true
+		}
+		// Current AWS beta sslip.io host and subdomains
+		if hostname == "18-157-76-136.sslip.io" ||
+			strings.HasSuffix(hostname, ".18-157-76-136.sslip.io") ||
+			strings.HasSuffix(hostname, "-18-157-76-136.sslip.io") {
+			return true
+		}
+	}
+
+	// Optional custom origins configured via CORS_ALLOWED_ORIGINS (comma-separated)
+	if extraOrigins := os.Getenv("CORS_ALLOWED_ORIGINS"); extraOrigins != "" {
+		for _, raw := range strings.Split(extraOrigins, ",") {
+			trimmed := strings.ToLower(strings.TrimSpace(raw))
+			if trimmed == "" {
+				continue
+			}
+			if strings.EqualFold(origin, trimmed) {
+				return true
+			}
+			if strings.HasPrefix(trimmed, "*.") {
+				suffix := trimmed[1:]
+				if strings.HasSuffix(hostname, suffix) {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
+}
+
 func cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
-		w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID")
+		origin := r.Header.Get("Origin")
+		allowed := isAllowedOrigin(origin)
+
+		if origin != "" && allowed {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
+			w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
+			w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID")
+			w.Header().Set("Access-Control-Max-Age", "86400")
+		}
+
 		if r.Method == "OPTIONS" {
-			w.WriteHeader(204)
+			if origin != "" && !allowed {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		next.ServeHTTP(w, r)

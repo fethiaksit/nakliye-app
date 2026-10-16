@@ -25,8 +25,9 @@ export default function AccountDeletionPage() {
     setResult(null);
 
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_ADMIN_API_URL || "http://localhost:8080";
-      const res = await fetch(`${apiUrl}/api/account-deletion-requests`, {
+      const rawApiUrl = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_ADMIN_API_URL || "http://localhost:8080";
+      const apiOrigin = rawApiUrl.replace(/\/api\/admin\/?$/, "").replace(/\/$/, "");
+      const res = await fetch(`${apiOrigin}/api/account-deletion-requests`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, phone, reason, confirm }),
