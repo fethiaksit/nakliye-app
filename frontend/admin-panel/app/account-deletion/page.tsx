@@ -101,7 +101,7 @@ export default function AccountDeletionPage() {
           </div>
         )}
 
-        <form onSubmit={handleSubmit} style={{ display: "grid", gap: 16, maxWidth: 540, background: "#fbfcfb", padding: 22, borderRadius: 12, border: "1px solid #e5ebe7" }}>
+        <form onSubmit={handleSubmit} style={{ display: "grid", gap: 16, maxWidth: 540, width: "100%", background: "#fbfcfb", padding: "clamp(16px, 4vw, 24px)", borderRadius: 12, border: "1px solid #e5ebe7", boxSizing: "border-box" }}>
           <div>
             <label style={{ display: "block", fontSize: 13, fontWeight: 700, marginBottom: 5 }}>
               Kayıtlı E-posta Adresi
@@ -111,7 +111,7 @@ export default function AccountDeletionPage() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="ornek@nakliyego.com"
-              style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #ccd6cf", fontSize: 14 }}
+              style={{ width: "100%", padding: "12px 14px", borderRadius: 8, border: "1px solid #ccd6cf", fontSize: 15, boxSizing: "border-box", minHeight: 44 }}
             />
           </div>
 
@@ -124,7 +124,7 @@ export default function AccountDeletionPage() {
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
               placeholder="+90 5xx xxx xx xx"
-              style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #ccd6cf", fontSize: 14 }}
+              style={{ width: "100%", padding: "12px 14px", borderRadius: 8, border: "1px solid #ccd6cf", fontSize: 15, boxSizing: "border-box", minHeight: 44 }}
             />
           </div>
 
@@ -137,16 +137,16 @@ export default function AccountDeletionPage() {
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               placeholder="Hesabınızı silme nedeninizi belirtebilirsiniz..."
-              style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #ccd6cf", fontSize: 14 }}
+              style={{ width: "100%", padding: "12px 14px", borderRadius: 8, border: "1px solid #ccd6cf", fontSize: 15, boxSizing: "border-box" }}
             />
           </div>
 
-          <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer", fontSize: 13 }}>
+          <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer", fontSize: 13, lineHeight: 1.5 }}>
             <input
               type="checkbox"
               checked={confirm}
               onChange={(e) => setConfirm(e.target.checked)}
-              style={{ marginTop: 3 }}
+              style={{ marginTop: 3, width: "auto", cursor: "pointer", flexShrink: 0 }}
             />
             <span>
               Hesabımın silinmesi halinde tüm aktif oturumlarımın sonlandırılacağını, geri döndürülemez biçimde anonimleştirileceğimi ve yasal saklama yükümlülüğü haricindeki verilerimin silineceğini anladım ve kabul ediyorum.
@@ -157,14 +157,17 @@ export default function AccountDeletionPage() {
             type="submit"
             disabled={busy || !confirm}
             style={{
-              padding: "12px 20px",
+              padding: "14px 20px",
               borderRadius: 8,
               border: 0,
               background: confirm ? "#b73c32" : "#999999",
               color: "#ffffff",
               fontWeight: 700,
-              fontSize: 14,
+              fontSize: 15,
               cursor: confirm && !busy ? "pointer" : "not-allowed",
+              minHeight: 48,
+              width: "100%",
+              touchAction: "manipulation",
             }}
           >
             {busy ? "Talep İletiliyor..." : "Hesap Silme Talebini Gönder"}

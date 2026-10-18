@@ -90,6 +90,15 @@ export default function AdminPanel() {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("");
   const [actionNote, setActionNote] = useState("");
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setMobileMenuOpen(false);
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   useEffect(() => {
     setToken(sessionStorage.getItem("nakliye-admin-token") || "");
@@ -251,8 +260,9 @@ export default function AdminPanel() {
     finally { setActionBusy(false); }
   }
 
-  async function handleProcessDeletionRequest(id: string, status: "completed" | "rejected", note?: string) {
+  async function handleProcessDeletionRequest(id: string, action: "approve" | "reject", note?: string) {
     setActionBusy(true); setError("");
+    const status = action === "approve" ? "completed" : "rejected";
     try {
       await request(`/account-deletion-requests/${id}`, {
         method: "PATCH",
@@ -273,46 +283,103 @@ export default function AdminPanel() {
   const pendingCorporateCount = dashboardStats?.counts?.pendingCorporate || 0;
 
   return (
-    <main className="admin-shell">
-      <aside className="sidebar">
-        <div className="brand"><span>N</span><div>NakliyeGo<small>Yönetim merkezi</small></div></div>
-        <nav aria-label="Yönetim menüsü">
-          {navigation.map(item => (
+    <div className="admin-root">
+      <header className="mobile-header">
+        <button
+          type="button"
+          className="hamburger-btn"
+          onClick={() => setMobileMenuOpen(prev => !prev)}
+          aria-label={mobileMenuOpen ? "Menüyü kapat" : "Menüyü aç"}
+          aria-expanded={mobileMenuOpen}
+        >
+          <span className="hamburger-box">
+            <span className={`hamburger-inner ${mobileMenuOpen ? "active" : ""}`} />
+          </span>
+        </button>
+        <div className="mobile-header-brand">
+          <span className="mobile-brand-icon">N</span>
+          <div className="mobile-brand-text">
+            <strong>NakliyeGo</strong>
+            <small>{navigation.find(item => item.id === tab)?.label}</small>
+          </div>
+        </div>
+        <div className="mobile-header-actions">
+          <button
+            type="button"
+            className="mobile-refresh-btn"
+            onClick={() => void loadTab(tab)}
+            aria-label="Verileri yenile"
+            title="Verileri yenile"
+          >
+            ↻
+          </button>
+        </div>
+      </header>
+
+      {mobileMenuOpen && (
+        <div
+          className="sidebar-backdrop"
+          onClick={() => setMobileMenuOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+
+      <main className="admin-shell">
+        <aside className={`sidebar ${mobileMenuOpen ? "sidebar-open" : ""}`} aria-label="Ana menü">
+          <div className="sidebar-header">
+            <div className="brand"><span>N</span><div>NakliyeGo<small>Yönetim merkezi</small></div></div>
             <button
-              key={item.id}
-              className={tab === item.id ? "active" : ""}
-              onClick={() => {
-                loadGeneration.current++;
-                setData(null);
-                setLoading(true);
-                setQuery("");
-                setFilter(item.id === "corporate-applications" ? "pending" : "");
-                setTab(item.id);
-                if (item.id === tab) void loadTab(item.id);
-              }}
+              type="button"
+              className="sidebar-close-btn"
+              onClick={() => setMobileMenuOpen(false)}
+              aria-label="Menüyü kapat"
             >
-              <i>{item.mark}</i>
-              {item.label}
-              {item.id === "corporate-applications" && pendingCorporateCount ? <b>{pendingCorporateCount}</b> : null}
-              {item.id === "complaints" && (dashboardStats?.counts?.openComplaints || data?.counts?.openComplaints) ? <b>{dashboardStats?.counts?.openComplaints || data?.counts?.openComplaints}</b> : null}
+              ✕
             </button>
-          ))}
-        </nav>
-        <div className="operator"><span>{initials(adminEmail)}</span><div>{adminEmail}<small>Sistem yöneticisi</small></div><button onClick={logout} aria-label="Çıkış yap">Çıkış</button></div>
-      </aside>
-      <section className="workspace">
-        <header className="topbar">
-          <div><p>{new Intl.DateTimeFormat("tr-TR", { dateStyle: "full" }).format(new Date())}</p><h1>{navigation.find(item => item.id === tab)?.label}</h1></div>
-          <div className="top-actions"><span className="api-state"><i /> API bağlı</span><button className="outline-button" onClick={() => void loadTab(tab)}>Verileri yenile</button></div>
-        </header>
-        {error && <div className="alert error-alert" role="alert">{error}<button onClick={() => setError("")}>Kapat</button></div>}
-        {notice && <div className="alert success-alert" role="status">{notice}<button onClick={() => setNotice("")}>Kapat</button></div>}
-        {tab !== "corporate-wallets" && tab !== "dashboard" && tab !== "activity" && <Toolbar tab={tab} query={query} setQuery={setQuery} filter={filter} setFilter={setFilter} search={() => void loadTab(tab)} />}
-        {tab === "driver-wallets" ? <DriverPaymentAccountAdmin request={request} /> : null}
-        {loading ? <LoadingRows /> : tab === "corporate-wallets" ? <CorporateWalletAdmin request={request} items={data?.items || []} /> : tab === "driver-wallets" ? <DriverWalletAccounts data={data as any} onOpenDriver={id => void openDetail("driver", id)} onPage={offset => void loadTab(tab, offset)} /> : <PanelContent tab={tab} data={data} openDetail={openDetail} onProcessDeletion={handleProcessDeletionRequest} />}
-      </section>
-      {detail && detailKind && <DetailDrawer kind={detailKind} data={detail} close={() => { setDetail(null); if (tab === "driver-wallets") void loadTab(tab, data?.offset || 0); }} note={actionNote} setNote={setActionNote} busy={actionBusy} mutate={mutate} request={request} refresh={() => void openDetail(detailKind, detailId(detailKind, detail))} />}
-    </main>
+          </div>
+          <nav aria-label="Yönetim menüsü">
+            {navigation.map(item => (
+              <button
+                key={item.id}
+                className={tab === item.id ? "active" : ""}
+                onClick={() => {
+                  loadGeneration.current++;
+                  setData(null);
+                  setLoading(true);
+                  setQuery("");
+                  setFilter(item.id === "corporate-applications" ? "pending" : "");
+                  setTab(item.id);
+                  setMobileMenuOpen(false);
+                  if (item.id === tab) void loadTab(item.id);
+                }}
+              >
+                <i>{item.mark}</i>
+                {item.label}
+                {item.id === "corporate-applications" && pendingCorporateCount ? <b>{pendingCorporateCount}</b> : null}
+                {item.id === "complaints" && (dashboardStats?.counts?.openComplaints || data?.counts?.openComplaints) ? <b>{dashboardStats?.counts?.openComplaints || data?.counts?.openComplaints}</b> : null}
+              </button>
+            ))}
+          </nav>
+          <div className="operator">
+            <span>{initials(adminEmail)}</span>
+            <div>{adminEmail}<small>Sistem yöneticisi</small></div>
+            <button onClick={logout} aria-label="Çıkış yap">Çıkış</button>
+          </div>
+        </aside>
+        <section className="workspace">
+          <header className="topbar">
+            <div><p>{new Intl.DateTimeFormat("tr-TR", { dateStyle: "full" }).format(new Date())}</p><h1>{navigation.find(item => item.id === tab)?.label}</h1></div>
+            <div className="top-actions"><span className="api-state"><i /> API bağlı</span><button className="outline-button" onClick={() => void loadTab(tab)}>Verileri yenile</button></div>
+          </header>
+          {error && <div className="alert error-alert" role="alert">{error}<button onClick={() => setError("")}>Kapat</button></div>}
+          {notice && <div className="alert success-alert" role="status">{notice}<button onClick={() => setNotice("")}>Kapat</button></div>}
+          {tab !== "corporate-wallets" && tab !== "dashboard" && tab !== "activity" && <Toolbar tab={tab} query={query} setQuery={setQuery} filter={filter} setFilter={setFilter} search={() => void loadTab(tab)} />}
+          {tab === "driver-wallets" ? <DriverPaymentAccountAdmin request={request} /> : null}
+          {loading ? <LoadingRows /> : tab === "corporate-wallets" ? <CorporateWalletAdmin request={request} items={data?.items || []} /> : tab === "driver-wallets" ? <DriverWalletAccounts data={data as any} onOpenDriver={id => void openDetail("driver", id)} onPage={offset => void loadTab(tab, offset)} /> : <PanelContent tab={tab} data={data} openDetail={openDetail} onProcessDeletion={handleProcessDeletionRequest} />}
+        </section>
+        {detail && detailKind && <DetailDrawer kind={detailKind} data={detail} close={() => { setDetail(null); if (tab === "driver-wallets") void loadTab(tab, data?.offset || 0); }} note={actionNote} setNote={setActionNote} busy={actionBusy} mutate={mutate} request={request} refresh={() => void openDetail(detailKind, detailId(detailKind, detail))} />}
+      </main>
+    </div>
   );
 }
 
@@ -560,10 +627,10 @@ function AccountDeletionsTable({ items, onProcess }: { items: AnyRecord[]; onPro
             <td>
               {isPending ? (
                 isSelected ? (
-                  <div style={{ display: "flex", gap: "6px" }}>
+                  <div className="account-deletion-actions" style={{ display: "flex", gap: "6px", flexWrap: "wrap", minWidth: 220 }}>
                     <button
                       className="primary-button"
-                      style={{ background: "#dc2626", borderColor: "#dc2626", padding: "4px 8px", fontSize: "12px" }}
+                      style={{ background: "#dc2626", borderColor: "#dc2626", padding: "6px 10px", fontSize: "12px", minHeight: "36px" }}
                       disabled={busyId === req.id}
                       onClick={() => void handleAction(req.id, "approve")}
                     >
@@ -571,7 +638,7 @@ function AccountDeletionsTable({ items, onProcess }: { items: AnyRecord[]; onPro
                     </button>
                     <button
                       className="outline-button"
-                      style={{ padding: "4px 8px", fontSize: "12px" }}
+                      style={{ padding: "6px 10px", fontSize: "12px", minHeight: "36px" }}
                       disabled={busyId === req.id}
                       onClick={() => void handleAction(req.id, "reject")}
                     >
@@ -579,7 +646,7 @@ function AccountDeletionsTable({ items, onProcess }: { items: AnyRecord[]; onPro
                     </button>
                     <button
                       className="outline-button"
-                      style={{ padding: "4px 8px", fontSize: "12px" }}
+                      style={{ padding: "6px 10px", fontSize: "12px", minHeight: "36px" }}
                       onClick={() => setSelectedId(null)}
                     >
                       İptal
@@ -609,7 +676,20 @@ function Activity({ data }: { data: AnyRecord }) {
   return <><div className="metric-grid compact-metrics">{[["Toplam kullanıcı", totals.users], ["Toplam ilan", totals.loads], ["Mesaj", totals.messages], ["Teklif", totals.offers], ["Şikâyet", totals.complaints]].map(([title, value]) => <article key={String(title)}><p>{title}</p><strong>{String(value ?? 0)}</strong></article>)}</div><Table headings={["Zaman", "Hareket", "Aktör", "Kayıt", "Ayrıntı"]}>{(data.items || []).map((event: AnyRecord) => <tr key={`${event.id}-${event.type}`}><td>{formatDate(event.createdAt)}</td><td><b>{event.type}</b></td><td>{event.actorId || "system"}</td><td><code>{event.aggregateId?.slice(0, 12) || "—"}</code></td><td className="activity-detail">{event.payload ? JSON.stringify(event.payload) : "—"}</td></tr>)}</Table></>;
 }
 
-function Table({ headings, children }: { headings: string[]; children: React.ReactNode }) { return <div className="table-card"><table><thead><tr>{headings.map(title => <th key={title}>{title}</th>)}</tr></thead><tbody>{children}</tbody></table></div>; }
+function Table({ headings, children }: { headings: string[]; children: React.ReactNode }) {
+  return (
+    <div className="table-card">
+      <div className="table-scroll-container">
+        <table>
+          <thead>
+            <tr>{headings.map(title => <th key={title}>{title}</th>)}</tr>
+          </thead>
+          <tbody>{children}</tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
 function Person({ user }: { user: AnyRecord }) { return <div className="person"><span>{initials(user.name)}</span><div><b>{user.name}</b><small>{user.email}</small></div></div>; }
 function Empty({ title, compact = false }: { title: string; compact?: boolean }) { return <div className={`empty ${compact ? "compact" : ""}`}><span>✓</span><b>{title}</b><small>Filtreleri değiştirerek tekrar deneyebilirsiniz.</small></div>; }
 

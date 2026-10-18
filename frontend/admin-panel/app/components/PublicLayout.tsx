@@ -18,7 +18,7 @@ export default function PublicLayout({
   return (
     <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", background: "#f8faf8", color: "#17221b", fontFamily: "system-ui, -apple-system, sans-serif" }}>
       {/* Top Navigation */}
-      <header style={{ background: "#14261c", color: "#eff5f0", borderBottom: "1px solid #243b2e", padding: "16px 24px" }}>
+      <header style={{ background: "#14261c", color: "#eff5f0", borderBottom: "1px solid #243b2e", padding: "16px clamp(14px, 4vw, 24px)" }}>
         <div style={{ maxWidth: 960, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 16 }}>
           <a href="/" style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none", color: "#eff5f0" }}>
             <span style={{ display: "grid", placeItems: "center", width: 34, height: 34, borderRadius: 10, background: "#dffa70", color: "#14261c", fontWeight: 800, fontSize: 18 }}>
@@ -40,9 +40,9 @@ export default function PublicLayout({
       </header>
 
       {/* Main Content Area */}
-      <main style={{ maxWidth: 960, width: "100%", margin: "32px auto", padding: "0 24px", flex: 1 }}>
-        <div style={{ background: "#ffffff", borderRadius: 16, border: "1px solid #e3e8e4", padding: "36px 40px", boxShadow: "0 10px 30px rgba(20,38,28,0.04)" }}>
-          <div style={{ borderBottom: "1px solid #edf2ee", paddingBottom: 24, marginBottom: 28 }}>
+      <main style={{ maxWidth: 960, width: "100%", margin: "24px auto", padding: "0 clamp(12px, 3.5vw, 24px)", flex: 1, boxSizing: "border-box" }}>
+        <div style={{ background: "#ffffff", borderRadius: 16, border: "1px solid #e3e8e4", padding: "clamp(20px, 4vw, 36px) clamp(16px, 4vw, 40px)", boxShadow: "0 10px 30px rgba(20,38,28,0.04)" }}>
+          <div style={{ borderBottom: "1px solid #edf2ee", paddingBottom: 20, marginBottom: 24 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
               <span style={{ fontSize: 11, background: "#edf8f0", color: "#225e3e", padding: "3px 10px", borderRadius: 20, fontWeight: 700, border: "1px solid #cee8d6" }}>
                 Sürüm {version}
@@ -51,7 +51,7 @@ export default function PublicLayout({
                 Yürürlük / Son Güncelleme: {updatedAt}
               </span>
             </div>
-            <h1 style={{ fontSize: 28, fontWeight: 800, color: "#14261c", margin: "4px 0 8px", letterSpacing: "-0.03em" }}>
+            <h1 style={{ fontSize: "clamp(22px, 4.5vw, 28px)", fontWeight: 800, color: "#14261c", margin: "4px 0 8px", letterSpacing: "-0.03em" }}>
               {title}
             </h1>
             {subtitle && (
@@ -68,7 +68,7 @@ export default function PublicLayout({
       </main>
 
       {/* Footer */}
-      <footer style={{ background: "#ffffff", borderTop: "1px solid #e3e8e4", padding: "28px 24px", marginTop: "auto", fontSize: 12, color: "#667069" }}>
+      <footer style={{ background: "#ffffff", borderTop: "1px solid #e3e8e4", padding: "24px clamp(14px, 4vw, 24px)", marginTop: "auto", fontSize: 12, color: "#667069" }}>
         <div style={{ maxWidth: 960, margin: "0 auto", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 16 }}>
           <div>
             <div style={{ fontWeight: 700, color: "#17221b" }}>Feti Akşit Limited Şirketi [DOĞRULAMA GEREKLİ: Resmî Ticaret Sicil Unvanı Kontrolü]</div>
