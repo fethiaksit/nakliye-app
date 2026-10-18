@@ -159,6 +159,9 @@ func (a *API) adminWalletAdjustment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body.Description = strings.TrimSpace(body.Description)
+	if strings.TrimSpace(body.IdempotencyKey) == "" {
+		body.IdempotencyKey = strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	}
 	if len(body.IdempotencyKey) < 8 || len(body.IdempotencyKey) > 128 || body.Description == "" || len(body.Description) > 1000 {
 		badRequest(w, "işlem anahtarı (8–128 karakter) ve açıklama zorunludur")
 		return

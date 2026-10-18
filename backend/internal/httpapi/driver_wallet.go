@@ -92,6 +92,9 @@ func (a *API) adminDriverTopup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body.Reference = strings.TrimSpace(body.Reference)
+	if body.Reference == "" {
+		body.Reference = strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	}
 	if body.AmountCents <= 0 || body.AmountCents > models.MaxWalletCents || len(body.Reference) < 3 || len(body.Reference) > 200 {
 		badRequest(w, "Geçerli tutar ve ödeme referansı girin.")
 		return

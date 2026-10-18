@@ -1037,3 +1037,37 @@ func (s *RedisStore) ListAccountDeletionRequests(status string) ([]models.Accoun
 	})
 	return items, nil
 }
+
+type IdempotencyResponse struct {
+	BodyHash    string `json:"bodyHash"`
+	Status      int    `json:"status"`
+	ContentType string `json:"contentType"`
+	Body        []byte `json:"body"`
+}
+
+func (s *RedisStore) GetIdempotencyResponse(key string) (*IdempotencyResponse, error) {
+	if s == nil || s.client == nil || key == "" {
+		return nil, redis.Nil
+	}
+	b, err := s.client.Get(s.ctx, "idempotency:"+key).Bytes()
+	if err != nil {
+		return nil, err
+	}
+	var rec IdempotencyResponse
+	if err := json.Unmarshal(b, &rec); err != nil {
+		return nil, err
+	}
+	return &rec, nil
+}
+
+func (s *RedisStore) SaveIdempotencyResponse(key string, rec IdempotencyResponse, ttl time.Duration) error {
+	if s == nil || s.client == nil || key == "" {
+		return nil
+	}
+	b, err := json.Marshal(rec)
+	if err != nil {
+		return err
+	}
+	return s.client.Set(s.ctx, "idempotency:"+key, b, ttl).Err()
+}
+

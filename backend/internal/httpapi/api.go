@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
@@ -276,7 +277,7 @@ func (a *API) Routes() http.Handler {
 	mux.Handle("GET /api/driver/documents", a.auth(http.HandlerFunc(a.listDriverDocuments)))
 	mux.Handle("POST /api/driver/documents", a.auth(http.HandlerFunc(a.uploadDriverDocument)))
 	mux.Handle("GET /api/driver/documents/{id}", a.auth(http.HandlerFunc(a.driverDocument)))
-	return requestID(a.recovery(a.maintenance(logging(cors(gzipMiddleware(mux))))))
+	return requestID(securityHeaders(a.recovery(a.maintenance(logging(cors(a.globalRateLimit(a.idempotency(gzipMiddleware(mux)))))))))
 }
 func (a *API) health(w http.ResponseWriter, r *http.Request) {
 	if err := a.store.Ping(); err != nil {
@@ -306,6 +307,16 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
 	req.Phone = normalizePhone(req.Phone)
+	if req.Email != "" {
+		if !a.allowRate(w, "register_email:"+req.Email, 5, time.Hour, "bu e-posta ile çok fazla kayıt denemesi yapıldı; lütfen daha sonra tekrar deneyin") {
+			return
+		}
+	}
+	if req.Phone != "" {
+		if !a.allowRate(w, "register_phone:"+req.Phone, 5, time.Hour, "bu telefon numarası ile çok fazla kayıt denemesi yapıldı; lütfen daha sonra tekrar deneyin") {
+			return
+		}
+	}
 	if req.Role == models.RoleCustomer && strings.TrimSpace(req.AccountType) == "" {
 		req.AccountType = models.AccountTypeIndividual
 	}
@@ -502,6 +513,10 @@ func (a *API) session(w http.ResponseWriter, u models.User) {
 	jsonResponse(w, 200, map[string]any{"accessToken": access, "refreshToken": refresh, "user": user})
 }
 func (a *API) refresh(w http.ResponseWriter, r *http.Request) {
+	ip := clientIP(r)
+	if !a.allowRate(w, "refresh_ip:"+ip, 30, time.Minute, "çok fazla oturum yenileme denemesi yapıldı; lütfen biraz bekleyin") {
+		return
+	}
 	var req struct {
 		RefreshToken string `json:"refreshToken"`
 	}
@@ -3110,6 +3125,11 @@ func (a *API) uploadConversationAttachment(w http.ResponseWriter, r *http.Reques
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, a.maxUploadBytes+(1<<20))
 	if err := r.ParseMultipartForm(a.maxUploadBytes); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			errorResponse(w, http.StatusRequestEntityTooLarge, "PAYLOAD_TOO_LARGE", "fotoğraf boyutu limiti aşıldı", map[string]any{})
+			return
+		}
 		badRequest(w, "fotoğraf boyutu limiti aşıldı")
 		return
 	}
@@ -3182,6 +3202,11 @@ func (a *API) uploadPhoto(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, a.maxUploadBytes+(1<<20))
 	if e := r.ParseMultipartForm(a.maxUploadBytes); e != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(e, &maxErr) {
+			errorResponse(w, http.StatusRequestEntityTooLarge, "PAYLOAD_TOO_LARGE", "fotoğraf boyutu limiti aşıldı", map[string]any{})
+			return
+		}
 		badRequest(w, "fotoğraf boyutu limiti aşıldı")
 		return
 	}
@@ -3215,6 +3240,11 @@ func (a *API) uploadLoadPhotos(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, (a.maxUploadBytes*5)+(2<<20))
 	if err := r.ParseMultipartForm(a.maxUploadBytes * 5); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			errorResponse(w, http.StatusRequestEntityTooLarge, "PAYLOAD_TOO_LARGE", "fotoğraf boyutu limiti aşıldı", map[string]any{})
+			return
+		}
 		badRequest(w, "fotoğraf boyutu limiti aşıldı")
 		return
 	}
@@ -3646,6 +3676,11 @@ func (a *API) publicUser(u models.User) map[string]any {
 func decode(w http.ResponseWriter, r *http.Request, target any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	if e := json.NewDecoder(r.Body).Decode(target); e != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(e, &maxErr) {
+			errorResponse(w, http.StatusRequestEntityTooLarge, "PAYLOAD_TOO_LARGE", "istek gövdesi boyut sınırını aştı (maksimum 1 MB)", map[string]any{})
+			return false
+		}
 		badRequest(w, "geçersiz istek")
 		return false
 	}
@@ -3787,9 +3822,9 @@ func cors(next http.Handler) http.Handler {
 		if origin != "" && allowed {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Idempotency-Key")
 			w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
-			w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID")
+			w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID, X-Idempotent-Replayed, Retry-After")
 			w.Header().Set("Access-Control-Max-Age", "86400")
 		}
 
@@ -3804,6 +3839,135 @@ func cors(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		h.Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+		if !strings.HasPrefix(r.URL.Path, "/api/photos/") {
+			h.Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+		}
+		if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+			h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (a *API) globalRateLimit(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		if path == "/health" || path == "/api/health" || path == "/health/live" || path == "/health/ready" || path == "/api/health/live" || path == "/api/health/ready" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		ip := clientIP(r)
+		if !a.allowRate(w, "global_ip:"+ip, 300, time.Minute, "çok fazla istek gönderildi; lütfen kısa bir süre bekleyin") {
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+type idempotencyRecorder struct {
+	http.ResponseWriter
+	status      int
+	wroteHeader bool
+	body        bytes.Buffer
+}
+
+func (w *idempotencyRecorder) WriteHeader(status int) {
+	if w.wroteHeader {
+		return
+	}
+	w.status = status
+	w.wroteHeader = true
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *idempotencyRecorder) Write(b []byte) (int, error) {
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
+	}
+	_, _ = w.body.Write(b)
+	return w.ResponseWriter.Write(b)
+}
+
+func (a *API) idempotency(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost && r.Method != http.MethodPut && r.Method != http.MethodPatch && r.Method != http.MethodDelete {
+			next.ServeHTTP(w, r)
+			return
+		}
+		rawKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+		if rawKey == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if len(rawKey) < 8 || len(rawKey) > 128 {
+			badRequest(w, "Idempotency-Key 8 ile 128 karakter arasında olmalıdır")
+			return
+		}
+		ct := strings.ToLower(r.Header.Get("Content-Type"))
+		if strings.HasPrefix(ct, "multipart/form-data") {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		bodyBytes, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+		if err != nil {
+			var maxErr *http.MaxBytesError
+			if errors.As(err, &maxErr) {
+				errorResponse(w, http.StatusRequestEntityTooLarge, "PAYLOAD_TOO_LARGE", "istek gövdesi boyut sınırını aştı (maksimum 1 MB)", map[string]any{})
+				return
+			}
+			badRequest(w, "geçersiz istek gövdesi")
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+
+		bodySum := sha256.Sum256(bodyBytes)
+		bodyHash := hex.EncodeToString(bodySum[:])
+
+		actorScope := clientIP(r)
+		if authHeader := strings.TrimSpace(r.Header.Get("Authorization")); authHeader != "" {
+			authSum := sha256.Sum256([]byte(authHeader))
+			actorScope = hex.EncodeToString(authSum[:16])
+		}
+		scopeHash := sha256.Sum256([]byte(actorScope + "|" + r.Method + "|" + r.URL.Path + "|" + rawKey))
+		storeKey := hex.EncodeToString(scopeHash[:])
+
+		if existing, getErr := a.store.GetIdempotencyResponse(storeKey); getErr == nil && existing != nil {
+			if existing.BodyHash != bodyHash {
+				conflict(w, "Idempotency-Key farklı bir istek gövdesi ile tekrar kullanılamaz")
+				return
+			}
+			if existing.ContentType != "" {
+				w.Header().Set("Content-Type", existing.ContentType)
+			}
+			w.Header().Set("X-Idempotent-Replayed", "true")
+			w.WriteHeader(existing.Status)
+			_, _ = w.Write(existing.Body)
+			return
+		}
+
+		rec := &idempotencyRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+
+		if rec.status >= 200 && rec.status < 300 {
+			_ = a.store.SaveIdempotencyResponse(storeKey, store.IdempotencyResponse{
+				BodyHash:    bodyHash,
+				Status:      rec.status,
+				ContentType: rec.Header().Get("Content-Type"),
+				Body:        rec.body.Bytes(),
+			}, 24*time.Hour)
+		}
+	})
+}
+
 func requestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := uuid.NewString()
@@ -3830,7 +3994,7 @@ func (a *API) maintenance(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if a.maintenanceMode {
 			path := r.URL.Path
-			if path != "/health" && path != "/api/health" && !strings.HasPrefix(path, "/api/admin") {
+			if path != "/health" && path != "/api/health" && path != "/health/live" && path != "/health/ready" && path != "/api/health/live" && path != "/api/health/ready" && !strings.HasPrefix(path, "/api/admin") {
 				errorResponse(w, http.StatusServiceUnavailable, "MAINTENANCE_MODE", "Sistem planlı bakım çalışmasındadır; lütfen daha sonra tekrar deneyin", map[string]any{"service": "nakliye-api", "maintenance": true})
 				return
 			}

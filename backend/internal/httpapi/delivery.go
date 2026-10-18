@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log"
 	"math/big"
@@ -196,6 +197,11 @@ func (a *API) completeDelivery(w http.ResponseWriter, r *http.Request) {
 
 	r.Body = http.MaxBytesReader(w, r.Body, a.maxUploadBytes+(1<<20))
 	if err = r.ParseMultipartForm(a.maxUploadBytes); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			errorResponse(w, http.StatusRequestEntityTooLarge, "PAYLOAD_TOO_LARGE", "teslimat fotoğrafı boyutu limiti aşıldı", map[string]any{})
+			return
+		}
 		badRequest(w, "teslimat fotoğrafı boyutu limiti aşıldı")
 		return
 	}

@@ -141,6 +141,176 @@ func TestSecurityRegressions(t *testing.T) {
 			t.Fatalf("expected invalid image type error, got %s", rec.Body.String())
 		}
 	})
+
+	// 6. Security Headers Verification
+	t.Run("Security Headers Verification", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+		req.Header.Set("X-Forwarded-Proto", "https")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Header().Get("X-Content-Type-Options") != "nosniff" {
+			t.Fatalf("expected X-Content-Type-Options: nosniff, got %q", rec.Header().Get("X-Content-Type-Options"))
+		}
+		if rec.Header().Get("X-Frame-Options") != "DENY" {
+			t.Fatalf("expected X-Frame-Options: DENY, got %q", rec.Header().Get("X-Frame-Options"))
+		}
+		if rec.Header().Get("Referrer-Policy") != "strict-origin-when-cross-origin" {
+			t.Fatalf("expected Referrer-Policy, got %q", rec.Header().Get("Referrer-Policy"))
+		}
+		if !strings.Contains(rec.Header().Get("Strict-Transport-Security"), "max-age=31536000") {
+			t.Fatalf("expected HSTS header on HTTPS, got %q", rec.Header().Get("Strict-Transport-Security"))
+		}
+	})
+
+	// 7. JSON Body Size Limit (1 MB) -> 413 Payload Too Large
+	t.Run("Large JSON Body Rejected With 413", func(t *testing.T) {
+		largeString := strings.Repeat("A", (1<<20)+1024)
+		body := `{"name":"` + largeString + `"}`
+		req := httptest.NewRequest(http.MethodPatch, "/api/me", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+customerA.token)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusRequestEntityTooLarge {
+			t.Fatalf("expected 413 on oversized JSON body, got %d", rec.Code)
+		}
+	})
+
+	// 8. Multipart Upload Body Size Limit -> 413 or 400
+	t.Run("Large Upload Body Rejected", func(t *testing.T) {
+		smallHandler := httpapi.NewWithOptions(redisStore, httpapi.Options{
+			Secret:      jwtSecret,
+			MaxUploadMB: 1,
+			Environment: "test",
+		}).Routes()
+
+		var buf bytes.Buffer
+		writer := multipart.NewWriter(&buf)
+		part, _ := writer.CreateFormFile("photo", "oversized.jpg")
+		_, _ = part.Write(bytes.Repeat([]byte{0xFF, 0xD8, 0xFF, 0xE0}, (600*1024))) // ~2.4 MB > 1 MB limit
+		_ = writer.Close()
+
+		req := httptest.NewRequest(http.MethodPost, "/api/photos", &buf)
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		req.Header.Set("Authorization", "Bearer "+customerA.token)
+		rec := httptest.NewRecorder()
+		smallHandler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusRequestEntityTooLarge && rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 413 or 400 on oversized upload, got %d", rec.Code)
+		}
+	})
+
+	// 9. Idempotency-Key Protection (Replay & Conflict)
+	t.Run("Idempotency Key Prevents Duplicate Execution", func(t *testing.T) {
+		idemKey := "idem-support-req-0001"
+		payload := `{"type":"feedback","subject":"Test Bildirimi","description":"Idempotency testi"}`
+
+		req1 := httptest.NewRequest(http.MethodPost, "/api/complaints", strings.NewReader(payload))
+		req1.Header.Set("Authorization", "Bearer "+customerA.token)
+		req1.Header.Set("Content-Type", "application/json")
+		req1.Header.Set("Idempotency-Key", idemKey)
+		rec1 := httptest.NewRecorder()
+		handler.ServeHTTP(rec1, req1)
+		if rec1.Code != http.StatusCreated {
+			t.Fatalf("expected 201 on first request, got %d: %s", rec1.Code, rec1.Body.String())
+		}
+
+		// Repeat identical request with same Idempotency-Key
+		req2 := httptest.NewRequest(http.MethodPost, "/api/complaints", strings.NewReader(payload))
+		req2.Header.Set("Authorization", "Bearer "+customerA.token)
+		req2.Header.Set("Content-Type", "application/json")
+		req2.Header.Set("Idempotency-Key", idemKey)
+		rec2 := httptest.NewRecorder()
+		handler.ServeHTTP(rec2, req2)
+		if rec2.Code != http.StatusCreated {
+			t.Fatalf("expected 201 replayed status, got %d", rec2.Code)
+		}
+		if rec2.Header().Get("X-Idempotent-Replayed") != "true" {
+			t.Fatalf("expected X-Idempotent-Replayed: true header")
+		}
+		if rec1.Body.String() != rec2.Body.String() {
+			t.Fatalf("replayed body mismatch: %s vs %s", rec1.Body.String(), rec2.Body.String())
+		}
+
+		// Repeat same Idempotency-Key with different payload -> 409 Conflict
+		req3 := httptest.NewRequest(http.MethodPost, "/api/complaints", strings.NewReader(`{"type":"feedback","subject":"Farklı Konu","description":"Farklı gövde"}`))
+		req3.Header.Set("Authorization", "Bearer "+customerA.token)
+		req3.Header.Set("Content-Type", "application/json")
+		req3.Header.Set("Idempotency-Key", idemKey)
+		rec3 := httptest.NewRecorder()
+		handler.ServeHTTP(rec3, req3)
+		if rec3.Code != http.StatusConflict {
+			t.Fatalf("expected 409 when reusing Idempotency-Key with different body, got %d", rec3.Code)
+		}
+	})
+
+	// 10. Driver Isolation & Complaint Isolation (Ek Güvenlik Kontrolü)
+	t.Run("Driver Document Vehicle and Complaint Isolation", func(t *testing.T) {
+		driverA := registerTestDriver(t, handler, "driver_a@example.com", "+905557778899")
+		driverB := registerTestDriver(t, handler, "driver_b@example.com", "+905558889900")
+
+		// Driver A uploads a document
+		docPayload := `{"kind":"src","title":"SRC Belgesi","fileUrl":"https://nakliyego.com/docs/src-a.jpg"}`
+		docReq := httptest.NewRequest(http.MethodPost, "/api/driver/documents", strings.NewReader(docPayload))
+		docReq.Header.Set("Authorization", "Bearer "+driverA.token)
+		docRec := httptest.NewRecorder()
+		handler.ServeHTTP(docRec, docReq)
+		if docRec.Code != http.StatusOK {
+			t.Fatalf("driver A doc upload failed: %d %s", docRec.Code, docRec.Body.String())
+		}
+		docID := parseIDFromJSON(docRec.Body.String())
+
+		// Driver B attempts to read Driver A's document -> 403 Forbidden
+		readDocReq := httptest.NewRequest(http.MethodGet, "/api/driver/documents/"+docID, nil)
+		readDocReq.Header.Set("Authorization", "Bearer "+driverB.token)
+		readDocRec := httptest.NewRecorder()
+		handler.ServeHTTP(readDocRec, readDocReq)
+		if readDocRec.Code != http.StatusForbidden {
+			t.Fatalf("expected 403 when driver B reads driver A document, got %d", readDocRec.Code)
+		}
+
+		// Customer A creates a support/complaint record; Customer B cannot read it -> 403 Forbidden
+		compReq := httptest.NewRequest(http.MethodPost, "/api/complaints", strings.NewReader(`{"type":"feedback","subject":"Özel Şikayet","description":"Gizli detay"}`))
+		compReq.Header.Set("Authorization", "Bearer "+customerA.token)
+		compRec := httptest.NewRecorder()
+		handler.ServeHTTP(compRec, compReq)
+		if compRec.Code != http.StatusCreated {
+			t.Fatalf("complaint create failed: %d", compRec.Code)
+		}
+		compID := parseIDFromJSON(compRec.Body.String())
+
+		readCompReq := httptest.NewRequest(http.MethodGet, "/api/complaints/"+compID, nil)
+		readCompReq.Header.Set("Authorization", "Bearer "+customerB.token)
+		readCompRec := httptest.NewRecorder()
+		handler.ServeHTTP(readCompRec, readCompReq)
+		if readCompRec.Code != http.StatusForbidden {
+			t.Fatalf("expected 403 when customer B reads customer A complaint, got %d", readCompRec.Code)
+		}
+	})
+
+	// 11. Global & Endpoint Rate Limiting -> 429 Too Many Requests
+	t.Run("Rate Limiting Returns 429", func(t *testing.T) {
+		var hit429 bool
+		for i := 0; i < 12; i++ {
+			req := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"email":"ratelimit_target@example.com","password":"wrong"}`))
+			req.Header.Set("X-Real-IP", "203.0.113.55")
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if rec.Code == http.StatusTooManyRequests {
+				hit429 = true
+				if rec.Header().Get("Retry-After") == "" {
+					t.Fatalf("expected Retry-After header on 429")
+				}
+				break
+			}
+		}
+		if !hit429 {
+			t.Fatalf("expected 429 after exceeding account login rate limit")
+		}
+	})
 }
 
 type testSession struct {
@@ -163,6 +333,21 @@ func registerTestCustomer(t *testing.T, handler http.Handler, email, phone strin
 	if token == "" {
 		t.Fatalf("empty token in register response: %s", rec.Body.String())
 	}
+	userID := parseIDFromJSON(rec.Body.String())
+	return testSession{token: token, userID: userID}
+}
+
+func registerTestDriver(t *testing.T, handler http.Handler, email, phone string) testSession {
+	payload := `{"name":"Test Driver","email":"` + email + `","phone":"` + phone + `","password":"Password123!","role":"driver","termsAccepted":true,"termsVersion":"1.0.0"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/register", strings.NewReader(payload))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK && rec.Code != http.StatusCreated {
+		t.Fatalf("driver register failed (%d): %s", rec.Code, rec.Body.String())
+	}
+
+	token := extractTokenFromJSON(rec.Body.String())
 	userID := parseIDFromJSON(rec.Body.String())
 	return testSession{token: token, userID: userID}
 }

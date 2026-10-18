@@ -48,7 +48,13 @@ func (a *API) adminLogin(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &request) {
 		return
 	}
-	emailMatches := hmac.Equal([]byte(strings.ToLower(strings.TrimSpace(request.Email))), []byte(a.adminEmail))
+	adminAcc := strings.ToLower(strings.TrimSpace(request.Email))
+	if adminAcc != "" {
+		if !a.allowRate(w, "admin_login_acc:"+adminAcc, 5, 5*time.Minute, "bu admin hesabı için çok fazla giriş denemesi yapıldı; lütfen 5 dakika sonra tekrar deneyin") {
+			return
+		}
+	}
+	emailMatches := hmac.Equal([]byte(adminAcc), []byte(a.adminEmail))
 	passwordMatches := false
 	if a.adminPasswordHash != "" {
 		passwordMatches = verifyPassword(a.adminPasswordHash, request.Password)
