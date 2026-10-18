@@ -34,12 +34,9 @@ func (s *RedisStore) ListAllUsers() ([]models.User, error) {
 	if err != nil {
 		return nil, err
 	}
-	users := make([]models.User, 0, len(keys))
-	for _, key := range keys {
-		body, getErr := s.client.Get(s.ctx, key).Bytes()
-		if getErr != nil {
-			continue
-		}
+	raws := s.mgetBytes(keys)
+	users := make([]models.User, 0, len(raws))
+	for _, body := range raws {
 		var user models.User
 		if json.Unmarshal(body, &user) == nil && user.ID != "" {
 			users = append(users, user)
@@ -54,15 +51,15 @@ func (s *RedisStore) ListAllCompanies() ([]models.Company, error) {
 	if err != nil {
 		return nil, err
 	}
-	companies := make([]models.Company, 0, len(keys))
+	filtered := make([]string, 0, len(keys))
 	for _, key := range keys {
-		if strings.HasPrefix(key, "company:user:") {
-			continue
+		if !strings.HasPrefix(key, "company:user:") {
+			filtered = append(filtered, key)
 		}
-		body, getErr := s.client.Get(s.ctx, key).Bytes()
-		if getErr != nil {
-			continue
-		}
+	}
+	raws := s.mgetBytes(filtered)
+	companies := make([]models.Company, 0, len(raws))
+	for _, body := range raws {
 		var company models.Company
 		if json.Unmarshal(body, &company) == nil && company.ID != "" {
 			companies = append(companies, company)
@@ -77,12 +74,9 @@ func (s *RedisStore) ListAllLoads() ([]models.Load, error) {
 	if err != nil {
 		return nil, err
 	}
-	loads := make([]models.Load, 0, len(keys))
-	for _, key := range keys {
-		body, getErr := s.client.Get(s.ctx, key).Bytes()
-		if getErr != nil {
-			continue
-		}
+	raws := s.mgetBytes(keys)
+	loads := make([]models.Load, 0, len(raws))
+	for _, body := range raws {
 		var load models.Load
 		if json.Unmarshal(body, &load) == nil && load.ID != "" {
 			load.Status = models.CanonicalLoadStatus(load.Status)
@@ -98,12 +92,9 @@ func (s *RedisStore) ListAllVehicles() ([]models.Vehicle, error) {
 	if err != nil {
 		return nil, err
 	}
-	vehicles := make([]models.Vehicle, 0, len(keys))
-	for _, key := range keys {
-		body, getErr := s.client.Get(s.ctx, key).Bytes()
-		if getErr != nil {
-			continue
-		}
+	raws := s.mgetBytes(keys)
+	vehicles := make([]models.Vehicle, 0, len(raws))
+	for _, body := range raws {
 		var vehicle models.Vehicle
 		if json.Unmarshal(body, &vehicle) == nil && vehicle.ID != "" {
 			vehicles = append(vehicles, vehicle)
@@ -139,10 +130,15 @@ func (s *RedisStore) ListDriverDocuments(driverID string) ([]models.DriverDocume
 	if err != nil {
 		return nil, err
 	}
-	documents := make([]models.DriverDocument, 0, len(ids))
-	for _, id := range ids {
-		document, getErr := s.GetDriverDocument(id)
-		if getErr == nil {
+	keys := make([]string, len(ids))
+	for i, id := range ids {
+		keys[i] = "driver-document:" + id
+	}
+	raws := s.mgetBytes(keys)
+	documents := make([]models.DriverDocument, 0, len(raws))
+	for _, body := range raws {
+		var document models.DriverDocument
+		if json.Unmarshal(body, &document) == nil && document.ID != "" {
 			documents = append(documents, document)
 		}
 	}

@@ -44,9 +44,87 @@ func New(url string) (*RedisStore, error) {
 	if err != nil {
 		return nil, err
 	}
+	if opts.PoolSize <= 0 {
+		opts.PoolSize = 50
+	}
+	if opts.MinIdleConns <= 0 {
+		opts.MinIdleConns = 5
+	}
+	if opts.DialTimeout <= 0 {
+		opts.DialTimeout = 3 * time.Second
+	}
+	if opts.ReadTimeout <= 0 {
+		opts.ReadTimeout = 3 * time.Second
+	}
+	if opts.WriteTimeout <= 0 {
+		opts.WriteTimeout = 3 * time.Second
+	}
+	if opts.PoolTimeout <= 0 {
+		opts.PoolTimeout = 4 * time.Second
+	}
+	if opts.ConnMaxIdleTime <= 0 {
+		opts.ConnMaxIdleTime = 5 * time.Minute
+	}
 	return &RedisStore{client: redis.NewClient(opts), ctx: context.Background()}, nil
 }
-func (s *RedisStore) Ping() error { return s.client.Ping(s.ctx).Err() }
+
+func (s *RedisStore) Ping() error {
+	ctx, cancel := context.WithTimeout(s.ctx, 2*time.Second)
+	defer cancel()
+	return s.client.Ping(ctx).Err()
+}
+
+func (s *RedisStore) PoolStats() *redis.PoolStats {
+	if s == nil || s.client == nil {
+		return nil
+	}
+	return s.client.PoolStats()
+}
+
+func (s *RedisStore) mgetBytes(keys []string) [][]byte {
+	if len(keys) == 0 {
+		return nil
+	}
+	const chunkSize = 250
+	out := make([][]byte, 0, len(keys))
+	for start := 0; start < len(keys); start += chunkSize {
+		end := start + chunkSize
+		if end > len(keys) {
+			end = len(keys)
+		}
+		vals, err := s.client.MGet(s.ctx, keys[start:end]...).Result()
+		if err != nil {
+			continue
+		}
+		for _, val := range vals {
+			if str, ok := val.(string); ok && str != "" {
+				out = append(out, []byte(str))
+			}
+		}
+	}
+	return out
+}
+
+func (s *RedisStore) getLoadsByIDs(ids []string) []models.Load {
+	if len(ids) == 0 {
+		return nil
+	}
+	keys := make([]string, len(ids))
+	for i, id := range ids {
+		keys[i] = "load:" + id
+	}
+	raws := s.mgetBytes(keys)
+	loads := make([]models.Load, 0, len(raws))
+	for _, b := range raws {
+		var l models.Load
+		if json.Unmarshal(b, &l) == nil && l.ID != "" {
+			l.Status = models.CanonicalLoadStatus(l.Status)
+			loads = append(loads, l)
+		}
+	}
+	return loads
+}
+
 func (s *RedisStore) SaveLoad(load models.Load) error {
 	b, err := json.Marshal(load)
 	if err != nil {
@@ -55,6 +133,12 @@ func (s *RedisStore) SaveLoad(load models.Load) error {
 	pipe := s.client.TxPipeline()
 	pipe.Set(s.ctx, "load:"+load.ID, b, 0)
 	pipe.ZAdd(s.ctx, "loads", redis.Z{Score: float64(load.CreatedAt.Unix()), Member: load.ID})
+	if load.CustomerID != "" {
+		pipe.ZAdd(s.ctx, "loads:customer:"+load.CustomerID, redis.Z{Score: float64(load.CreatedAt.Unix()), Member: load.ID})
+	}
+	if load.AssignedDriver != "" {
+		pipe.ZAdd(s.ctx, "loads:driver:"+load.AssignedDriver, redis.Z{Score: float64(load.CreatedAt.Unix()), Member: load.ID})
+	}
 	_, err = pipe.Exec(s.ctx)
 	return err
 }
@@ -76,9 +160,8 @@ func (s *RedisStore) ListOpenLoads() ([]models.Load, error) {
 		return nil, err
 	}
 	loads := make([]models.Load, 0)
-	for _, id := range ids {
-		l, e := s.GetLoad(id)
-		if e == nil && l.Status == models.LoadStatusPublished && l.DeletedAt == nil {
+	for _, l := range s.getLoadsByIDs(ids) {
+		if l.Status == models.LoadStatusPublished && l.DeletedAt == nil {
 			loads = append(loads, l)
 		}
 	}
@@ -90,9 +173,8 @@ func (s *RedisStore) ListLoads(customerID, driverID string, filter LoadFilter, o
 		return nil, 0, err
 	}
 	all := make([]models.Load, 0)
-	for _, id := range ids {
-		l, e := s.GetLoad(id)
-		if e != nil || l.DeletedAt != nil {
+	for _, l := range s.getLoadsByIDs(ids) {
+		if l.DeletedAt != nil {
 			continue
 		}
 		if customerID != "" && l.CustomerID != customerID {
@@ -126,9 +208,8 @@ func (s *RedisStore) ListDriverLoads(driverID string, filter LoadFilter, offset,
 		return nil, 0, err
 	}
 	all := make([]models.Load, 0, len(ids))
-	for _, id := range ids {
-		load, getErr := s.GetLoad(id)
-		if getErr != nil || load.DeletedAt != nil {
+	for _, load := range s.getLoadsByIDs(ids) {
+		if load.DeletedAt != nil {
 			continue
 		}
 		offerable := load.Status == models.LoadStatusPublished
@@ -318,10 +399,15 @@ func (s *RedisStore) ListOffers(loadID, driverID string) ([]models.Offer, error)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]models.Offer, 0, len(ids))
-	for _, id := range ids {
-		o, e := s.GetOffer(id)
-		if e == nil {
+	keys := make([]string, len(ids))
+	for i, id := range ids {
+		keys[i] = "offer:" + id
+	}
+	raws := s.mgetBytes(keys)
+	out := make([]models.Offer, 0, len(raws))
+	for _, b := range raws {
+		var o models.Offer
+		if json.Unmarshal(b, &o) == nil && o.ID != "" {
 			out = append(out, o)
 		}
 	}
