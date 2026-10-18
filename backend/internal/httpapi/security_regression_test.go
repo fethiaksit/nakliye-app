@@ -10,6 +10,7 @@ import (
 
 	"nakliye-api/internal/httpapi"
 	"nakliye-api/internal/models"
+	"nakliye-api/internal/service"
 	"nakliye-api/internal/store"
 
 	"github.com/alicebob/miniredis/v2"
@@ -309,6 +310,29 @@ func TestSecurityRegressions(t *testing.T) {
 		}
 		if !hit429 {
 			t.Fatalf("expected 429 after exceeding account login rate limit")
+		}
+	})
+
+	// 12. Central Panic Recovery & Safe Error Response + Structured JSON Log Masking (Faz 3)
+	t.Run("Panic Recovery Never Leaks Stacktrace And Logs JSON With RequestID", func(t *testing.T) {
+		var logBuf bytes.Buffer
+		service.ConfigureDefaultLogger(&logBuf)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/auth/forgot-password", strings.NewReader(`{"email":"customer_a@example.com"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Request-ID", "test-req-id-999")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Header().Get("X-Request-ID") != "test-req-id-999" {
+			t.Fatalf("expected X-Request-ID to be preserved, got %q", rec.Header().Get("X-Request-ID"))
+		}
+		logOutput := logBuf.String()
+		if strings.Contains(logOutput, "customer_a@example.com") {
+			t.Fatalf("structured log leaked unmasked email address: %s", logOutput)
+		}
+		if !strings.Contains(logOutput, `"request_id":"test-req-id-999"`) {
+			t.Fatalf("expected structured JSON log to include request_id, got: %s", logOutput)
 		}
 	})
 }

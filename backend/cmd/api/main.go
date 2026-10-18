@@ -1,52 +1,60 @@
 package main
 
 import (
-	"log"
+	"log/slog"
 	"nakliye-api/internal/config"
 	"nakliye-api/internal/httpapi"
+	"nakliye-api/internal/service"
 	"nakliye-api/internal/store"
 	"net"
 	"net/http"
+	"os"
 )
 
 func main() {
+	logger := service.ConfigureDefaultLogger(os.Stdout)
 	cfg := config.Load()
 	if err := cfg.Validate(); err != nil {
-		log.Fatalf("Configuration error: %v", err)
+		logger.Error("configuration_validation_failed", "error", err.Error())
+		os.Exit(1)
 	}
-	log.Printf("Environment: %s", cfg.Environment)
+	logger.Info("service_configured", "config", cfg.SafeSummary())
 	if cfg.MapsKeyError != "" {
-		log.Printf("[MAPS CONFIG] provider=google server key configured: false; reason=%s", cfg.MapsKeyError)
+		logger.Warn("maps_config_incomplete", "provider", "google", "configured", false, "reason", cfg.MapsKeyError)
 	} else {
-		log.Printf("[MAPS CONFIG] provider=google server key configured: true")
+		logger.Info("maps_config_ready", "provider", "google", "configured", true)
 	}
 	s, err := store.New(cfg.RedisURL)
 	if err != nil {
-		log.Fatal(err)
+		logger.Error("redis_client_init_failed", "error", service.SanitizeLogString(err.Error()))
+		os.Exit(1)
 	}
 	if err = s.Ping(); err != nil {
-		log.Fatalf("Redis'e bağlanılamadı: %v", err)
+		logger.Error("redis_ping_failed", "error", service.SanitizeLogString(err.Error()))
+		os.Exit(1)
 	}
 	if err = s.MigrateWalletPolicy(); err != nil {
-		log.Fatalf("Cüzdan şema güncellemesi: %v", err)
+		logger.Error("wallet_schema_migration_failed", "error", service.SanitizeLogString(err.Error()))
+		os.Exit(1)
 	}
-	log.Printf("Server listening on http://0.0.0.0:%s (environment=%s)", cfg.Port, cfg.Environment)
+	logger.Info("server_starting", "addr", "0.0.0.0:"+cfg.Port, "environment", cfg.Environment)
 	if cfg.LANHost != "" {
-		log.Printf("LAN access: http://%s:%s", cfg.LANHost, cfg.Port)
+		logger.Info("lan_access_enabled", "url", "http://"+cfg.LANHost+":"+cfg.Port)
 	}
 	// On macOS, ListenAndServe's generic "tcp" network may produce an IPv6-only
 	// socket. Expo Go and physical clients reach this service through an IPv4 LAN
 	// address, so force tcp4 instead of relying on platform dual-stack defaults.
 	listener, err := net.Listen("tcp4", "0.0.0.0:"+cfg.Port)
 	if err != nil {
-		log.Fatal(err)
+		logger.Error("tcp_listen_failed", "error", err.Error())
+		os.Exit(1)
 	}
 	if cfg.ResendAPIKey != "" {
-		log.Printf("[EMAIL CONFIG] provider=resend configured: true from=%s", cfg.ResendFromEmail)
+		logger.Info("email_config_ready", "provider", "resend", "configured", true, "from_email", cfg.ResendFromEmail)
 	} else {
-		log.Printf("[EMAIL CONFIG] provider=resend configured: false (RESEND_API_KEY boş)")
+		logger.Warn("email_config_incomplete", "provider", "resend", "configured", false)
 	}
-	log.Fatal(http.Serve(listener, httpapi.NewWithOptions(s, httpapi.Options{
+	if err := http.Serve(listener, httpapi.NewWithOptions(s, httpapi.Options{
 		Secret:                 cfg.JWTSecret,
 		GoogleMapsServerAPIKey: cfg.GoogleMapsServerAPIKey,
 		MapsKeyError:           cfg.MapsKeyError,
@@ -63,5 +71,8 @@ func main() {
 		Environment:            cfg.Environment,
 		AppVersion:             cfg.AppVersion,
 		MaintenanceMode:        cfg.MaintenanceMode,
-	}).Routes()))
+	}).Routes()); err != nil {
+		slog.Error("server_stopped", "error", err.Error())
+		os.Exit(1)
+	}
 }

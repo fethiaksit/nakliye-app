@@ -18,6 +18,7 @@ import (
 	"golang.org/x/crypto/argon2"
 	"io"
 	"log"
+	"log/slog"
 	"mime/multipart"
 	"nakliye-api/internal/models"
 	"nakliye-api/internal/service"
@@ -320,38 +321,39 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 	if req.Role == models.RoleCustomer && strings.TrimSpace(req.AccountType) == "" {
 		req.AccountType = models.AccountTypeIndividual
 	}
-	log.Printf("[REGISTER START]\nemail=%s\nphone=%s", req.Email, req.Phone)
+	reqID := service.RequestID(r.Context())
+	slog.Info("register_started", "request_id", reqID, "email", req.Email, "phone", req.Phone)
 
 	// Public registration intentionally permits only the two mobile roles.
 	// A corporate customer remains a customer role and uses the same auth flow.
 	if strings.TrimSpace(req.Name) == "" || !strings.Contains(req.Email, "@") || !validTurkishPhone(req.Phone) || len(req.Password) < 8 || (req.Role != models.RoleCustomer && req.Role != models.RoleDriver) {
-		log.Printf("[REGISTER DB ERROR]\nstep=validation\nerror=ad, gecerli e-posta ve telefon, en az 8 karakter sifre ve rol zorunludur")
+		slog.Warn("register_validation_failed", "request_id", reqID, "step", "validation")
 		badRequest(w, "ad, geçerli e-posta ve telefon, en az 8 karakter şifre ve rol zorunludur")
 		return
 	}
 	if req.Role == models.RoleCustomer && !models.ValidCustomerAccountType(req.AccountType) || req.Role == models.RoleDriver && req.AccountType != "" {
-		log.Printf("[REGISTER DB ERROR]\nstep=validation\nerror=gecerli hesap turu zorunludur")
+		slog.Warn("register_validation_failed", "request_id", reqID, "step", "account_type")
 		badRequest(w, "geçerli hesap türü zorunludur")
 		return
 	}
 	if req.AccountType == models.AccountTypeCorporate && strings.TrimSpace(req.CompanyName) == "" {
-		log.Printf("[REGISTER DB ERROR]\nstep=validation\nerror=kurumsal hesap icin firma adi zorunludur")
+		slog.Warn("register_validation_failed", "request_id", reqID, "step", "company_name")
 		badRequest(w, "kurumsal hesap için firma adı zorunludur")
 		return
 	}
 	if _, e := a.store.GetUserByEmail(req.Email); e == nil {
-		log.Printf("[REGISTER DB ERROR]\nstep=check_email\nerror=bu e-posta zaten kayitli")
+		slog.Warn("register_conflict", "request_id", reqID, "step", "check_email")
 		conflict(w, "bu e-posta zaten kayıtlı")
 		return
 	}
 	if _, e := a.store.GetUserByPhone(req.Phone); e == nil {
-		log.Printf("[REGISTER DB ERROR]\nstep=check_phone\nerror=bu telefon numarasi zaten kayitli")
+		slog.Warn("register_conflict", "request_id", reqID, "step", "check_phone")
 		conflict(w, "bu telefon numarası zaten kayıtlı")
 		return
 	}
 	hash, err := hashPassword(req.Password)
 	if err != nil {
-		log.Printf("[REGISTER DB ERROR]\nstep=hash_password\nerror=%v", err)
+		slog.Error("register_hash_failed", "request_id", reqID, "error", err.Error())
 		serverError(w, err)
 		return
 	}
@@ -411,11 +413,11 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 		createErr = a.store.CreateUser(u)
 	}
 	if errors.Is(createErr, store.ErrUserExists) {
-		log.Printf("[REGISTER DB ERROR]\nstep=db_insert\nerror=user already exists")
+		slog.Warn("register_conflict", "request_id", reqID, "step", "db_insert")
 		conflict(w, "e-posta veya telefon numarası zaten kayıtlı")
 		return
 	} else if createErr != nil {
-		log.Printf("[REGISTER DB ERROR]\nstep=db_insert\nerror=%v", createErr)
+		slog.Error("register_db_error", "request_id", reqID, "error", service.SanitizeLogString(createErr.Error()))
 		serverError(w, createErr)
 		return
 	}
@@ -431,9 +433,7 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:        now,
 	})
 
-	log.Printf("[REGISTER USER CREATED]\nuser_id=%s", u.ID)
-	log.Printf("[REGISTER PROFILE CREATED]\nuser_id=%s", u.ID)
-	log.Printf("[REGISTER COMMIT SUCCESS]\nuser_id=%s", u.ID)
+	slog.Info("register_completed", "request_id", reqID, "user_id", u.ID, "role", u.Role)
 
 	a.session(w, u)
 }
@@ -567,21 +567,22 @@ func (a *API) forgotPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	reqID := service.RequestID(r.Context())
 	// Güvenlik: Kullanıcının var olup olmadığını dışarı sızdırma.
 	u, err := a.store.GetUserByEmail(email)
 	if err != nil {
-		log.Printf("[PASSWORD RESET] User lookup failed email=%s: %v", email, err)
+		slog.Warn("password_reset_user_lookup_failed", "request_id", reqID, "email", email)
 		jsonResponse(w, http.StatusOK, map[string]any{"success": true, "message": genericPasswordResetMessage})
 		return
 	}
 	if accountStatus(u) != models.AccountStatusActive {
-		log.Printf("[PASSWORD RESET] User account not active email=%s user_id=%s status=%s", email, u.ID, accountStatus(u))
+		slog.Warn("password_reset_account_inactive", "request_id", reqID, "email", email, "user_id", u.ID, "status", accountStatus(u))
 		jsonResponse(w, http.StatusOK, map[string]any{"success": true, "message": genericPasswordResetMessage})
 		return
 	}
 	userRole := strings.TrimSpace(strings.ToLower(u.Role))
 	if userRole != models.RoleCustomer && userRole != models.RoleCorporate && userRole != models.RoleDriver {
-		log.Printf("[PASSWORD RESET] Unsupported role email=%s user_id=%s role=%s", email, u.ID, u.Role)
+		slog.Warn("password_reset_unsupported_role", "request_id", reqID, "email", email, "user_id", u.ID, "role", u.Role)
 		jsonResponse(w, http.StatusOK, map[string]any{"success": true, "message": genericPasswordResetMessage})
 		return
 	}
@@ -591,7 +592,7 @@ func (a *API) forgotPassword(w http.ResponseWriter, r *http.Request) {
 	if reqRole != "" {
 		roleMatches := userRole == reqRole || (reqRole == models.RoleCustomer && userRole == models.RoleCorporate)
 		if !roleMatches {
-			log.Printf("[PASSWORD RESET] Role mismatch email=%s user_id=%s userRole=%s reqRole=%s", email, u.ID, userRole, reqRole)
+			slog.Warn("password_reset_role_mismatch", "request_id", reqID, "email", email, "user_id", u.ID, "user_role", userRole, "req_role", reqRole)
 			jsonResponse(w, http.StatusOK, map[string]any{"success": true, "message": genericPasswordResetMessage})
 			return
 		}
@@ -621,13 +622,13 @@ func (a *API) forgotPassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := a.emailSender.SendPasswordResetCode(r.Context(), email, code); err != nil {
-		log.Printf("[PASSWORD RESET EMAIL ERROR] user_id=%s error=%v", u.ID, err)
+		slog.Error("password_reset_email_failed", "request_id", reqID, "user_id", u.ID, "error", service.SanitizeLogString(err.Error()))
 		// Kullanıcıya teknik ayrıntı veya gizli bilgi sızdırmadan genel yanıt ver
 		jsonResponse(w, http.StatusOK, map[string]any{"success": true, "message": genericPasswordResetMessage})
 		return
 	}
 
-	log.Printf("[PASSWORD RESET SUCCESS] email=%s user_id=%s role=%s", email, u.ID, u.Role)
+	slog.Info("password_reset_code_dispatched", "request_id", reqID, "email", email, "user_id", u.ID, "role", u.Role)
 	jsonResponse(w, http.StatusOK, map[string]any{"success": true, "message": genericPasswordResetMessage})
 }
 
@@ -3717,7 +3718,7 @@ func tooManyRequests(w http.ResponseWriter, message string, retryAfterSeconds in
 }
 func (a *API) serverError(w http.ResponseWriter, r *http.Request, e error) {
 	reqID := w.Header().Get("X-Request-ID")
-	log.Printf("request_id=%s unexpected_api_error=%q", reqID, e)
+	slog.Error("unexpected_api_error", "request_id", reqID, "error", service.SanitizeLogString(fmt.Sprintf("%v", e)))
 	if a.sentry != nil && a.sentry.Enabled() {
 		tags := map[string]string{
 			"requestId": reqID,
@@ -3733,7 +3734,7 @@ func (a *API) serverError(w http.ResponseWriter, r *http.Request, e error) {
 	errorResponse(w, http.StatusInternalServerError, "INTERNAL_ERROR", "sunucu hatası", map[string]any{})
 }
 func serverError(w http.ResponseWriter, e error) {
-	log.Printf("request_id=%s unexpected_api_error=%q", w.Header().Get("X-Request-ID"), e)
+	slog.Error("unexpected_api_error", "request_id", w.Header().Get("X-Request-ID"), "error", service.SanitizeLogString(fmt.Sprintf("%v", e)))
 	errorResponse(w, http.StatusInternalServerError, "INTERNAL_ERROR", "sunucu hatası", map[string]any{})
 }
 func (a *API) writeLoadStatusError(w http.ResponseWriter, r *http.Request, e error) {
@@ -3970,7 +3971,10 @@ func (a *API) idempotency(next http.Handler) http.Handler {
 
 func requestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id := uuid.NewString()
+		id := strings.TrimSpace(r.Header.Get("X-Request-ID"))
+		if id == "" || len(id) > 64 {
+			id = uuid.NewString()
+		}
 		w.Header().Set("X-Request-ID", id)
 		next.ServeHTTP(w, r.WithContext(service.WithRequestID(r.Context(), id)))
 	})
@@ -3980,7 +3984,7 @@ func (a *API) recovery(next http.Handler) http.Handler {
 		defer func() {
 			if rec := recover(); rec != nil {
 				reqID := w.Header().Get("X-Request-ID")
-				log.Printf("request_id=%s PANIC_RECOVERED: %v", reqID, rec)
+				slog.Error("panic_recovered", "request_id", reqID, "method", r.Method, "path", r.URL.Path, "panic", service.SanitizeLogString(fmt.Sprintf("%v", rec)))
 				if a.sentry != nil && a.sentry.Enabled() {
 					a.sentry.CapturePanic(r.Context(), rec, r, nil)
 				}
@@ -4007,7 +4011,13 @@ func logging(next http.Handler) http.Handler {
 		started := time.Now()
 		recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(recorder, r)
-		log.Printf("request_id=%s method=%s path=%s status=%d duration=%s", service.RequestID(r.Context()), r.Method, r.URL.Path, recorder.status, time.Since(started).Round(time.Millisecond))
+		slog.Info("http_request",
+			"request_id", service.RequestID(r.Context()),
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", recorder.status,
+			"duration_ms", time.Since(started).Milliseconds(),
+		)
 	})
 }
 
