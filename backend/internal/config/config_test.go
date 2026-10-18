@@ -47,35 +47,89 @@ func TestValidateRequiresStrongRuntimeConfiguration(t *testing.T) {
 }
 
 func TestValidateKeepsAdminCredentialsInSeparateSecurityDomain(t *testing.T) {
-	base := Config{RedisURL: "redis://localhost:6379/0", Port: "8080", JWTSecret: "mobile-secret-that-is-at-least-32-characters", Environment: "production"}
-	configured := base
-	configured.AdminEmail = "operations@example.com"
-	configured.AdminPassword = "a-strong-admin-password"
-	configured.AdminJWTSecret = "separate-admin-secret-that-is-at-least-32"
-	if err := configured.Validate(); err != nil {
+	base := Config{
+		RedisURL:       "redis://localhost:6379/0",
+		Port:           "8080",
+		JWTSecret:      "mobile-secret-that-is-at-least-32-characters",
+		Environment:    "production",
+		AdminEmail:     "operations@example.com",
+		AdminPassword:  "a-strong-admin-password",
+		AdminJWTSecret: "separate-admin-secret-that-is-at-least-32",
+	}
+	if err := base.Validate(); err != nil {
 		t.Fatalf("valid admin config failed: %v", err)
 	}
 
 	for name, mutate := range map[string]func(*Config){
-		"partial credentials": func(config *Config) { config.AdminEmail = "operations@example.com" },
+		"missing admin in production": func(config *Config) {
+			config.AdminEmail = ""
+			config.AdminPassword = ""
+			config.AdminJWTSecret = ""
+		},
+		"partial credentials": func(config *Config) {
+			config.AdminPassword = ""
+			config.AdminJWTSecret = ""
+		},
 		"shared JWT secret": func(config *Config) {
-			config.AdminEmail = "operations@example.com"
-			config.AdminPassword = "a-strong-admin-password"
 			config.AdminJWTSecret = config.JWTSecret
 		},
 		"short password": func(config *Config) {
-			config.AdminEmail = "operations@example.com"
 			config.AdminPassword = "short"
-			config.AdminJWTSecret = "separate-admin-secret-that-is-at-least-32"
+		},
+		"placeholder JWT secret in production": func(config *Config) {
+			config.JWTSecret = "replace-with-at-least-32-random-characters"
+		},
+		"placeholder Admin JWT secret in production": func(config *Config) {
+			config.AdminJWTSecret = "replace-with-at-least-32-random-characters-admin"
+		},
+		"invalid redis url scheme": func(config *Config) {
+			config.RedisURL = "http://localhost:6379/0"
+		},
+		"test environment sharing db 0": func(config *Config) {
+			config.Environment = "test"
+			config.RedisURL = "redis://localhost:6379/0"
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			config := base
 			mutate(&config)
 			if err := config.Validate(); err == nil {
-				t.Fatal("expected an admin configuration error")
+				t.Fatalf("expected configuration error for %s", name)
 			}
 		})
+	}
+}
+
+func TestSafeSummaryNeverExposesSecrets(t *testing.T) {
+	cfg := Config{
+		Environment:            "production",
+		RedisURL:               "rediss://default:super-secret-redis-pass@redis.internal:6379/0",
+		Port:                   "8080",
+		JWTSecret:              "prod-jwt-secret-key-at-least-32-chars",
+		AdminEmail:             "admin@nakliyego.com",
+		AdminPassword:          "super-secret-admin-pass",
+		AdminJWTSecret:         "prod-admin-jwt-secret-key-32-chars",
+		GoogleMapsServerAPIKey: "AIzaSySecretMapsKey",
+		ResendAPIKey:           "re_secret_resend_key",
+		SentryDSN:              "https://secret@sentry.io/1",
+	}
+	summary := cfg.SafeSummary()
+	for k, v := range summary {
+		if str, ok := v.(string); ok {
+			for _, forbidden := range []string{
+				cfg.JWTSecret,
+				cfg.AdminPassword,
+				cfg.AdminJWTSecret,
+				cfg.GoogleMapsServerAPIKey,
+				cfg.ResendAPIKey,
+				cfg.SentryDSN,
+				"super-secret-redis-pass",
+			} {
+				if str == forbidden {
+					t.Fatalf("SafeSummary leaked secret in key %q", k)
+				}
+			}
+		}
 	}
 }
 

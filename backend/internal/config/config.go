@@ -36,16 +36,26 @@ type Config struct {
 }
 
 func Load() Config {
-	loadDotEnv(".env")
 	environment := strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV")))
+	if environment != "" {
+		loadDotEnv(".env." + environment)
+	}
+	loadDotEnv(".env")
+	if environment == "" {
+		environment = strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV")))
+	}
 	if environment == "" {
 		environment = "development"
 	}
-	redisURL := os.Getenv("REDIS_URL")
-	if redisURL == "" {
-		redisURL = "redis://localhost:6379/0"
+	redisURL := strings.TrimSpace(os.Getenv("REDIS_URL"))
+	if redisURL == "" && (environment == "development" || environment == "test") {
+		if environment == "test" {
+			redisURL = "redis://localhost:6379/1"
+		} else {
+			redisURL = "redis://localhost:6379/0"
+		}
 	}
-	port := os.Getenv("PORT")
+	port := strings.TrimSpace(os.Getenv("PORT"))
 	if port == "" {
 		port = "8080"
 	}
@@ -120,9 +130,35 @@ func resendAPIURL() string {
 	return url
 }
 
+func isPlaceholderSecret(val string) bool {
+	lower := strings.ToLower(strings.TrimSpace(val))
+	for _, bad := range []string{
+		"replace-with",
+		"changeme",
+		"change-me",
+		"your-secret",
+		"example-secret",
+		"default-secret",
+		"nakliyego-dev-secret",
+	} {
+		if strings.Contains(lower, bad) {
+			return true
+		}
+	}
+	return false
+}
+
 func (c Config) Validate() error {
+	switch c.Environment {
+	case "development", "test", "staging", "production":
+	default:
+		return errors.New("APP_ENV development, test, staging veya production olmalıdır")
+	}
 	if c.RedisURL == "" {
 		return errors.New("REDIS_URL tanımlı değil")
+	}
+	if !strings.HasPrefix(c.RedisURL, "redis://") && !strings.HasPrefix(c.RedisURL, "rediss://") {
+		return errors.New("REDIS_URL redis:// veya rediss:// ile başlamalıdır")
 	}
 	port, err := strconv.Atoi(c.Port)
 	if err != nil || port < 1 || port > 65535 {
@@ -131,7 +167,14 @@ func (c Config) Validate() error {
 	if len(c.JWTSecret) < 32 {
 		return errors.New("JWT_SECRET en az 32 karakter olmalıdır")
 	}
+	isProdOrStaging := c.Environment == "production" || c.Environment == "staging"
+	if isProdOrStaging && isPlaceholderSecret(c.JWTSecret) {
+		return errors.New("Production/staging ortamında varsayılan veya örnek JWT_SECRET kullanılamaz")
+	}
 	adminConfigured := c.AdminEmail != "" || c.AdminPassword != "" || c.AdminPasswordHash != "" || c.AdminJWTSecret != ""
+	if isProdOrStaging && !adminConfigured {
+		return errors.New("Production/staging ortamında ADMIN_EMAIL, ADMIN_JWT_SECRET ve ADMIN_PASSWORD_HASH (veya ADMIN_PASSWORD) zorunludur")
+	}
 	if adminConfigured {
 		if !strings.Contains(c.AdminEmail, "@") {
 			return errors.New("ADMIN_EMAIL geçerli bir e-posta olmalıdır")
@@ -148,12 +191,31 @@ func (c Config) Validate() error {
 		if len(c.AdminJWTSecret) < 32 || c.AdminJWTSecret == c.JWTSecret {
 			return errors.New("ADMIN_JWT_SECRET mobil JWT_SECRET değerinden farklı ve en az 32 karakter olmalıdır")
 		}
+		if isProdOrStaging && isPlaceholderSecret(c.AdminJWTSecret) {
+			return errors.New("Production/staging ortamında varsayılan veya örnek ADMIN_JWT_SECRET kullanılamaz")
+		}
 	}
-	switch c.Environment {
-	case "development", "test", "staging", "production":
-		return nil
-	default:
-		return errors.New("APP_ENV development, test, staging veya production olmalıdır")
+	if c.Environment == "test" && strings.HasSuffix(c.RedisURL, "/0") {
+		return errors.New("Test ortamı development/production veritabanı (/0) ile aynı REDIS_URL indeksini kullanamaz")
+	}
+	return nil
+}
+
+// SafeSummary returns a non-sensitive configuration map suitable for structured startup logging.
+// Secrets, passwords, tokens, and raw connection credentials are never included.
+func (c Config) SafeSummary() map[string]any {
+	return map[string]any{
+		"environment":          c.Environment,
+		"port":                 c.Port,
+		"max_upload_mb":        c.MaxUploadMB,
+		"maintenance_mode":     c.MaintenanceMode,
+		"app_version":          c.AppVersion,
+		"maps_key_configured":  c.GoogleMapsServerAPIKey != "" && c.MapsKeyError == "",
+		"admin_configured":     c.AdminEmail != "" && c.AdminJWTSecret != "",
+		"resend_configured":    c.ResendAPIKey != "",
+		"sentry_configured":    c.SentryDSN != "",
+		"jwt_configured":       len(c.JWTSecret) >= 32,
+		"redis_tls":            strings.HasPrefix(c.RedisURL, "rediss://"),
 	}
 }
 
