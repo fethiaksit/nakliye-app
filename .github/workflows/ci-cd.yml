@@ -1,0 +1,96 @@
+name: NakliyeGo CI/CD Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      deploy_target:
+        description: 'Deploy target environment (none | staging | production)'
+        required: false
+        default: 'none'
+        type: choice
+        options:
+          - none
+          - staging
+          - production
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  backend-test:
+    name: Go Backend Vet & Unit/Security Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: backend/go.sum
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Run all backend tests (including security & regression suite)
+        run: go test -v -race ./...
+
+  docker-build:
+    name: Build & Verify Docker Images
+    needs: backend-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Backend API Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: false
+          load: true
+          tags: nakliyego/api:${{ github.sha }}
+
+      - name: Build Admin Panel Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          file: ./frontend/admin-panel/Dockerfile
+          push: false
+          load: true
+          tags: nakliyego/admin-panel:${{ github.sha }}
+
+      - name: Validate backup & deploy scripts syntax
+        run: |
+          bash -n scripts/backup/redis-backup.sh
+          bash -n scripts/backup/redis-restore-test.sh
+          bash -n scripts/deploy/rollback.sh
+
+  production-deploy:
+    name: Controlled Production Deploy (Manual Approval Required)
+    needs: [backend-test, docker-build]
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_target == 'production'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify Rollback Mechanism in Dry-Run Mode
+        run: |
+          chmod +x scripts/deploy/rollback.sh
+          ./scripts/deploy/rollback.sh --dry-run nakliyego/api:prev-stable

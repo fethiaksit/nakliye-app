@@ -335,6 +335,48 @@ func TestSecurityRegressions(t *testing.T) {
 			t.Fatalf("expected structured JSON log to include request_id, got: %s", logOutput)
 		}
 	})
+
+	// 13. Liveness and Readiness Healthcheck Verification (Faz 5)
+	t.Run("Liveness And Readiness Healthchecks Verify Dependency State", func(t *testing.T) {
+		for _, path := range []string{"/health/live", "/api/health/live", "/health/ready", "/api/health/ready"} {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected 200 OK for %s when Redis is up, got %d", path, rec.Code)
+			}
+		}
+
+		// Simulate broken dependency with an isolated miniredis instance that gets closed
+		tempRedis := miniredis.RunT(t)
+		tempStore, err := store.New("redis://" + tempRedis.Addr())
+		if err != nil {
+			t.Fatalf("temp store init: %v", err)
+		}
+		brokenHandler := httpapi.NewWithOptions(tempStore, httpapi.Options{
+			Secret:      jwtSecret,
+			Environment: "test",
+		}).Routes()
+
+		// Close Redis dependency
+		tempRedis.Close()
+
+		// Liveness should STILL return 200 OK because process is alive
+		liveReq := httptest.NewRequest(http.MethodGet, "/health/live", nil)
+		liveRec := httptest.NewRecorder()
+		brokenHandler.ServeHTTP(liveRec, liveReq)
+		if liveRec.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK for /health/live even when Redis is down, got %d", liveRec.Code)
+		}
+
+		// Readiness MUST fail with 503 Service Unavailable when Redis is down
+		readyReq := httptest.NewRequest(http.MethodGet, "/health/ready", nil)
+		readyRec := httptest.NewRecorder()
+		brokenHandler.ServeHTTP(readyRec, readyReq)
+		if readyRec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("expected 503 Service Unavailable for /health/ready when Redis is down, got %d", readyRec.Code)
+		}
+	})
 }
 
 type testSession struct {

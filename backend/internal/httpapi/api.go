@@ -149,6 +149,10 @@ func (a *API) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", a.health)
 	mux.HandleFunc("GET /api/health", a.health)
+	mux.HandleFunc("GET /health/live", a.healthLive)
+	mux.HandleFunc("GET /api/health/live", a.healthLive)
+	mux.HandleFunc("GET /health/ready", a.healthReady)
+	mux.HandleFunc("GET /api/health/ready", a.healthReady)
 	mux.HandleFunc("POST /api/auth/register", a.register)
 	mux.HandleFunc("POST /api/auth/login", a.login)
 	mux.HandleFunc("POST /api/auth/refresh", a.refresh)
@@ -281,11 +285,21 @@ func (a *API) Routes() http.Handler {
 	return requestID(securityHeaders(a.recovery(a.maintenance(logging(cors(a.globalRateLimit(a.idempotency(gzipMiddleware(mux)))))))))
 }
 func (a *API) health(w http.ResponseWriter, r *http.Request) {
-	if err := a.store.Ping(); err != nil {
-		errorResponse(w, http.StatusServiceUnavailable, "STORAGE_UNAVAILABLE", "veri deposuna ulaşılamıyor", map[string]any{"service": "nakliye-api", "storage": "redis"})
+	a.healthReady(w, r)
+}
+func (a *API) healthLive(w http.ResponseWriter, _ *http.Request) {
+	jsonResponse(w, http.StatusOK, map[string]string{"status": "alive", "service": "nakliye-api"})
+}
+func (a *API) healthReady(w http.ResponseWriter, _ *http.Request) {
+	if a.store == nil {
+		errorResponse(w, http.StatusServiceUnavailable, "STORAGE_UNAVAILABLE", "veri deposu yapılandırılmamış", map[string]any{"service": "nakliye-api", "storage": "redis", "ready": false})
 		return
 	}
-	jsonResponse(w, http.StatusOK, map[string]string{"status": "ok", "service": "nakliye-api", "storage": "redis"})
+	if err := a.store.Ping(); err != nil {
+		errorResponse(w, http.StatusServiceUnavailable, "STORAGE_UNAVAILABLE", "veri deposuna ulaşılamıyor", map[string]any{"service": "nakliye-api", "storage": "redis", "ready": false})
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]any{"status": "ok", "ready": true, "service": "nakliye-api", "storage": "redis"})
 }
 func (a *API) register(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r)
