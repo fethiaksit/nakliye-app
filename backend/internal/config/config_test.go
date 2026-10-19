@@ -47,6 +47,7 @@ func TestValidateRequiresStrongRuntimeConfiguration(t *testing.T) {
 }
 
 func TestValidateKeepsAdminCredentialsInSeparateSecurityDomain(t *testing.T) {
+	validArgon2Hash := "$argon2id$v=19$m=65536,t=3,p=2$MDEyMzQ1Njc4OWFiY2RlZg$MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY"
 	base := Config{
 		RedisURL:       "redis://localhost:6379/0",
 		Port:           "8080",
@@ -60,21 +61,72 @@ func TestValidateKeepsAdminCredentialsInSeparateSecurityDomain(t *testing.T) {
 		t.Fatalf("valid admin config failed: %v", err)
 	}
 
+	hashConfig := base
+	hashConfig.AdminPassword = ""
+	hashConfig.AdminPasswordHash = validArgon2Hash
+	if err := hashConfig.Validate(); err != nil {
+		t.Fatalf("valid admin hash config failed: %v", err)
+	}
+
 	for name, mutate := range map[string]func(*Config){
 		"missing admin in production": func(config *Config) {
 			config.AdminEmail = ""
 			config.AdminPassword = ""
 			config.AdminJWTSecret = ""
 		},
+		"missing admin email in production": func(config *Config) {
+			config.AdminEmail = ""
+		},
+		"missing admin jwt secret in production": func(config *Config) {
+			config.AdminJWTSecret = ""
+		},
+		"missing admin password and hash in production": func(config *Config) {
+			config.AdminPassword = ""
+			config.AdminPasswordHash = ""
+		},
 		"partial credentials": func(config *Config) {
 			config.AdminPassword = ""
 			config.AdminJWTSecret = ""
 		},
+		"invalid admin email format": func(config *Config) {
+			config.AdminEmail = "invalid@"
+		},
+		"invalid admin email without domain dot": func(config *Config) {
+			config.AdminEmail = "admin@localhost"
+		},
 		"shared JWT secret": func(config *Config) {
 			config.AdminJWTSecret = config.JWTSecret
 		},
+		"short admin JWT secret": func(config *Config) {
+			config.AdminJWTSecret = "short-admin-secret"
+		},
 		"short password": func(config *Config) {
 			config.AdminPassword = "short"
+		},
+		"whitespace padded short password": func(config *Config) {
+			config.AdminPassword = "   short    "
+		},
+		"password equal to admin email": func(config *Config) {
+			config.AdminPassword = config.AdminEmail
+		},
+		"placeholder admin password in production": func(config *Config) {
+			config.AdminPassword = "changeme-admin-password"
+		},
+		"invalid argon2id prefix": func(config *Config) {
+			config.AdminPassword = ""
+			config.AdminPasswordHash = "$bcrypt$invalid"
+		},
+		"malformed argon2id structure": func(config *Config) {
+			config.AdminPassword = ""
+			config.AdminPasswordHash = "$argon2id$invalid-format"
+		},
+		"argon2id zero parameters": func(config *Config) {
+			config.AdminPassword = ""
+			config.AdminPasswordHash = "$argon2id$v=19$m=0,t=0,p=0$MDEyMzQ1Njc4OWFiY2RlZg$MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY"
+		},
+		"argon2id invalid base64 salt": func(config *Config) {
+			config.AdminPassword = ""
+			config.AdminPasswordHash = "$argon2id$v=19$m=65536,t=3,p=2$not-valid-base64!!!$MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY"
 		},
 		"placeholder JWT secret in production": func(config *Config) {
 			config.JWTSecret = "replace-with-at-least-32-random-characters"
@@ -108,17 +160,22 @@ func TestSafeSummaryNeverExposesSecrets(t *testing.T) {
 		JWTSecret:              "prod-jwt-secret-key-at-least-32-chars",
 		AdminEmail:             "admin@nakliyego.com",
 		AdminPassword:          "super-secret-admin-pass",
+		AdminPasswordHash:      "$argon2id$v=19$m=65536,t=3,p=2$MDEyMzQ1Njc4OWFiY2RlZg$MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY",
 		AdminJWTSecret:         "prod-admin-jwt-secret-key-32-chars",
 		GoogleMapsServerAPIKey: "AIzaSySecretMapsKey",
 		ResendAPIKey:           "re_secret_resend_key",
 		SentryDSN:              "https://secret@sentry.io/1",
 	}
 	summary := cfg.SafeSummary()
+	if summary["admin_configured"] != true {
+		t.Fatalf("expected admin_configured=true, got %v", summary["admin_configured"])
+	}
 	for k, v := range summary {
 		if str, ok := v.(string); ok {
 			for _, forbidden := range []string{
 				cfg.JWTSecret,
 				cfg.AdminPassword,
+				cfg.AdminPasswordHash,
 				cfg.AdminJWTSecret,
 				cfg.GoogleMapsServerAPIKey,
 				cfg.ResendAPIKey,

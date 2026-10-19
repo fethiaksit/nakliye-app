@@ -1,11 +1,13 @@
 package config
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"math"
 	"nakliye-api/internal/models"
 	"nakliye-api/internal/service"
+	"net/mail"
 	"os"
 	"strconv"
 	"strings"
@@ -140,12 +142,65 @@ func isPlaceholderSecret(val string) bool {
 		"example-secret",
 		"default-secret",
 		"nakliyego-dev-secret",
+		"example-password",
+		"default-password",
 	} {
 		if strings.Contains(lower, bad) {
 			return true
 		}
 	}
 	return false
+}
+
+func isValidAdminEmail(raw string) bool {
+	email := strings.TrimSpace(raw)
+	if email == "" || strings.ContainsAny(email, " \t\r\n") {
+		return false
+	}
+	parsed, err := mail.ParseAddress(email)
+	if err != nil || parsed.Address != email {
+		return false
+	}
+	at := strings.LastIndexByte(email, '@')
+	if at <= 0 || at == len(email)-1 {
+		return false
+	}
+	domain := email[at+1:]
+	if !strings.Contains(domain, ".") || strings.HasPrefix(domain, ".") || strings.HasSuffix(domain, ".") {
+		return false
+	}
+	return true
+}
+
+func isValidArgon2idHash(raw string) bool {
+	encoded := strings.TrimSpace(raw)
+	if encoded == "" {
+		return false
+	}
+	parts := strings.Split(encoded, "$")
+	if len(parts) != 6 || parts[0] != "" || parts[1] != "argon2id" || parts[2] != "v=19" {
+		return false
+	}
+	var memory, iterations uint32
+	var parallelism uint8
+	if n, err := fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &memory, &iterations, &parallelism); err != nil || n != 3 {
+		return false
+	}
+	if parts[3] != fmt.Sprintf("m=%d,t=%d,p=%d", memory, iterations, parallelism) {
+		return false
+	}
+	if memory == 0 || iterations == 0 || parallelism == 0 {
+		return false
+	}
+	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
+	if err != nil || len(salt) < 8 {
+		return false
+	}
+	expected, err := base64.RawStdEncoding.DecodeString(parts[5])
+	if err != nil || len(expected) < 16 {
+		return false
+	}
+	return true
 }
 
 func (c Config) Validate() error {
@@ -164,34 +219,54 @@ func (c Config) Validate() error {
 	if err != nil || port < 1 || port > 65535 {
 		return fmt.Errorf("PORT 1-65535 arasında geçerli bir sayı olmalıdır")
 	}
-	if len(c.JWTSecret) < 32 {
+	jwtSecret := strings.TrimSpace(c.JWTSecret)
+	if len(jwtSecret) < 32 {
 		return errors.New("JWT_SECRET en az 32 karakter olmalıdır")
 	}
 	isProdOrStaging := c.Environment == "production" || c.Environment == "staging"
-	if isProdOrStaging && isPlaceholderSecret(c.JWTSecret) {
+	if isProdOrStaging && isPlaceholderSecret(jwtSecret) {
 		return errors.New("Production/staging ortamında varsayılan veya örnek JWT_SECRET kullanılamaz")
 	}
-	adminConfigured := c.AdminEmail != "" || c.AdminPassword != "" || c.AdminPasswordHash != "" || c.AdminJWTSecret != ""
-	if isProdOrStaging && !adminConfigured {
-		return errors.New("Production/staging ortamında ADMIN_EMAIL, ADMIN_JWT_SECRET ve ADMIN_PASSWORD_HASH (veya ADMIN_PASSWORD) zorunludur")
+	adminEmail := strings.TrimSpace(c.AdminEmail)
+	adminPassword := strings.TrimSpace(c.AdminPassword)
+	adminPasswordHash := strings.TrimSpace(c.AdminPasswordHash)
+	adminJWTSecret := strings.TrimSpace(c.AdminJWTSecret)
+	adminConfigured := adminEmail != "" || adminPassword != "" || adminPasswordHash != "" || adminJWTSecret != ""
+	if isProdOrStaging {
+		if adminEmail == "" || adminJWTSecret == "" || (adminPassword == "" && adminPasswordHash == "") {
+			return errors.New("Production/staging ortamında ADMIN_EMAIL, ADMIN_JWT_SECRET ve ADMIN_PASSWORD_HASH (veya ADMIN_PASSWORD) zorunludur")
+		}
 	}
-	if adminConfigured {
-		if !strings.Contains(c.AdminEmail, "@") {
+	if isProdOrStaging || adminConfigured {
+		if !isValidAdminEmail(adminEmail) {
 			return errors.New("ADMIN_EMAIL geçerli bir e-posta olmalıdır")
 		}
-		if c.AdminPassword == "" && c.AdminPasswordHash == "" {
+		if isProdOrStaging && isPlaceholderSecret(adminEmail) {
+			return errors.New("Production/staging ortamında varsayılan veya örnek ADMIN_EMAIL kullanılamaz")
+		}
+		if adminPassword == "" && adminPasswordHash == "" {
 			return errors.New("ADMIN_PASSWORD veya ADMIN_PASSWORD_HASH tanımlanmalıdır")
 		}
-		if c.AdminPassword != "" && len(c.AdminPassword) < 12 {
-			return errors.New("ADMIN_PASSWORD en az 12 karakter olmalıdır")
+		if c.AdminPassword != "" || adminPassword != "" {
+			if len(adminPassword) < 12 {
+				return errors.New("ADMIN_PASSWORD en az 12 karakter olmalıdır")
+			}
+			if strings.EqualFold(adminPassword, adminEmail) {
+				return errors.New("ADMIN_PASSWORD ADMIN_EMAIL ile aynı olamaz")
+			}
+			if isProdOrStaging && isPlaceholderSecret(adminPassword) {
+				return errors.New("Production/staging ortamında varsayılan veya örnek ADMIN_PASSWORD kullanılamaz")
+			}
 		}
-		if c.AdminPasswordHash != "" && !strings.HasPrefix(c.AdminPasswordHash, "$argon2id$") {
-			return errors.New("ADMIN_PASSWORD_HASH geçerli Argon2id biçiminde olmalıdır")
+		if c.AdminPasswordHash != "" || adminPasswordHash != "" {
+			if !isValidArgon2idHash(adminPasswordHash) {
+				return errors.New("ADMIN_PASSWORD_HASH geçerli Argon2id biçiminde olmalıdır")
+			}
 		}
-		if len(c.AdminJWTSecret) < 32 || c.AdminJWTSecret == c.JWTSecret {
+		if len(adminJWTSecret) < 32 || adminJWTSecret == jwtSecret {
 			return errors.New("ADMIN_JWT_SECRET mobil JWT_SECRET değerinden farklı ve en az 32 karakter olmalıdır")
 		}
-		if isProdOrStaging && isPlaceholderSecret(c.AdminJWTSecret) {
+		if isProdOrStaging && isPlaceholderSecret(adminJWTSecret) {
 			return errors.New("Production/staging ortamında varsayılan veya örnek ADMIN_JWT_SECRET kullanılamaz")
 		}
 	}
@@ -205,17 +280,19 @@ func (c Config) Validate() error {
 // Secrets, passwords, tokens, and raw connection credentials are never included.
 func (c Config) SafeSummary() map[string]any {
 	return map[string]any{
-		"environment":          c.Environment,
-		"port":                 c.Port,
-		"max_upload_mb":        c.MaxUploadMB,
-		"maintenance_mode":     c.MaintenanceMode,
-		"app_version":          c.AppVersion,
-		"maps_key_configured":  c.GoogleMapsServerAPIKey != "" && c.MapsKeyError == "",
-		"admin_configured":     c.AdminEmail != "" && c.AdminJWTSecret != "",
-		"resend_configured":    c.ResendAPIKey != "",
-		"sentry_configured":    c.SentryDSN != "",
-		"jwt_configured":       len(c.JWTSecret) >= 32,
-		"redis_tls":            strings.HasPrefix(c.RedisURL, "rediss://"),
+		"environment":         c.Environment,
+		"port":                c.Port,
+		"max_upload_mb":       c.MaxUploadMB,
+		"maintenance_mode":    c.MaintenanceMode,
+		"app_version":         c.AppVersion,
+		"maps_key_configured": c.GoogleMapsServerAPIKey != "" && c.MapsKeyError == "",
+		"admin_configured": strings.TrimSpace(c.AdminEmail) != "" &&
+			len(strings.TrimSpace(c.AdminJWTSecret)) >= 32 &&
+			(strings.TrimSpace(c.AdminPassword) != "" || strings.TrimSpace(c.AdminPasswordHash) != ""),
+		"resend_configured": c.ResendAPIKey != "",
+		"sentry_configured": c.SentryDSN != "",
+		"jwt_configured":    len(strings.TrimSpace(c.JWTSecret)) >= 32,
+		"redis_tls":         strings.HasPrefix(c.RedisURL, "rediss://"),
 	}
 }
 
