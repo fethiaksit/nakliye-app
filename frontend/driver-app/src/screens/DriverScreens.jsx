@@ -26,10 +26,7 @@ const FILTER_OPTIONS = [
   { id: 'high_price', label: 'Yüksek Fiyat', icon: 'trending-up-outline' },
 ];
 
-export function DriverJobs({
-  loading,
-  error,
-  jobs = [],
+export function DriverJobDetail({
   selected,
   selectedOffer,
   form,
@@ -38,17 +35,95 @@ export function DriverJobs({
   setFormErrors,
   saving,
   deliverySaving,
-  onOpen,
   onClose,
   onAdjust,
   onSaveOffer,
   onStatus,
   onCompleteDelivery,
-  retry,
-  onShowOffers,
-  myOffers = [],
   user,
+  backLabel = 'İşlere dön',
 }) {
+  if (!selected) return null;
+
+  const statusAction = driverStatusAction(selected.status);
+  const isAssigned = selected.assignedDriverId === user?.id || (statusAction && selected.status !== 'published');
+
+  return (
+    <View style={styles.detailContainer}>
+      <AppButton
+        label={backLabel}
+        icon="arrow-back"
+        variant="ghost"
+        compact
+        fullWidth={false}
+        onPress={onClose}
+        style={styles.backButton}
+      />
+
+      <DriverJobSummary load={selected} />
+
+      <DriverRouteSection load={selected} />
+
+      <DriverLoadDetails load={selected} />
+
+      {/* Operation Action or Offer Form */}
+      {isAssigned && statusAction?.nextStatus === 'completed' ? (
+        <DeliveryCompletionCard
+          load={selected}
+          saving={deliverySaving}
+          onComplete={onCompleteDelivery}
+        />
+      ) : isAssigned && statusAction ? (
+        <SectionCard
+          title="Operasyon Adımı"
+          description="Sıradaki operasyon adımını onaylayarak süreci ilerletin."
+          icon="navigate-circle-outline"
+        >
+          <AppButton
+            label={statusAction.label}
+            icon={statusAction.icon}
+            onPress={() => onStatus(selected, statusAction.nextStatus)}
+            style={styles.primaryActionBtn}
+          />
+        </SectionCard>
+      ) : isOfferableLoadStatus(selected.status) ? (
+        <DriverOfferForm
+          form={form}
+          setForm={setForm}
+          formErrors={formErrors}
+          setFormErrors={setFormErrors}
+          onAdjust={onAdjust}
+          saving={saving}
+          onSaveOffer={onSaveOffer}
+          isEdit={Boolean(selectedOffer)}
+        />
+      ) : (
+        <SectionCard
+          title="Operasyon Durumu"
+          description={loadStatusLabel(selected.status)}
+          icon="information-circle-outline"
+        />
+      )}
+    </View>
+  );
+}
+
+export function DriverJobs(props) {
+  const {
+    loading,
+    error,
+    jobs = [],
+    selected,
+    onOpen,
+    onStatus,
+    retry,
+    onShowOffers,
+    myOffers = [],
+    user,
+    onItemLayout,
+    onFilterChange,
+    renderDetailInline = true,
+  } = props;
   const [activeFilter, setActiveFilter] = useState('all');
 
   // Find any active job assigned to this driver
@@ -92,68 +167,8 @@ export function DriverJobs({
   }, [jobs, activeFilter]);
 
   // If a job is selected for detail view
-  if (selected) {
-    const statusAction = driverStatusAction(selected.status);
-    const isAssigned = selected.assignedDriverId === user?.id || (statusAction && selected.status !== 'published');
-
-    return (
-      <View style={styles.detailContainer}>
-        <AppButton
-          label="İşlere dön"
-          icon="arrow-back"
-          variant="ghost"
-          compact
-          fullWidth={false}
-          onPress={onClose}
-          style={styles.backButton}
-        />
-
-        <DriverJobSummary load={selected} />
-
-        <DriverRouteSection load={selected} />
-
-        <DriverLoadDetails load={selected} />
-
-        {/* Operation Action or Offer Form */}
-        {isAssigned && statusAction?.nextStatus === 'completed' ? (
-          <DeliveryCompletionCard
-            load={selected}
-            saving={deliverySaving}
-            onComplete={onCompleteDelivery}
-          />
-        ) : isAssigned && statusAction ? (
-          <SectionCard
-            title="Operasyon Adımı"
-            description="Sıradaki operasyon adımını onaylayarak süreci ilerletin."
-            icon="navigate-circle-outline"
-          >
-            <AppButton
-              label={statusAction.label}
-              icon={statusAction.icon}
-              onPress={() => onStatus(selected, statusAction.nextStatus)}
-              style={styles.primaryActionBtn}
-            />
-          </SectionCard>
-        ) : isOfferableLoadStatus(selected.status) ? (
-          <DriverOfferForm
-            form={form}
-            setForm={setForm}
-            formErrors={formErrors}
-            setFormErrors={setFormErrors}
-            onAdjust={onAdjust}
-            saving={saving}
-            onSaveOffer={onSaveOffer}
-            isEdit={Boolean(selectedOffer)}
-          />
-        ) : (
-          <SectionCard
-            title="Operasyon Durumu"
-            description={loadStatusLabel(selected.status)}
-            icon="information-circle-outline"
-          />
-        )}
-      </View>
-    );
+  if (renderDetailInline && selected) {
+    return <DriverJobDetail {...props} />;
   }
 
   return (
@@ -172,11 +187,15 @@ export function DriverJobs({
 
       {/* Active Job Card if assigned */}
       {activeJob ? (
-        <ActiveJobCard
-          load={activeJob}
-          onPress={onOpen}
-          onAction={onStatus}
-        />
+        <View
+          onLayout={onItemLayout && activeJob.id ? event => onItemLayout(activeJob.id, event.nativeEvent.layout) : undefined}
+        >
+          <ActiveJobCard
+            load={activeJob}
+            onPress={onOpen}
+            onAction={onStatus}
+          />
+        </View>
       ) : null}
 
       {/* Section Header */}
@@ -197,7 +216,10 @@ export function DriverJobs({
             <Pressable
               key={opt.id}
               accessibilityRole="button"
-              onPress={() => setActiveFilter(opt.id)}
+              onPress={() => {
+                setActiveFilter(opt.id);
+                onFilterChange?.(opt.id);
+              }}
               style={[styles.filterChip, isSelected && styles.filterChipSelected]}
             >
               <Icon
@@ -229,18 +251,22 @@ export function DriverJobs({
         />
       ) : (
         filteredJobs.map(load => (
-          <DriverJobCard
+          <View
             key={load.id}
-            load={load}
-            onPress={() => onOpen(load)}
-          />
+            onLayout={onItemLayout ? event => onItemLayout(load.id, event.nativeEvent.layout) : undefined}
+          >
+            <DriverJobCard
+              load={load}
+              onPress={() => onOpen(load)}
+            />
+          </View>
         ))
       )}
     </>
   );
 }
 
-export function DriverOffers({ loading, error, items = [], onOpen, onWithdraw, retry }) {
+export function DriverOffers({ loading, error, items = [], onOpen, onWithdraw, retry, onItemLayout }) {
   const validItems = items.filter(item => item?.offer && item?.load);
 
   return (
@@ -263,12 +289,16 @@ export function DriverOffers({ loading, error, items = [], onOpen, onWithdraw, r
         />
       ) : (
         validItems.map(item => (
-          <DriverOfferCard
+          <View
             key={item.offer.id}
-            item={item}
-            onOpen={onOpen}
-            onWithdraw={onWithdraw}
-          />
+            onLayout={onItemLayout ? event => onItemLayout(item.load?.id || item.offer.id, event.nativeEvent.layout) : undefined}
+          >
+            <DriverOfferCard
+              item={item}
+              onOpen={onOpen}
+              onWithdraw={onWithdraw}
+            />
+          </View>
         ))
       )}
     </>

@@ -5,7 +5,14 @@ import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-cont
 
 import { colors, control, spacing, typography } from '../shared/ui/theme';
 import { ConfirmationModal, ToastProvider, useToast } from '../shared/ui/feedback';
-import { AppHeader, BottomNav } from '../shared/ui/navigation';
+import {
+  AppHeader,
+  BottomNav,
+  EdgeSwipeBack,
+  resolveCustomerAccountBackPage,
+  useAndroidBackHandler,
+  useListScrollPreservation,
+} from '../shared/ui/navigation';
 import LegalModal from '../shared/ui/LegalModal';
 import { InlineNotice, ListSkeleton } from '../shared/ui/primitives';
 import { registerDevicePushToken, subscribeNotificationResponses, unregisterDevicePushToken } from '../shared/notifications';
@@ -16,7 +23,7 @@ import AuthFlow from './src/components/AuthFlow';
 import ConversationCenter from './src/components/ConversationCenter';
 import LoadWizard from './src/components/load-wizard/LoadWizard';
 import { nativeGoogleMapsConfigured, nativeGoogleMapsMessage } from './src/config/maps';
-import { CustomerHome, CustomerLoads } from './src/screens/CustomerScreens';
+import { CustomerHome, CustomerLoadDetail, CustomerLoads } from './src/screens/CustomerScreens';
 import CustomerAccountScreens from './src/screens/CustomerAccountScreens';
 import { formatMoney, loadStatusLabel, resolveMediaUrl } from './src/utils/presentation';
 import { mobileSentry } from '../shared/sentry';
@@ -379,7 +386,37 @@ function CustomerApp() {
     }
   }, [fetchLoads, form, pendingDraftId, photos, resetLoadWizard, routeDraft, showToast]);
 
-  const openLoad = useCallback(async load => {
+  const isCorporate = (account?.accountType || user?.accountType) === 'corporate';
+  const isDetailOpen = Boolean(selectedLoad) && (tab === 'loads' || tab === 'home');
+  const hasModal = Boolean(wizardOpen || confirmation || (user && user.termsUpdateRequired));
+  const listScroll = useListScrollPreservation({
+    activeTab: tab,
+    isDetailOpen,
+    accountPage,
+    itemsByTab: {
+      home: myLoads.slice(0, 3),
+      loads: myLoads,
+    },
+  });
+
+  const closeLoadDetail = useCallback(() => {
+    loadDetailRequest.current += 1;
+    setSelectedLoad(null);
+    setSelectedLoadWallet(null);
+    setDeliveryCode(emptyDeliveryCode);
+  }, []);
+
+  const handleAccountBack = useCallback(() => {
+    setAccountPage(current => resolveCustomerAccountBackPage(current, isCorporate));
+  }, [isCorporate]);
+
+  useAndroidBackHandler(isDetailOpen && !hasModal, closeLoadDetail);
+
+  const openLoad = useCallback(async (load, targetTab) => {
+    const anchorTab = targetTab || tab;
+    if (load?.id && (anchorTab === 'loads' || anchorTab === 'home')) {
+      listScroll.rememberItem(anchorTab, load.id);
+    }
     const requestID = ++loadDetailRequest.current;
     setSelectedLoad(load);
     setSelectedLoadWallet(null);
@@ -410,13 +447,13 @@ function CustomerApp() {
     if (corporateAccount && walletResult.status === 'rejected') setWalletError(apiError(walletResult.reason));
     if (favoriteResult.status === 'fulfilled' && favoriteResult.value) setFavoriteDriverIds(new Set((favoriteResult.value.data?.items || []).map(item => item.driver?.id).filter(Boolean)));
     setOffersLoading(false);
-  }, [showToast, user?.accountType]);
+  }, [listScroll, showToast, tab, user?.accountType]);
 
   const openMessageLoad = useCallback(async id => {
     try {
       const { data } = await loads.get(id);
       setTab('loads');
-      await openLoad(data);
+      await openLoad(data, 'loads');
     } catch (error) {
       showToast(apiError(error), { type: 'error', title: 'İlan açılamadı' });
     }
@@ -450,10 +487,7 @@ function CustomerApp() {
       if (user?.accountType === 'corporate') {
         await openLoad(acceptedLoad);
       } else {
-        loadDetailRequest.current += 1;
-        setSelectedLoad(null);
-        setSelectedLoadWallet(null);
-        setDeliveryCode(emptyDeliveryCode);
+        closeLoadDetail();
       }
       await fetchLoads();
       showToast(user?.accountType === 'corporate' ? 'Teklif kabul edildi. İsterseniz aşağıdaki Kurumsal cüzdan alanından bakiyenizi kullanabilirsiniz.' : 'Teklif kabul edildi; mesajlaşma açıldı.', { type: 'success', title: 'Şoför seçildi' });
@@ -462,7 +496,7 @@ function CustomerApp() {
     } finally {
       setConfirmationLoading(false);
     }
-  }, [fetchLoads, openLoad, showToast, user?.accountType]);
+  }, [closeLoadDetail, fetchLoads, openLoad, showToast, user?.accountType]);
 
   const performCancelLoad = useCallback(async load => {
     setConfirmationLoading(true);
@@ -472,10 +506,7 @@ function CustomerApp() {
         loadId: load.id,
         status: load.status,
       });
-      loadDetailRequest.current += 1;
-      setSelectedLoad(null);
-      setSelectedLoadWallet(null);
-      setDeliveryCode(emptyDeliveryCode);
+      closeLoadDetail();
       setConfirmation(null);
       await fetchLoads();
       showToast('İlan iptal edildi.', { type: 'success' });
@@ -484,7 +515,7 @@ function CustomerApp() {
     } finally {
       setConfirmationLoading(false);
     }
-  }, [fetchLoads, showToast]);
+  }, [closeLoadDetail, fetchLoads, showToast]);
 
   const saveAccount = useCallback(async () => {
     setAccountSaving(true);
@@ -539,17 +570,14 @@ function CustomerApp() {
       setTab('home');
       setAccountPage('home');
       setWizardOpen(false);
-      loadDetailRequest.current += 1;
-      setSelectedLoad(null);
-      setSelectedLoadWallet(null);
-      setDeliveryCode(emptyDeliveryCode);
+      closeLoadDetail();
     }
-  }, []);
+  }, [closeLoadDetail]);
 
   const openAccountLoad = useCallback(async load => {
     setAccountPage('home');
     setTab('loads');
-    await openLoad(load);
+    await openLoad(load, 'loads');
   }, [openLoad]);
 
   const registerPushAfterPermission = useCallback(async () => {
@@ -594,11 +622,10 @@ function CustomerApp() {
     resetLoadWizard();
     setForm(draft.form);
     setRouteDraft(draft.routeDraft);
-    setSelectedLoad(null);
-    setSelectedLoadWallet(null);
+    closeLoadDetail();
     setWizardOpen(true);
     showToast('Eski nakliye bilgileri yeni ilan sihirbazına aktarıldı.', { type: 'success', title: 'İlan hazır' });
-  }, [resetLoadWizard, showToast]);
+  }, [closeLoadDetail, resetLoadWizard, showToast]);
 
   const startNewLoad = useCallback(() => {
     resetLoadWizard();
@@ -614,15 +641,16 @@ function CustomerApp() {
   if (!user) return <AuthFlow auth={auth} saveSession={saveSession} apiError={apiError} onSession={setUser} allowedRole="customer" connectionCheck={<ConnectionCheck />} />;
 
   const body = tab === 'home'
-    ? <CustomerHome loads={myLoads} onShowLoads={() => setTab('loads')} onOpenLoad={openLoad} onNewLoad={startNewLoad} />
+    ? <CustomerHome loads={myLoads} onShowLoads={() => setTab('loads')} onOpenLoad={openLoad} onNewLoad={startNewLoad} onItemLayout={listScroll.onItemLayout} />
     : tab === 'loads'
-      ? <CustomerLoads loading={loadsLoading} error={loadsError} items={myLoads} selected={selectedLoad} offers={loadOffers} offersLoading={offersLoading} deliveryCode={deliveryCode.value} deliveryCodeLoading={deliveryCode.loading} deliveryCodeError={deliveryCode.error} walletInfo={selectedLoadWallet} walletError={walletError} walletLoading={offersLoading} onRetryWallet={() => openLoad(selectedLoad)} walletSaving={walletSaving} onApplyWallet={applyWalletCredit} isCorporate={user?.accountType === 'corporate'} isFavorite={favoriteDriverIds.has(selectedLoad?.assignedDriverId)} favoriteSaving={favoriteSaving} onToggleFavorite={toggleFavoriteDriver} onRepeat={repeatLoad} onOpen={openLoad} onClose={() => { loadDetailRequest.current += 1; setSelectedLoad(null); setSelectedLoadWallet(null); setDeliveryCode(emptyDeliveryCode); }} onAccept={offer => setConfirmation({ type: 'accept', target: offer })} onCancel={load => setConfirmation({ type: 'cancel', target: load })} retry={fetchLoads} />
+      ? <CustomerLoads renderDetailInline={false} onItemLayout={listScroll.onItemLayout} loading={loadsLoading} error={loadsError} items={myLoads} selected={selectedLoad} offers={loadOffers} offersLoading={offersLoading} deliveryCode={deliveryCode.value} deliveryCodeLoading={deliveryCode.loading} deliveryCodeError={deliveryCode.error} walletInfo={selectedLoadWallet} walletError={walletError} walletLoading={offersLoading} onRetryWallet={() => openLoad(selectedLoad)} walletSaving={walletSaving} onApplyWallet={applyWalletCredit} isCorporate={isCorporate} isFavorite={favoriteDriverIds.has(selectedLoad?.assignedDriverId)} favoriteSaving={favoriteSaving} onToggleFavorite={toggleFavoriteDriver} onRepeat={repeatLoad} onOpen={openLoad} onClose={closeLoadDetail} onAccept={offer => setConfirmation({ type: 'accept', target: offer })} onCancel={load => setConfirmation({ type: 'cancel', target: load })} retry={fetchLoads} />
       : tab === 'messages'
         ? <ConversationCenter currentUser={user} api={conversations} apiError={apiError} resolveMediaUrl={resolveMediaUrl} formatMoney={formatMoney} loadStatusLabel={loadStatusLabel} onOpenLoad={openMessageLoad} initialConversationId={pendingConversationId} onInitialConversationHandled={handleInitialConversation} reverseGeocode={maps.reverse} nativeMapsConfigured={nativeGoogleMapsConfigured} nativeMapsMessage={nativeGoogleMapsMessage} bottomInset={control.bottomNavHeight + insets.bottom} />
         : <CustomerAccountScreens page={accountPage} onPageChange={setAccountPage} loading={accountLoading} error={accountError} account={account} form={accountForm} setForm={setAccountForm} save={saveAccount} saveLoading={accountSaving} changePassword={changePassword} passwordLoading={passwordSaving} logout={() => setConfirmation({ type: 'logout' })} retry={fetchAccount} onOpenLoad={openAccountLoad} onPermissionGranted={registerPushAfterPermission} />;
 
   const refresh = tab === 'home' || tab === 'loads' ? fetchLoads : tab === 'account' && accountPage === 'home' ? fetchAccount : undefined;
   const showBottomNav = tab !== 'account' || accountPage === 'home';
+  const bottomContentPadding = (showBottomNav ? control.bottomNavHeight + insets.bottom : insets.bottom) + spacing.xl;
 
   return (
     <View style={styles.screen}>
@@ -639,18 +667,73 @@ function CustomerApp() {
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           keyboardVerticalOffset={0}
         >
-          <ScrollView
-            contentContainerStyle={[
-              styles.content,
-              { paddingBottom: (showBottomNav ? control.bottomNavHeight + insets.bottom : insets.bottom) + spacing.xl },
-            ]}
-            keyboardShouldPersistTaps="handled"
-            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
-            showsVerticalScrollIndicator={false}
-            refreshControl={refresh ? <RefreshControl refreshing={tab === 'account' ? accountLoading : loadsLoading} onRefresh={refresh} tintColor={colors.primary} /> : undefined}
+          <EdgeSwipeBack
+            enabled={tab === 'account' && accountPage !== 'home' && !isDetailOpen && !hasModal}
+            modalOpen={hasModal}
+            onBack={handleAccountBack}
+            style={styles.flex}
           >
-            {body}
-          </ScrollView>
+            <ScrollView
+              ref={listScroll.scrollRef}
+              onScroll={listScroll.onScroll}
+              onScrollBeginDrag={listScroll.onScrollBeginDrag}
+              onLayout={listScroll.onViewportLayout}
+              onContentSizeChange={listScroll.onContentSizeChange}
+              scrollEventThrottle={16}
+              pointerEvents={isDetailOpen ? 'none' : 'auto'}
+              contentContainerStyle={[
+                styles.content,
+                { paddingBottom: bottomContentPadding },
+              ]}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+              showsVerticalScrollIndicator={false}
+              refreshControl={refresh ? <RefreshControl refreshing={tab === 'account' ? accountLoading : loadsLoading} onRefresh={refresh} tintColor={colors.primary} /> : undefined}
+            >
+              {body}
+            </ScrollView>
+          </EdgeSwipeBack>
+          {isDetailOpen ? (
+            <EdgeSwipeBack
+              enabled={!hasModal}
+              modalOpen={hasModal}
+              onBack={closeLoadDetail}
+              style={styles.detailOverlay}
+            >
+              <ScrollView
+                contentContainerStyle={[
+                  styles.content,
+                  { paddingBottom: bottomContentPadding },
+                ]}
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+                showsVerticalScrollIndicator={false}
+              >
+                <CustomerLoadDetail
+                  selected={selectedLoad}
+                  offers={loadOffers}
+                  offersLoading={offersLoading}
+                  deliveryCode={deliveryCode.value}
+                  deliveryCodeLoading={deliveryCode.loading}
+                  deliveryCodeError={deliveryCode.error}
+                  walletInfo={selectedLoadWallet}
+                  walletError={walletError}
+                  walletLoading={offersLoading}
+                  onRetryWallet={() => openLoad(selectedLoad)}
+                  walletSaving={walletSaving}
+                  onApplyWallet={applyWalletCredit}
+                  isCorporate={isCorporate}
+                  isFavorite={favoriteDriverIds.has(selectedLoad?.assignedDriverId)}
+                  favoriteSaving={favoriteSaving}
+                  onToggleFavorite={toggleFavoriteDriver}
+                  onRepeat={repeatLoad}
+                  onClose={closeLoadDetail}
+                  onAccept={offer => setConfirmation({ type: 'accept', target: offer })}
+                  onCancel={load => setConfirmation({ type: 'cancel', target: load })}
+                />
+              </ScrollView>
+            </EdgeSwipeBack>
+          ) : null}
         </KeyboardAvoidingView>
       )}
 
@@ -662,10 +745,7 @@ function CustomerApp() {
             setTab(value);
             setAccountPage('home');
             if (value !== 'loads') {
-              loadDetailRequest.current += 1;
-              setSelectedLoad(null);
-              setSelectedLoadWallet(null);
-              setDeliveryCode(emptyDeliveryCode);
+              closeLoadDetail();
             }
           }}
           bottomInset={insets.bottom}
@@ -742,6 +822,7 @@ function ConnectionCheck() {
 const styles = StyleSheet.create({
   screen: { backgroundColor: colors.background, flex: 1 },
   flex: { flex: 1 },
+  detailOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: colors.background },
   content: { paddingHorizontal: spacing.md, paddingTop: spacing.lg },
   center: { backgroundColor: colors.background, flex: 1, justifyContent: 'center', padding: spacing.xl },
   centerText: { ...typography.small, color: colors.textSecondary, marginTop: spacing.md, textAlign: 'center' },

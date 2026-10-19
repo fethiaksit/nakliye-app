@@ -5,6 +5,15 @@ const assert = require('node:assert/strict');
 
 const { asValidDate, clampToMinimum, formatPickerValue, pickerValueForOpen } = require('../../../shared/ui/datePicker.cjs');
 const { canSendMessage, draftAfterSendAttempt, normalizeMessageDraft } = require('../../../shared/conversationComposer.cjs');
+const {
+  captureListScrollAnchor,
+  pruneItemLayouts,
+  resolveCustomerAccountBackPage,
+  resolveDriverAccountBackPage,
+  resolveRestoredScrollOffset,
+  shouldCaptureEdgeSwipe,
+  shouldCompleteEdgeSwipe,
+} = require('../../../shared/navigationState.cjs');
 
 test('date picker displays a Turkish readable calendar date', () => {
   const value = new Date(2026, 7, 17, 12, 0, 0, 0);
@@ -76,3 +85,159 @@ test('chat draft is cleared only after success and only if unchanged', () => {
   assert.equal(draftAfterSendAttempt('Merhaba', 'Merhaba', false), 'Merhaba');
   assert.equal(draftAfterSendAttempt('Yeni metin', 'Merhaba', true), 'Yeni metin');
 });
+
+test('iOS edge swipe-back only captures left-edge horizontal rightward drags without modal or keyboard conflict', () => {
+  assert.equal(
+    shouldCaptureEdgeSwipe({
+      platform: 'ios',
+      enabled: true,
+      modalOpen: false,
+      keyboardVisible: false,
+      startX: 16,
+      dx: 24,
+      dy: 4,
+      numberActiveTouches: 1,
+    }),
+    true,
+  );
+  // Rejects Android (preserves hardware back behavior)
+  assert.equal(
+    shouldCaptureEdgeSwipe({
+      platform: 'android',
+      enabled: true,
+      modalOpen: false,
+      keyboardVisible: false,
+      startX: 16,
+      dx: 24,
+      dy: 4,
+      numberActiveTouches: 1,
+    }),
+    false,
+  );
+  // Rejects middle-screen horizontal drags (map pan / photo strip / filter chips)
+  assert.equal(
+    shouldCaptureEdgeSwipe({
+      platform: 'ios',
+      enabled: true,
+      modalOpen: false,
+      keyboardVisible: false,
+      startX: 64,
+      dx: 40,
+      dy: 2,
+      numberActiveTouches: 1,
+    }),
+    false,
+  );
+  // Rejects open modals and visible keyboard
+  assert.equal(
+    shouldCaptureEdgeSwipe({
+      platform: 'ios',
+      enabled: true,
+      modalOpen: true,
+      keyboardVisible: false,
+      startX: 12,
+      dx: 30,
+      dy: 2,
+      numberActiveTouches: 1,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldCaptureEdgeSwipe({
+      platform: 'ios',
+      enabled: true,
+      modalOpen: false,
+      keyboardVisible: true,
+      startX: 12,
+      dx: 30,
+      dy: 2,
+      numberActiveTouches: 1,
+    }),
+    false,
+  );
+  // Rejects predominantly vertical scrolls
+  assert.equal(
+    shouldCaptureEdgeSwipe({
+      platform: 'ios',
+      enabled: true,
+      modalOpen: false,
+      keyboardVisible: false,
+      startX: 14,
+      dx: 15,
+      dy: 22,
+      numberActiveTouches: 1,
+    }),
+    false,
+  );
+});
+
+test('edge swipe-back completion checks distance threshold and fast fling velocity', () => {
+  assert.equal(shouldCompleteEdgeSwipe({ dx: 110, vx: 0.1, screenWidth: 390 }), true);
+  assert.equal(shouldCompleteEdgeSwipe({ dx: 48, vx: 0.55, screenWidth: 390 }), true);
+  assert.equal(shouldCompleteEdgeSwipe({ dx: 35, vx: 0.12, screenWidth: 390 }), false);
+});
+
+test('list scroll preservation restores exact item position even after list data refreshes', () => {
+  const initialLayouts = {
+    'load-1': { y: 120, height: 180 },
+    'load-2': { y: 316, height: 180 },
+    'load-3': { y: 512, height: 180 },
+  };
+  const anchor = captureListScrollAnchor({
+    loadId: 'load-3',
+    scrollOffset: 420,
+    itemLayouts: initialLayouts,
+  });
+  assert.deepEqual(anchor, {
+    loadId: 'load-3',
+    scrollOffset: 420,
+    itemY: 512,
+    itemHeight: 180,
+    viewportRelativeY: 92,
+  });
+
+  // Same layouts on return -> exact same scrollOffset (420)
+  assert.equal(
+    resolveRestoredScrollOffset({
+      anchor,
+      itemLayouts: initialLayouts,
+      viewportHeight: 680,
+      contentHeight: 1600,
+    }),
+    420,
+  );
+
+  // List refreshed and a new load was prepended above load-3 (shifting load-3 down by 196px)
+  const refreshedLayouts = {
+    'load-new': { y: 120, height: 180 },
+    'load-1': { y: 316, height: 180 },
+    'load-2': { y: 512, height: 180 },
+    'load-3': { y: 708, height: 180 },
+  };
+  assert.equal(
+    resolveRestoredScrollOffset({
+      anchor,
+      itemLayouts: refreshedLayouts,
+      viewportHeight: 680,
+      contentHeight: 1796,
+    }),
+    616,
+  );
+
+  const pruned = pruneItemLayouts(refreshedLayouts, [{ id: 'load-1' }, { id: 'load-3' }]);
+  assert.deepEqual(Object.keys(pruned), ['load-1', 'load-3']);
+});
+
+test('account subpage back resolvers match customer, corporate, and driver hierarchies', () => {
+  assert.equal(resolveCustomerAccountBackPage('profile-edit', false), 'personal');
+  assert.equal(resolveCustomerAccountBackPage('support-detail', false), 'support');
+  assert.equal(resolveCustomerAccountBackPage('legal-doc', false), 'legal-index');
+  assert.equal(resolveCustomerAccountBackPage('personal', false), 'home');
+  assert.equal(resolveCustomerAccountBackPage('company-edit', true), 'company');
+  assert.equal(resolveCustomerAccountBackPage('company', true), 'home');
+  assert.equal(resolveDriverAccountBackPage('profile-edit'), 'personal');
+  assert.equal(resolveDriverAccountBackPage('vehicle-edit'), 'vehicle-detail');
+  assert.equal(resolveDriverAccountBackPage('vehicle-detail'), 'vehicles');
+  assert.equal(resolveDriverAccountBackPage('vehicles'), 'home');
+});
+

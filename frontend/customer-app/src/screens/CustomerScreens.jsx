@@ -23,6 +23,7 @@ export function CustomerHome({
   onShowLoads,
   onOpenLoad,
   onNewLoad,
+  onItemLayout,
 }) {
   const activeLoads = items.filter(item => !['completed', 'cancelled'].includes(item.status));
   const activeCount = activeLoads.length;
@@ -114,14 +115,18 @@ export function CustomerHome({
         </View>
       ) : (
         recentLoads.map(load => (
-          <ListingCard
+          <View
             key={load.id}
-            load={load}
-            onPress={() => onOpenLoad(load)}
-            statusLabel={loadStatusLabel}
-            formatMoney={formatMoney}
-            resolveMediaUrl={resolveMediaUrl}
-          />
+            onLayout={onItemLayout ? event => onItemLayout(load.id, event.nativeEvent.layout) : undefined}
+          >
+            <ListingCard
+              load={load}
+              onPress={() => onOpenLoad(load)}
+              statusLabel={loadStatusLabel}
+              formatMoney={formatMoney}
+              resolveMediaUrl={resolveMediaUrl}
+            />
+          </View>
         ))
       )}
     </>
@@ -224,10 +229,7 @@ function OperationalDetails({ load }) {
   );
 }
 
-export function CustomerLoads({
-  loading,
-  error,
-  items,
+export function CustomerLoadDetail({
   selected,
   offers,
   offersLoading,
@@ -245,11 +247,9 @@ export function CustomerLoads({
   favoriteSaving,
   onToggleFavorite,
   onRepeat,
-  onOpen,
   onClose,
   onAccept,
   onCancel,
-  retry,
 }) {
   const [walletAmount, setWalletAmount] = useState('');
   useEffect(() => {
@@ -257,214 +257,231 @@ export function CustomerLoads({
   }, [selected?.id, walletInfo?.maxUsableCents]);
   const walletPreview = walletUsagePreview(walletAmount, walletInfo?.maxUsableCents, walletInfo?.agreedAmountCents);
 
-  if (selected) {
-    return (
-      <View style={styles.detail}>
-        <AppButton
-          label="İlanlarıma dön"
-          icon="arrow-back"
-          variant="ghost"
-          compact
-          fullWidth={false}
-          onPress={onClose}
-          style={styles.backButton}
+  if (!selected) return null;
+
+  return (
+    <View style={styles.detail}>
+      <AppButton
+        label="İlanlarıma dön"
+        icon="arrow-back"
+        variant="ghost"
+        compact
+        fullWidth={false}
+        onPress={onClose}
+        style={styles.backButton}
+      />
+      <View style={styles.detailTitleRow}>
+        <View style={styles.detailTitleCopy}>
+          <Text style={styles.detailTitle}>{selected.title || 'Başlıksız ilan'}</Text>
+          <Text style={styles.detailCode}>İlan #{String(selected.id || '').slice(-8).toUpperCase()}</Text>
+        </View>
+        <StatusBadge status={selected.status} label={loadStatusLabel(selected.status)} />
+      </View>
+
+      <PhotoStrip photos={selected.photoUrls} />
+
+      <SectionCard title="Rota ve Duraklar" icon="navigate-outline">
+        <RouteTimeline
+          pickup={selected.pickup?.address}
+          delivery={selected.delivery?.address}
+          stops={selected.stops}
         />
-        <View style={styles.detailTitleRow}>
-          <View style={styles.detailTitleCopy}>
-            <Text style={styles.detailTitle}>{selected.title || 'Başlıksız ilan'}</Text>
-            <Text style={styles.detailCode}>İlan #{String(selected.id || '').slice(-8).toUpperCase()}</Text>
+        <View style={styles.routeMeta}>
+          <View style={styles.routeMetaItem}>
+            <Icon name="navigate-outline" size={17} color={colors.primary} />
+            <Text style={styles.routeMetaText}>{toFiniteNumber(selected.estimatedKm).toFixed(1)} km</Text>
           </View>
-          <StatusBadge status={selected.status} label={loadStatusLabel(selected.status)} />
-        </View>
-
-        <PhotoStrip photos={selected.photoUrls} />
-
-        <SectionCard title="Rota ve Duraklar" icon="navigate-outline">
-          <RouteTimeline
-            pickup={selected.pickup?.address}
-            delivery={selected.delivery?.address}
-            stops={selected.stops}
-          />
-          <View style={styles.routeMeta}>
-            <View style={styles.routeMetaItem}>
-              <Icon name="navigate-outline" size={17} color={colors.primary} />
-              <Text style={styles.routeMetaText}>{toFiniteNumber(selected.estimatedKm).toFixed(1)} km</Text>
-            </View>
-            <View style={styles.routeMetaItem}>
-              <Icon name="time-outline" size={17} color={colors.primary} />
-              <Text style={styles.routeMetaText}>{Math.round(toFiniteNumber(selected.routeDurationSeconds) / 60)} dk</Text>
-            </View>
+          <View style={styles.routeMetaItem}>
+            <Icon name="time-outline" size={17} color={colors.primary} />
+            <Text style={styles.routeMetaText}>{Math.round(toFiniteNumber(selected.routeDurationSeconds) / 60)} dk</Text>
           </View>
-        </SectionCard>
-
-        <SectionCard title="Operasyon özeti" icon="clipboard-outline">
-          <OperationalDetails load={selected} />
-        </SectionCard>
-
-        {['driver_selected', 'driver_en_route', 'at_pickup', 'picked_up', 'en_route_to_delivery', 'delivered'].includes(selected.status) && !selected.deliveryVerified ? (
-          <SectionCard
-            title="Teslimat kodu"
-            description="Teslimat gerçekleştiğinde bu kodu yalnızca atanmış şoförle paylaşın."
-            icon="keypad-outline"
-          >
-            {deliveryCodeLoading ? (
-              <Text style={styles.deliveryCodeMessage}>Kod yükleniyor…</Text>
-            ) : deliveryCodeError ? (
-              <Text style={styles.deliveryCodeError}>{deliveryCodeError}</Text>
-            ) : (
-              <Text selectable style={styles.deliveryCodeValue}>{deliveryCode || '—'}</Text>
-            )}
-          </SectionCard>
-        ) : null}
-
-        {selected.deliveryVerified ? (
-          <SectionCard
-            title="Teslimat doğrulandı"
-            description={selected.deliveryVerifiedAt ? new Date(selected.deliveryVerifiedAt).toLocaleString('tr-TR') : 'Doğrulama zamanı kaydedildi.'}
-            icon="checkmark-done-circle-outline"
-          >
-            <DetailRow icon="shield-checkmark-outline" label="Doğrulama" value="Teslimat kodu ve fotoğraf" />
-            <PhotoStrip photos={selected.deliveryPhotoUrl ? [selected.deliveryPhotoUrl] : []} />
-          </SectionCard>
-        ) : null}
-
-        <View style={styles.pricePanel}>
-          <Text style={styles.priceLabel}>{selected.assignedDriverId ? 'ANLAŞILAN FİYAT' : 'ÖNERİLEN FİYAT'}</Text>
-          <Text style={styles.priceValue}>
-            {!selected.assignedDriverId && selected.pricing?.manualQuoteRequired ? 'Özel teklif gerekli' : formatMoney(selected.agreedPriceTl || selected.pricing?.finalPrice || selected.basePriceTl)}
-          </Text>
-          {selected.pricing && !selected.pricing.manualQuoteRequired ? (
-            <>
-              {!selected.assignedDriverId && selected.pricing.minPrice > 0 ? <Text style={styles.priceBreakdown}>Tahmini aralık: {formatMoney(selected.pricing.minPrice)} – {formatMoney(selected.pricing.maxPrice)}</Text> : null}
-              {selected.pricing.loadingFee > 0 ? <Text style={styles.priceBreakdown}>Taşıma yardımı: +{formatMoney(selected.pricing.loadingFee)}</Text> : null}
-              {selected.pricing.pickupFloorFee + selected.pricing.deliveryFloorFee > 0 ? <Text style={styles.priceBreakdown}>Kat ücreti: +{formatMoney(selected.pricing.pickupFloorFee + selected.pricing.deliveryFloorFee)}</Text> : null}
-              <Text style={styles.priceBreakdown}>Başlangıç + yol: {formatMoney(selected.pricing.basePrice)}</Text>
-              {selected.pricing.loadExtra > 0 ? (
-                <Text style={styles.priceBreakdown}>Doluluk farkı: +{formatMoney(selected.pricing.loadExtra)}</Text>
-              ) : null}
-              {selected.pricing.waitingFee > 0 ? (
-                <Text style={styles.priceBreakdown}>Bekleme: +{formatMoney(selected.pricing.waitingFee)}</Text>
-              ) : null}
-            </>
-          ) : null}
         </View>
+      </SectionCard>
 
-        {isCorporate && walletInfo ? (
-          <SectionCard
-            title="Kurumsal cüzdan"
-            description="Bakiyenizi bu nakliyede kullanmak isteğe bağlıdır. Şoförün anlaşılan taşıma tutarı korunur."
-            icon="wallet-outline"
-          >
-            <DetailRow icon="wallet-outline" label="Kullanılabilir bakiye" value={formatWalletCents(walletInfo.wallet?.balanceCents)} />
-            <DetailRow icon="pricetag-outline" label="Kesinleşen nakliye tutarı" value={formatWalletCents(walletInfo.agreedAmountCents)} />
-            {walletInfo.allocation ? (
-              <>
-                <DetailRow icon="remove-circle-outline" label={walletInfo.allocation.usageReversalTransactionId ? 'İade edilen kredi' : 'Kullanılan kredi'} value={formatWalletCents(walletInfo.usedCents)} />
-                {!walletInfo.allocation.usageReversalTransactionId ? <DetailRow icon="cash-outline" label="Ödenecek kalan tutar" value={formatWalletCents(walletInfo.customerPayableCents)} /> : null}
-              </>
-            ) : selected.status === 'driver_selected' && walletInfo.maxUsableCents > 0 ? (
-              <>
-                <TextField
-                  label="Kullanılacak kredi"
-                  value={walletAmount}
-                  onChangeText={setWalletAmount}
-                  keyboardType="decimal-pad"
-                  leftIcon="wallet-outline"
-                  helper={`En fazla ${formatWalletCents(walletInfo.maxUsableCents)} kullanabilirsiniz. Tutarı azaltabilir veya kullanmadan devam edebilirsiniz.`}
-                />
-                <DetailRow icon="remove-circle-outline" label="Cüzdandan düşülecek" value={formatWalletCents(walletPreview.valid ? walletPreview.amountCents : 0)} />
-                <DetailRow icon="cash-outline" label="Ödenecek kalan tutar" value={formatWalletCents(walletPreview.payableCents)} />
-                {walletAmount && !walletPreview.valid ? <Text style={styles.walletMessage}>Kullanım sınırı içinde, en fazla iki ondalıklı pozitif bir tutar girin.</Text> : null}
-                <AppButton
-                  label="Cüzdan Bakiyemi Kullan"
-                  icon="checkmark-circle-outline"
-                  loading={walletSaving}
-                  disabled={!walletPreview.valid || walletSaving}
-                  onPress={() => onApplyWallet(walletPreview.amountCents)}
-                  style={styles.cardAction}
-                />
-              </>
-            ) : (
-              <Text style={styles.walletMessage}>
-                {walletInfo.enabled === false
-                  ? 'Cüzdan kullanımı şu anda kapalıdır. Mevcut bakiyeniz korunur.'
-                  : selected.status === 'driver_selected'
-                  ? walletInfo.wallet?.balanceCents > 0 ? 'Bu nakliyede cüzdan kullanımı için izin verilen tutar sıfırdır.' : 'Kullanılabilir cüzdan bakiyesi bulunmuyor.'
-                  : 'Cüzdan kredisi yalnız teklif kabul edildikten ve taşıma başlamadan önce uygulanabilir.'}
-              </Text>
-            )}
-          </SectionCard>
-        ) : null}
+      <SectionCard title="Operasyon özeti" icon="clipboard-outline">
+        <OperationalDetails load={selected} />
+      </SectionCard>
 
-        {isCorporate && !walletInfo ? (
-          <SectionCard title="Kurumsal cüzdan" icon="wallet-outline">
-            {walletLoading ? <Text style={styles.walletMessage}>Cüzdan yükleniyor…</Text> : walletError ? <><Text style={styles.walletMessage}>{walletError}</Text><AppButton label="Cüzdanı yeniden yükle" onPress={onRetryWallet} /></> : null}
-          </SectionCard>
-        ) : null}
+      {['driver_selected', 'driver_en_route', 'at_pickup', 'picked_up', 'en_route_to_delivery', 'delivered'].includes(selected.status) && !selected.deliveryVerified ? (
+        <SectionCard
+          title="Teslimat kodu"
+          description="Teslimat gerçekleştiğinde bu kodu yalnızca atanmış şoförle paylaşın."
+          icon="keypad-outline"
+        >
+          {deliveryCodeLoading ? (
+            <Text style={styles.deliveryCodeMessage}>Kod yükleniyor…</Text>
+          ) : deliveryCodeError ? (
+            <Text style={styles.deliveryCodeError}>{deliveryCodeError}</Text>
+          ) : (
+            <Text selectable style={styles.deliveryCodeValue}>{deliveryCode || '—'}</Text>
+          )}
+        </SectionCard>
+      ) : null}
 
-        <PageHeading title="Gelen teklifler" subtitle="Fiyat, süre ve şoför notlarını karşılaştırın." />
-        {offersLoading ? (
-          <ListSkeleton count={2} />
-        ) : !offers.length ? (
-          <ScreenState compact title="Henüz teklif yok" message="Şoför teklifleri geldiğinde burada görüntülenecek." />
-        ) : (
-          offers.map(item => {
-            const offer = item.offer || item;
-            const driver = item.driver || {};
-            const difference = toFiniteNumber(offer.amountTl) - toFiniteNumber(selected.basePriceTl);
-            return (
-              <View key={offer.id} style={styles.offerCard}>
-                <View style={styles.offerHeader}>
-                  <View style={styles.driverAvatar}>
-                    <Icon name="person" size={20} color={colors.primary} />
-                  </View>
-                  <View style={styles.offerCopy}>
-                    <Text style={styles.offerName}>{driver.name || 'Şoför'}</Text>
-                    <Text style={styles.offerEta}>
-                      {offer.estimatedArrivalMinutes ? `${offer.estimatedArrivalMinutes} dk içinde gelebilir` : 'Varış süresi belirtilmedi'}
-                    </Text>
-                  </View>
-                  <StatusBadge status={offer.status} label={offer.status === 'pending' ? 'Bekliyor' : offer.status === 'accepted' ? 'Kabul edildi' : 'Kapandı'} />
-                </View>
-                {offer.note ? <Text style={styles.offerNote}>{offer.note}</Text> : null}
-                <Divider style={styles.offerDivider} />
-                <View style={styles.offerPriceRow}>
-                  <View>
-                    <Text style={styles.priceLabel}>TEKLİF</Text>
-                    <Text style={styles.offerPrice}>{formatMoney(offer.amountTl)}</Text>
-                  </View>
-                  <Text style={styles.offerDifference}>
-                    {difference < 0 ? `${formatMoney(Math.abs(difference))} daha uygun` : difference > 0 ? `${formatMoney(difference)} fark` : 'Tahmini fiyatla aynı'}
-                  </Text>
-                </View>
-                {offer.status === 'pending' ? (
-                  <AppButton label="Teklifi kabul et" icon="checkmark-circle-outline" onPress={() => onAccept(offer)} style={styles.cardAction} />
-                ) : null}
-              </View>
-            );
-          })
-        )}
+      {selected.deliveryVerified ? (
+        <SectionCard
+          title="Teslimat doğrulandı"
+          description={selected.deliveryVerifiedAt ? new Date(selected.deliveryVerifiedAt).toLocaleString('tr-TR') : 'Doğrulama zamanı kaydedildi.'}
+          icon="checkmark-done-circle-outline"
+        >
+          <DetailRow icon="shield-checkmark-outline" label="Doğrulama" value="Teslimat kodu ve fotoğraf" />
+          <PhotoStrip photos={selected.deliveryPhotoUrl ? [selected.deliveryPhotoUrl] : []} />
+        </SectionCard>
+      ) : null}
 
-        {isCorporate && selected.status === 'completed' && selected.assignedDriverId ? (
-          <AppButton
-            label={isFavorite ? 'Favoriden Çıkar' : 'Favorilere Ekle'}
-            icon={isFavorite ? 'heart-dislike-outline' : 'heart-outline'}
-            variant="secondary"
-            loading={favoriteSaving}
-            onPress={() => onToggleFavorite(selected.assignedDriverId)}
-            style={styles.cardAction}
-          />
-        ) : null}
-
-        {isCorporate && ['completed', 'cancelled'].includes(selected.status) ? (
-          <AppButton label="Tekrar İlan Ver" icon="copy-outline" variant="outline" onPress={() => onRepeat(selected)} style={styles.cardAction} />
-        ) : null}
-
-        {!['completed', 'cancelled'].includes(selected.status) ? (
-          <AppButton label="İlanı iptal et" icon="close-circle-outline" variant="outlineDanger" onPress={() => onCancel(selected)} style={styles.dangerAction} />
+      <View style={styles.pricePanel}>
+        <Text style={styles.priceLabel}>{selected.assignedDriverId ? 'ANLAŞILAN FİYAT' : 'ÖNERİLEN FİYAT'}</Text>
+        <Text style={styles.priceValue}>
+          {!selected.assignedDriverId && selected.pricing?.manualQuoteRequired ? 'Özel teklif gerekli' : formatMoney(selected.agreedPriceTl || selected.pricing?.finalPrice || selected.basePriceTl)}
+        </Text>
+        {selected.pricing && !selected.pricing.manualQuoteRequired ? (
+          <>
+            {!selected.assignedDriverId && selected.pricing.minPrice > 0 ? <Text style={styles.priceBreakdown}>Tahmini aralık: {formatMoney(selected.pricing.minPrice)} – {formatMoney(selected.pricing.maxPrice)}</Text> : null}
+            {selected.pricing.loadingFee > 0 ? <Text style={styles.priceBreakdown}>Taşıma yardımı: +{formatMoney(selected.pricing.loadingFee)}</Text> : null}
+            {selected.pricing.pickupFloorFee + selected.pricing.deliveryFloorFee > 0 ? <Text style={styles.priceBreakdown}>Kat ücreti: +{formatMoney(selected.pricing.pickupFloorFee + selected.pricing.deliveryFloorFee)}</Text> : null}
+            <Text style={styles.priceBreakdown}>Başlangıç + yol: {formatMoney(selected.pricing.basePrice)}</Text>
+            {selected.pricing.loadExtra > 0 ? (
+              <Text style={styles.priceBreakdown}>Doluluk farkı: +{formatMoney(selected.pricing.loadExtra)}</Text>
+            ) : null}
+            {selected.pricing.waitingFee > 0 ? (
+              <Text style={styles.priceBreakdown}>Bekleme: +{formatMoney(selected.pricing.waitingFee)}</Text>
+            ) : null}
+          </>
         ) : null}
       </View>
-    );
+
+      {isCorporate && walletInfo ? (
+        <SectionCard
+          title="Kurumsal cüzdan"
+          description="Bakiyenizi bu nakliyede kullanmak isteğe bağlıdır. Şoförün anlaşılan taşıma tutarı korunur."
+          icon="wallet-outline"
+        >
+          <DetailRow icon="wallet-outline" label="Kullanılabilir bakiye" value={formatWalletCents(walletInfo.wallet?.balanceCents)} />
+          <DetailRow icon="pricetag-outline" label="Kesinleşen nakliye tutarı" value={formatWalletCents(walletInfo.agreedAmountCents)} />
+          {walletInfo.allocation ? (
+            <>
+              <DetailRow icon="remove-circle-outline" label={walletInfo.allocation.usageReversalTransactionId ? 'İade edilen kredi' : 'Kullanılan kredi'} value={formatWalletCents(walletInfo.usedCents)} />
+              {!walletInfo.allocation.usageReversalTransactionId ? <DetailRow icon="cash-outline" label="Ödenecek kalan tutar" value={formatWalletCents(walletInfo.customerPayableCents)} /> : null}
+            </>
+          ) : selected.status === 'driver_selected' && walletInfo.maxUsableCents > 0 ? (
+            <>
+              <TextField
+                label="Kullanılacak kredi"
+                value={walletAmount}
+                onChangeText={setWalletAmount}
+                keyboardType="decimal-pad"
+                leftIcon="wallet-outline"
+                helper={`En fazla ${formatWalletCents(walletInfo.maxUsableCents)} kullanabilirsiniz. Tutarı azaltabilir veya kullanmadan devam edebilirsiniz.`}
+              />
+              <DetailRow icon="remove-circle-outline" label="Cüzdandan düşülecek" value={formatWalletCents(walletPreview.valid ? walletPreview.amountCents : 0)} />
+              <DetailRow icon="cash-outline" label="Ödenecek kalan tutar" value={formatWalletCents(walletPreview.payableCents)} />
+              {walletAmount && !walletPreview.valid ? <Text style={styles.walletMessage}>Kullanım sınırı içinde, en fazla iki ondalıklı pozitif bir tutar girin.</Text> : null}
+              <AppButton
+                label="Cüzdan Bakiyemi Kullan"
+                icon="checkmark-circle-outline"
+                loading={walletSaving}
+                disabled={!walletPreview.valid || walletSaving}
+                onPress={() => onApplyWallet(walletPreview.amountCents)}
+                style={styles.cardAction}
+              />
+            </>
+          ) : (
+            <Text style={styles.walletMessage}>
+              {walletInfo.enabled === false
+                ? 'Cüzdan kullanımı şu anda kapalıdır. Mevcut bakiyeniz korunur.'
+                : selected.status === 'driver_selected'
+                ? walletInfo.wallet?.balanceCents > 0 ? 'Bu nakliyede cüzdan kullanımı için izin verilen tutar sıfırdır.' : 'Kullanılabilir cüzdan bakiyesi bulunmuyor.'
+                : 'Cüzdan kredisi yalnız teklif kabul edildikten ve taşıma başlamadan önce uygulanabilir.'}
+            </Text>
+          )}
+        </SectionCard>
+      ) : null}
+
+      {isCorporate && !walletInfo ? (
+        <SectionCard title="Kurumsal cüzdan" icon="wallet-outline">
+          {walletLoading ? <Text style={styles.walletMessage}>Cüzdan yükleniyor…</Text> : walletError ? <><Text style={styles.walletMessage}>{walletError}</Text><AppButton label="Cüzdanı yeniden yükle" onPress={onRetryWallet} /></> : null}
+        </SectionCard>
+      ) : null}
+
+      <PageHeading title="Gelen teklifler" subtitle="Fiyat, süre ve şoför notlarını karşılaştırın." />
+      {offersLoading ? (
+        <ListSkeleton count={2} />
+      ) : !offers.length ? (
+        <ScreenState compact title="Henüz teklif yok" message="Şoför teklifleri geldiğinde burada görüntülenecek." />
+      ) : (
+        offers.map(item => {
+          const offer = item.offer || item;
+          const driver = item.driver || {};
+          const difference = toFiniteNumber(offer.amountTl) - toFiniteNumber(selected.basePriceTl);
+          return (
+            <View key={offer.id} style={styles.offerCard}>
+              <View style={styles.offerHeader}>
+                <View style={styles.driverAvatar}>
+                  <Icon name="person" size={20} color={colors.primary} />
+                </View>
+                <View style={styles.offerCopy}>
+                  <Text style={styles.offerName}>{driver.name || 'Şoför'}</Text>
+                  <Text style={styles.offerEta}>
+                    {offer.estimatedArrivalMinutes ? `${offer.estimatedArrivalMinutes} dk içinde gelebilir` : 'Varış süresi belirtilmedi'}
+                  </Text>
+                </View>
+                <StatusBadge status={offer.status} label={offer.status === 'pending' ? 'Bekliyor' : offer.status === 'accepted' ? 'Kabul edildi' : 'Kapandı'} />
+              </View>
+              {offer.note ? <Text style={styles.offerNote}>{offer.note}</Text> : null}
+              <Divider style={styles.offerDivider} />
+              <View style={styles.offerPriceRow}>
+                <View>
+                  <Text style={styles.priceLabel}>TEKLİF</Text>
+                  <Text style={styles.offerPrice}>{formatMoney(offer.amountTl)}</Text>
+                </View>
+                <Text style={styles.offerDifference}>
+                  {difference < 0 ? `${formatMoney(Math.abs(difference))} daha uygun` : difference > 0 ? `${formatMoney(difference)} fark` : 'Tahmini fiyatla aynı'}
+                </Text>
+              </View>
+              {offer.status === 'pending' ? (
+                <AppButton label="Teklifi kabul et" icon="checkmark-circle-outline" onPress={() => onAccept(offer)} style={styles.cardAction} />
+              ) : null}
+            </View>
+          );
+        })
+      )}
+
+      {isCorporate && selected.status === 'completed' && selected.assignedDriverId ? (
+        <AppButton
+          label={isFavorite ? 'Favoriden Çıkar' : 'Favorilere Ekle'}
+          icon={isFavorite ? 'heart-dislike-outline' : 'heart-outline'}
+          variant="secondary"
+          loading={favoriteSaving}
+          onPress={() => onToggleFavorite(selected.assignedDriverId)}
+          style={styles.cardAction}
+        />
+      ) : null}
+
+      {isCorporate && ['completed', 'cancelled'].includes(selected.status) ? (
+        <AppButton label="Tekrar İlan Ver" icon="copy-outline" variant="outline" onPress={() => onRepeat(selected)} style={styles.cardAction} />
+      ) : null}
+
+      {!['completed', 'cancelled'].includes(selected.status) ? (
+        <AppButton label="İlanı iptal et" icon="close-circle-outline" variant="outlineDanger" onPress={() => onCancel(selected)} style={styles.dangerAction} />
+      ) : null}
+    </View>
+  );
+}
+
+export function CustomerLoads(props) {
+  const {
+    loading,
+    error,
+    items,
+    selected,
+    onOpen,
+    retry,
+    onItemLayout,
+    renderDetailInline = true,
+  } = props;
+
+  if (renderDetailInline && selected) {
+    return <CustomerLoadDetail {...props} />;
   }
 
   return (
@@ -478,14 +495,18 @@ export function CustomerLoads({
         <ScreenState title="Henüz ilanınız yok" message="Ana sayfadan yeni nakliye talebi oluşturabilirsiniz." />
       ) : (
         items.map(load => (
-          <ListingCard
+          <View
             key={load.id}
-            load={load}
-            onPress={() => onOpen(load)}
-            statusLabel={loadStatusLabel}
-            formatMoney={formatMoney}
-            resolveMediaUrl={resolveMediaUrl}
-          />
+            onLayout={onItemLayout ? event => onItemLayout(load.id, event.nativeEvent.layout) : undefined}
+          >
+            <ListingCard
+              load={load}
+              onPress={() => onOpen(load)}
+              statusLabel={loadStatusLabel}
+              formatMoney={formatMoney}
+              resolveMediaUrl={resolveMediaUrl}
+            />
+          </View>
         ))
       )}
     </>

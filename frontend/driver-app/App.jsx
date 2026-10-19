@@ -1,10 +1,17 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { KeyboardAvoidingView, Platform, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ConfirmationModal, ToastProvider, useToast } from '../shared/ui/feedback';
-import { AppHeader, BottomNav } from '../shared/ui/navigation';
+import {
+  AppHeader,
+  BottomNav,
+  EdgeSwipeBack,
+  resolveDriverAccountBackPage,
+  useAndroidBackHandler,
+  useListScrollPreservation,
+} from '../shared/ui/navigation';
 import LegalModal from '../shared/ui/LegalModal';
 import { ListSkeleton } from '../shared/ui/primitives';
 import { colors, control, spacing, typography } from '../shared/ui/theme';
@@ -13,7 +20,7 @@ import { apiError, auth, conversations, loads, logApiError, maps, offers, profil
 import AuthFlow from './src/components/AuthFlow';
 import ConversationCenter from './src/components/ConversationCenter';
 import { nativeGoogleMapsConfigured, nativeGoogleMapsMessage } from './src/config/maps';
-import { DriverJobs, DriverOffers } from './src/screens/DriverScreens';
+import { DriverJobDetail, DriverJobs, DriverOffers } from './src/screens/DriverScreens';
 import DriverAccountScreens from './src/screens/DriverAccountScreens';
 import { parseWalletUnits } from '../shared/walletMoney.mjs';
 import { driverStatusAction, formatMoney, loadStatusLabel, resolveMediaUrl, toFiniteNumber } from './src/utils/presentation';
@@ -158,17 +165,53 @@ function DriverApp() {
     if (tab === 'account') void fetchAccount();
   }, [fetchAccount, fetchJobs, fetchOffers, restoring, tab, user?.id, user?.role]);
 
-  const openJob = useCallback((load, offer = null) => {
+  const isDetailOpen = Boolean(selected) && (tab === 'jobs' || tab === 'offers');
+  const hasModal = Boolean(confirmation || (user && user.termsUpdateRequired));
+  const offerLoadItems = useMemo(
+    () => myOffers.filter(item => item?.offer && item?.load).map(item => ({ id: item.load.id })),
+    [myOffers],
+  );
+  const listScroll = useListScrollPreservation({
+    activeTab: tab,
+    isDetailOpen,
+    accountPage,
+    itemsByTab: {
+      jobs,
+      offers: offerLoadItems,
+    },
+  });
+
+  const closeJobDetail = useCallback(() => {
+    setSelected(null);
+    setSelectedOffer(null);
+    setOfferErrors({});
+  }, []);
+
+  const handleAccountBack = useCallback(() => {
+    setAccountPage(current => resolveDriverAccountBackPage(current));
+  }, []);
+
+  const handleFilterChange = useCallback(() => {
+    listScroll.clearAnchor('jobs');
+  }, [listScroll]);
+
+  useAndroidBackHandler(isDetailOpen && !hasModal, closeJobDetail);
+
+  const openJob = useCallback((load, offer = null, targetTab) => {
+    const anchorTab = targetTab || tab;
+    if (load?.id && (anchorTab === 'jobs' || anchorTab === 'offers')) {
+      listScroll.rememberItem(anchorTab, load.id);
+    }
     setSelected(load);
     setSelectedOffer(offer);
     setOfferErrors({});
     setOfferForm({ amount: !offer && load.pricing?.manualQuoteRequired ? '' : String(toFiniteNumber(offer?.amountTl, toFiniteNumber(load.pricing?.recommendedPrice, toFiniteNumber(load.basePriceTl, toFiniteNumber(load.agreedPriceTl))))), note: offer?.note || '', eta: String(offer?.estimatedArrivalMinutes || 45) });
-  }, []);
+  }, [listScroll, tab]);
   const openMessageLoad = useCallback(async id => {
     try {
       const { data } = await loads.get(id);
       setTab('jobs');
-      openJob(data);
+      openJob(data, null, 'jobs');
     } catch (error) {
       showToast(apiError(error), { type: 'error', title: 'İlan açılamadı' });
     }
@@ -220,8 +263,7 @@ function DriverApp() {
         estimatedArrivalMinutes,
         isUpdate: updated,
       });
-      setSelected(null);
-      setSelectedOffer(null);
+      closeJobDetail();
       await fetchJobs();
       await fetchOffers();
       showToast(updated ? 'Teklifiniz güncellendi.' : 'Teklifiniz müşterinin onayına gönderildi.', { type: 'success', title: 'Teklif kaydedildi' });
@@ -230,7 +272,7 @@ function DriverApp() {
     } finally {
       setOfferSaving(false);
     }
-  }, [fetchJobs, fetchOffers, offerForm, selected, selectedOffer, showToast]);
+  }, [closeJobDetail, fetchJobs, fetchOffers, offerForm, selected, selectedOffer, showToast]);
   const performWithdrawOffer = useCallback(async offer => {
     setConfirmationLoading(true);
     try {
@@ -251,7 +293,7 @@ function DriverApp() {
       await loads.status(load.id, status);
       await fetchJobs();
       await fetchOffers();
-      setSelected(null);
+      closeJobDetail();
       setConfirmation(null);
       showToast(driverStatusAction(load.status)?.successMessage || 'Operasyon durumu güncellendi.', { type: 'success' });
     } catch (error) {
@@ -259,7 +301,7 @@ function DriverApp() {
     } finally {
       setConfirmationLoading(false);
     }
-  }, [fetchJobs, fetchOffers, showToast]);
+  }, [closeJobDetail, fetchJobs, fetchOffers, showToast]);
   const performCompleteDelivery = useCallback(async (load, proof) => {
     setDeliverySaving(true);
     try {
@@ -270,14 +312,14 @@ function DriverApp() {
       });
       await fetchJobs();
       await fetchOffers();
-      setSelected(null);
+      closeJobDetail();
       showToast('Teslimat kodu ve fotoğraf doğrulandı. İş tamamlandı.', { type: 'success' });
     } catch (error) {
       showToast(apiError(error), { type: 'error', title: 'Teslimat tamamlanamadı' });
     } finally {
       setDeliverySaving(false);
     }
-  }, [fetchJobs, fetchOffers, showToast]);
+  }, [closeJobDetail, fetchJobs, fetchOffers, showToast]);
   const saveAccount = useCallback(async () => {
     setAccountSaving(true);
     try {
@@ -345,32 +387,102 @@ function DriverApp() {
   const openAccountLoad = useCallback(load => {
     setAccountPage('home');
     setTab('jobs');
-    openJob(load);
+    openJob(load, null, 'jobs');
   }, [openJob]);
   const registerPushAfterPermission = useCallback(async () => {
     const token = await registerDevicePushToken(push);
     if (token) pushToken.current = token;
   }, []);
+  const handleMainPaneSwipeBack = useCallback(() => {
+    if (tab === 'account' && accountPage !== 'home') {
+      handleAccountBack();
+    } else if (tab === 'offers') {
+      setTab('jobs');
+    }
+  }, [accountPage, handleAccountBack, tab]);
 
   if (restoring) return <View style={styles.center}><ListSkeleton count={2} /><Text style={styles.centerText}>Oturum güvenli biçimde yükleniyor…</Text></View>;
   if (!user) return <AuthFlow auth={auth} saveSession={saveSession} apiError={apiError} onSession={setUser} allowedRole="driver" />;
 
   const body = tab === 'jobs'
-    ? <DriverJobs loading={jobsLoading} error={jobsError} jobs={jobs} selected={selected} selectedOffer={selectedOffer} form={offerForm} setForm={setOfferForm} formErrors={offerErrors} setFormErrors={setOfferErrors} saving={offerSaving} deliverySaving={deliverySaving} onOpen={openJob} onClose={() => setSelected(null)} onAdjust={adjustOffer} onSaveOffer={saveOffer} onStatus={(load, status) => setConfirmation({ type: 'status', target: load, status })} onCompleteDelivery={performCompleteDelivery} retry={fetchJobs} onShowOffers={() => setTab('offers')} myOffers={myOffers} user={user} />
+    ? <DriverJobs renderDetailInline={false} onItemLayout={listScroll.onItemLayout} onFilterChange={handleFilterChange} loading={jobsLoading} error={jobsError} jobs={jobs} selected={selected} selectedOffer={selectedOffer} form={offerForm} setForm={setOfferForm} formErrors={offerErrors} setFormErrors={setOfferErrors} saving={offerSaving} deliverySaving={deliverySaving} onOpen={load => openJob(load, null, 'jobs')} onClose={closeJobDetail} onAdjust={adjustOffer} onSaveOffer={saveOffer} onStatus={(load, status) => setConfirmation({ type: 'status', target: load, status })} onCompleteDelivery={performCompleteDelivery} retry={fetchJobs} onShowOffers={() => setTab('offers')} myOffers={myOffers} user={user} />
     : tab === 'offers'
-      ? <DriverOffers loading={myOffersLoading} error={offersError} items={myOffers} onOpen={(load, offer) => { setTab('jobs'); openJob(load, offer); }} onWithdraw={offer => setConfirmation({ type: 'withdraw', target: offer })} retry={fetchOffers} />
+      ? <DriverOffers onItemLayout={listScroll.onItemLayout} loading={myOffersLoading} error={offersError} items={myOffers} onOpen={(load, offer) => openJob(load, offer, 'offers')} onWithdraw={offer => setConfirmation({ type: 'withdraw', target: offer })} retry={fetchOffers} />
       : tab === 'messages'
         ? <ConversationCenter currentUser={user} api={conversations} apiError={apiError} resolveMediaUrl={resolveMediaUrl} formatMoney={formatMoney} loadStatusLabel={loadStatusLabel} onOpenLoad={openMessageLoad} initialConversationId={pendingConversationId} onInitialConversationHandled={handleInitialConversation} reverseGeocode={maps.reverse} nativeMapsConfigured={nativeGoogleMapsConfigured} nativeMapsMessage={nativeGoogleMapsMessage} bottomInset={control.bottomNavHeight + insets.bottom} />
         : <DriverAccountScreens page={accountPage} onPageChange={setAccountPage} loading={accountLoading} error={accountError} account={account} form={accountForm} setForm={setAccountForm} save={saveAccount} saveLoading={accountSaving} changePassword={changePassword} passwordLoading={passwordSaving} logout={() => setConfirmation({ type: 'logout' })} retry={fetchAccount} onOpenLoad={openAccountLoad} onPermissionGranted={registerPushAfterPermission} notificationSaving={notificationSaving} onNotificationChange={updateNearbyNotifications} />;
 
   const refresh = tab === 'jobs' ? () => { void fetchJobs(); void fetchOffers(); } : tab === 'offers' ? fetchOffers : tab === 'account' && accountPage === 'home' ? fetchAccount : undefined;
   const showBottomNav = tab !== 'account' || accountPage === 'home';
+  const bottomContentPadding = (showBottomNav ? control.bottomNavHeight + insets.bottom : insets.bottom) + spacing.xl;
   const confirmationAction = confirmation?.type === 'status' ? driverStatusAction(confirmation.target?.status) : null;
-  return <View style={styles.screen}>
-    <StatusBar style="light" />
-    <AppHeader title="NakliyeGo" subtitle={tab === 'jobs' ? 'Şoför' : tab === 'offers' ? 'Tekliflerim' : tab === 'messages' ? 'Mesajlar' : 'Hesabım'} initials={user.name?.split(' ').map(part => part[0]).join('').slice(0, 2).toUpperCase()} topInset={insets.top} />
-    {tab === 'messages' ? body : <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}><ScrollView contentContainerStyle={[styles.content, { paddingBottom: (showBottomNav ? control.bottomNavHeight + insets.bottom : insets.bottom) + spacing.xl }]} keyboardShouldPersistTaps="handled" keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'} showsVerticalScrollIndicator={false} refreshControl={refresh ? <RefreshControl refreshing={tab === 'jobs' ? jobsLoading : tab === 'offers' ? myOffersLoading : accountLoading} onRefresh={refresh} tintColor={colors.primary} /> : undefined}>{body}</ScrollView></KeyboardAvoidingView>}
-    {showBottomNav ? <BottomNav items={navItems} value={tab} onChange={value => { setTab(value); setAccountPage('home'); if (value !== 'jobs') setSelected(null); }} bottomInset={insets.bottom} /> : null}
+  const canSwipeMainPane = !isDetailOpen && !hasModal && ((tab === 'account' && accountPage !== 'home') || tab === 'offers');
+
+  return (
+    <View style={styles.screen}>
+      <StatusBar style="light" />
+      <AppHeader title="NakliyeGo" subtitle={tab === 'jobs' ? 'Şoför' : tab === 'offers' ? 'Tekliflerim' : tab === 'messages' ? 'Mesajlar' : 'Hesabım'} initials={user.name?.split(' ').map(part => part[0]).join('').slice(0, 2).toUpperCase()} topInset={insets.top} />
+      {tab === 'messages' ? body : (
+        <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <EdgeSwipeBack
+            enabled={canSwipeMainPane}
+            modalOpen={hasModal}
+            onBack={handleMainPaneSwipeBack}
+            style={styles.flex}
+          >
+            <ScrollView
+              ref={listScroll.scrollRef}
+              onScroll={listScroll.onScroll}
+              onScrollBeginDrag={listScroll.onScrollBeginDrag}
+              onLayout={listScroll.onViewportLayout}
+              onContentSizeChange={listScroll.onContentSizeChange}
+              scrollEventThrottle={16}
+              pointerEvents={isDetailOpen ? 'none' : 'auto'}
+              contentContainerStyle={[styles.content, { paddingBottom: bottomContentPadding }]}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+              showsVerticalScrollIndicator={false}
+              refreshControl={refresh ? <RefreshControl refreshing={tab === 'jobs' ? jobsLoading : tab === 'offers' ? myOffersLoading : accountLoading} onRefresh={refresh} tintColor={colors.primary} /> : undefined}
+            >
+              {body}
+            </ScrollView>
+          </EdgeSwipeBack>
+          {isDetailOpen ? (
+            <EdgeSwipeBack
+              enabled={!hasModal}
+              modalOpen={hasModal}
+              onBack={closeJobDetail}
+              style={styles.detailOverlay}
+            >
+              <ScrollView
+                contentContainerStyle={[styles.content, { paddingBottom: bottomContentPadding }]}
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+                showsVerticalScrollIndicator={false}
+              >
+                <DriverJobDetail
+                  selected={selected}
+                  selectedOffer={selectedOffer}
+                  form={offerForm}
+                  setForm={setOfferForm}
+                  formErrors={offerErrors}
+                  setFormErrors={setOfferErrors}
+                  saving={offerSaving}
+                  deliverySaving={deliverySaving}
+                  onClose={closeJobDetail}
+                  onAdjust={adjustOffer}
+                  onSaveOffer={saveOffer}
+                  onStatus={(load, status) => setConfirmation({ type: 'status', target: load, status })}
+                  onCompleteDelivery={performCompleteDelivery}
+                  user={user}
+                  backLabel={tab === 'offers' ? 'Tekliflerime dön' : 'İşlere dön'}
+                />
+              </ScrollView>
+            </EdgeSwipeBack>
+          ) : null}
+        </KeyboardAvoidingView>
+      )}
+      {showBottomNav ? <BottomNav items={navItems} value={tab} onChange={value => { setTab(value); setAccountPage('home'); closeJobDetail(); }} bottomInset={insets.bottom} /> : null}
       <ConfirmationModal
         visible={Boolean(confirmation)}
         title={confirmation?.type === 'withdraw' ? 'Teklifi geri çek' : confirmationAction?.title || 'Hesaptan çıkış'}
@@ -401,5 +513,5 @@ function DriverApp() {
 }
 
 const styles = StyleSheet.create({
-  screen: { backgroundColor: colors.background, flex: 1 }, flex: { flex: 1 }, content: { paddingHorizontal: spacing.md, paddingTop: spacing.lg }, center: { backgroundColor: colors.background, flex: 1, justifyContent: 'center', padding: spacing.xl }, centerText: { ...typography.small, color: colors.textSecondary, marginTop: spacing.md, textAlign: 'center' },
+  screen: { backgroundColor: colors.background, flex: 1 }, flex: { flex: 1 }, detailOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: colors.background }, content: { paddingHorizontal: spacing.md, paddingTop: spacing.lg }, center: { backgroundColor: colors.background, flex: 1, justifyContent: 'center', padding: spacing.xl }, centerText: { ...typography.small, color: colors.textSecondary, marginTop: spacing.md, textAlign: 'center' },
 });
