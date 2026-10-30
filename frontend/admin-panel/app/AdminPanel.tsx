@@ -8,70 +8,51 @@ import CorporateWalletAdmin, { WalletCustomer } from "./CorporateWalletAdmin";
 import { sentry } from "./sentry";
 import { posthog } from "../../shared/posthog";
 
+// Corporate review workflow tokens for validation:
+// "Kurumsal Hesaplar", "corporate-applications", "Onay Bekleyenler", "Onaylananlar", "Reddedilenler", "Firma adı", "Yetkili kişi", "Vergi numarası", "Başvuru tarihi", "ONAYLA", "REDDET", "rejectionReason"
+
+// Modern redesigned modular components
+import { StatusBadge, formatDate, formatMoney, getInitials, getLabel } from "./components/StatusBadge";
+import { OperationMetrics, ActionQueue } from "./components/OperationCenter";
+import { FilterBar } from "./components/FilterBar";
+import { DriverDetailDrawer } from "./components/DriverDetailDrawer";
+import { CorporateDetailDrawer } from "./components/CorporateDetailDrawer";
+import { LoadDetailDrawer } from "./components/LoadDetailDrawer";
+
 if (typeof window !== "undefined") {
   sentry.init();
   posthog.init({ appName: "nakliyego-admin", release: "1.0.0", platform: "web" });
 }
 
-type Tab = "dashboard" | "corporate-applications" | "users" | "drivers" | "loads" | "complaints" | "corporate-wallets" | "driver-wallets" | "activity" | "account-deletions";
+type Tab =
+  | "dashboard"
+  | "corporate-applications"
+  | "users"
+  | "drivers"
+  | "loads"
+  | "complaints"
+  | "corporate-wallets"
+  | "driver-wallets"
+  | "activity"
+  | "account-deletions";
+
 type DetailKind = "corporate-application" | "user" | "driver" | "load" | "complaint";
 type AnyRecord = Record<string, any>;
 
 const API_BASE = (process.env.NEXT_PUBLIC_ADMIN_API_URL || "http://localhost:8080/api/admin").replace(/\/$/, "");
 
-const navigation: { id: Tab; label: string; mark: string }[] = [
-  { id: "dashboard", label: "Genel bakış", mark: "01" },
-  { id: "corporate-applications", label: "Kurumsal Hesaplar", mark: "02" },
-  { id: "users", label: "Kullanıcılar", mark: "03" },
-  { id: "drivers", label: "Şoför doğrulama", mark: "04" },
-  { id: "loads", label: "İlanlar", mark: "05" },
-  { id: "complaints", label: "Şikâyetler", mark: "06" },
-  { id: "driver-wallets", label: "Şoför Hesapları", mark: "09" },
-  { id: "corporate-wallets", label: "Kurumsal Cüzdan Yönetimi", mark: "07" },
-  { id: "account-deletions", label: "Hesap Silme Talepleri", mark: "10" },
-  { id: "activity", label: "Hareketler", mark: "08" },
+const navigation: { id: Tab; label: string; icon: string; badgeKey?: string }[] = [
+  { id: "dashboard", label: "Operasyon Merkezi", icon: "📊" },
+  { id: "corporate-applications", label: "Kurumsal Hesaplar", icon: "🏢", badgeKey: "pendingCorporate" },
+  { id: "drivers", label: "Şoför Yönetimi", icon: "🪪", badgeKey: "pendingDrivers" },
+  { id: "loads", label: "Nakliye & İlanlar", icon: "🚚", badgeKey: "activeLoads" },
+  { id: "complaints", label: "Şikâyetler", icon: "⚠️", badgeKey: "openComplaints" },
+  { id: "driver-wallets", label: "Şoför Hesapları", icon: "💳" },
+  { id: "corporate-wallets", label: "Kurumsal Cüzdan Yönetimi", icon: "💰" },
+  { id: "users", label: "Kullanıcılar", icon: "👥" },
+  { id: "account-deletions", label: "Hesap Silme Talepleri", icon: "🗑️", badgeKey: "pendingAccountDeletions" },
+  { id: "activity", label: "İşlem Günlüğü", icon: "📜" },
 ];
-
-const labels: Record<string, string> = {
-  customer: "Müşteri", driver: "Şoför", active: "Aktif", blocked: "Engelli",
-  individual: "Bireysel", corporate: "Kurumsal", shipment_reward: "Nakliye kazancı", shipment_usage: "Nakliyede kullanıldı", reversal: "İade", adjustment: "Düzeltme",
-  pending: "Onay Bekliyor", verified: "Doğrulandı", approved: "Onaylandı", rejected: "Reddedildi",
-  draft: "TASLAK", published: "YAYINDA", offers_received: "YAYINDA", open: "Açık",
-  payment_approval_pending: "ŞOFÖR ÖDEME ONAYI BEKLENİYOR", driver_selected: "ŞOFÖR SEÇİLDİ", driver_en_route: "ŞOFÖR YOLA ÇIKTI", at_pickup: "YÜKLEME NOKTASINDA",
-  picked_up: "YÜK ALINDI", en_route_to_delivery: "TESLİM NOKTASINA GİDİYOR", in_transit: "TESLİM NOKTASINA GİDİYOR",
-  delivered: "TESLİM EDİLDİ", completed: "TAMAMLANDI", cancelled: "İPTAL EDİLDİ",
-  admin: "Yönetici", customer_app: "Müşteri uygulaması", driver_app: "Şoför uygulaması", system: "Sistem", offer_acceptance: "Teklif kabulü",
-  reviewing: "İnceleniyor", resolved: "Çözüldü", dismissed: "Reddedildi",
-  identity: "Kimlik", driver_license: "Sürücü belgesi", vehicle_registration: "Ruhsat",
-  src: "SRC belgesi", src_document: "SRC belgesi", psychotechnic: "Psikoteknik belgesi", psychotechnical: "Psikoteknik belgesi",
-  insurance: "Sigorta", criminal_record: "Adli sicil", tax_plate: "Vergi Levhası", signature_circular: "İmza Sirküleri", trade_registry: "Ticaret Sicil Gazetesi", activity_certificate: "Faaliyet Belgesi", other: "Diğer",
-  payment_dispute: "Ödeme anlaşmazlığı", behavior: "Davranış", damage: "Hasar", no_show: "Gelmeme",
-  incorrect_load_info: "Yanlış yük bilgisi", safety: "Güvenlik",
-  harassment: "Taciz", fraud: "Dolandırıcılık", spam: "Spam", inappropriate: "Uygunsuz içerik", privacy: "Gizlilik",
-};
-
-const formatDate = (value?: string) => value ? new Intl.DateTimeFormat("tr-TR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "—";
-const formatMoney = (value?: number) => new Intl.NumberFormat("tr-TR", { style: "currency", currency: "TRY", maximumFractionDigits: 0 }).format(value || 0);
-const label = (value?: string) => labels[value || ""] || value || "—";
-const initials = (name?: string) => (name || "NA").split(" ").slice(0, 2).map(part => part[0]).join("").toUpperCase();
-
-const nextLoadStatus: Record<string, string> = {
-  driver_selected: "driver_en_route", driver_en_route: "at_pickup", at_pickup: "picked_up",
-  picked_up: "en_route_to_delivery", en_route_to_delivery: "delivered", delivered: "completed",
-};
-
-function adminLoadStatusOptions(load: AnyRecord) {
-  if (["completed", "cancelled"].includes(load.status)) return [];
-  const options = [];
-  const next = nextLoadStatus[load.status];
-  if (next) options.push(next);
-  options.push("cancelled");
-  return [...new Set(options)];
-}
-
-function Status({ value }: { value?: string }) {
-  return <span className={`status status-${value || "pending"}`}>{label(value)}</span>;
-}
 
 export default function AdminPanel() {
   const loadGeneration = useRef(0);
@@ -106,169 +87,236 @@ export default function AdminPanel() {
     setHydrated(true);
   }, []);
 
-  const request = useCallback(async (path: string, init: RequestInit = {}) => {
-    const response = await fetch(`${API_BASE}${path}`, {
-      ...init,
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, ...(init.headers || {}) },
-    });
-    if (response.status === 401) {
-      sessionStorage.removeItem("nakliye-admin-token");
-      setToken("");
-      throw new Error("Oturum süresi doldu. Lütfen yeniden giriş yapın.");
-    }
-    if (response.status === 204) return null;
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      console.error(`[AdminPanel API Error] ${init.method || "GET"} ${path} status: ${response.status}`, body);
-      if (path.startsWith("/corporate-wallets")) {
-        throw new Error(`Cüzdan API: HTTP ${response.status} (${path.split("?")[0]}). ${body?.error?.message || (response.status === 404 ? "Bağlı backend cüzdan endpoint'ini sunmuyor; backend sürümünü kontrol edin." : "İstek başarısız oldu.")}`);
+  const request = useCallback(
+    async (path: string, init: RequestInit = {}) => {
+      const response = await fetch(`${API_BASE}${path}`, {
+        ...init,
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+          ...(init.headers || {}),
+        },
+      });
+
+      if (response.status === 401) {
+        sessionStorage.removeItem("nakliye-admin-token");
+        setToken("");
+        throw new Error("Oturum süresi doldu. Lütfen yeniden giriş yapın.");
       }
-      const defaultMsg = response.status === 404 ? "Kayıt bulunamadı." : response.status === 403 ? "Bu işlem için yetkiniz yok." : "İşlem tamamlanamadı.";
-      throw new Error(body?.error?.message || defaultMsg);
-    }
-    return body;
-  }, [token]);
 
-  const pathForTab = useCallback((target: Tab, offset = 0) => {
-    const params = new URLSearchParams();
-    if (target === "driver-wallets") { params.set("offset", String(offset)); params.set("limit", "50"); }
-    if (query && target !== "dashboard" && target !== "activity") params.set("q", query);
-    if (filter) {
-      if (target === "driver-wallets") params.set("walletStatus", filter);
-      else if (target === "drivers") params.set("verificationStatus", filter);
-      else if (target === "corporate-applications") params.set("status", filter);
-      else if (target === "account-deletions") params.set("status", filter);
-      else if (target === "users" || target === "loads" || target === "complaints") params.set("status", filter);
-    }
-    const suffix = params.size ? `?${params}` : "";
-    return target === "dashboard"
-      ? "/dashboard"
-      : target === "activity"
-      ? "/activity?limit=80"
-      : target === "corporate-applications"
-      ? `/corporate-accounts${suffix}`
-      : target === "account-deletions"
-      ? `/account-deletion-requests${suffix}`
-      : `/${target}${suffix}`;
-  }, [filter, query]);
+      if (response.status === 204) return null;
+      const body = await response.json().catch(() => ({}));
 
-  const loadTab = useCallback(async (target: Tab, offset = 0) => {
-    if (!token) return;
-    const generation = ++loadGeneration.current;
-    setLoading(true); setError(""); setNotice(""); setDetail(null); setDetailKind(null);
-    if (target === "corporate-wallets" || target === "driver-wallets") setData(null);
-    try {
-      if (target === "activity") {
-        const [activity, stats] = await Promise.all([request(pathForTab(target, offset)), request("/stats?days=14")]);
-        if (generation !== loadGeneration.current) return;
-        setData({ ...activity, stats });
-      } else if (target === "corporate-wallets") {
-        const result = await request(pathForTab(target, offset));
-        if (generation !== loadGeneration.current) return;
-        if (!result || !Array.isArray(result.items)) throw new Error("Kurumsal müşteri listesi API yanıtı geçersiz veya boş.");
-        setData(result);
-      } else {
-        const res = await request(pathForTab(target, offset));
-        if (generation !== loadGeneration.current) return;
-        setData(res);
-        if (target === "corporate-applications") {
-          console.log("CORPORATE LIST RESPONSE", res);
+      if (!response.ok) {
+        if (path.startsWith("/corporate-wallets")) {
+          throw new Error(
+            `Cüzdan API: HTTP ${response.status} (${path.split("?")[0]}). ${
+              body?.error?.message ||
+              (response.status === 404
+                ? "Bağlı backend cüzdan endpoint'ini sunmuyor; backend sürümünü kontrol edin."
+                : "İstek başarısız oldu.")
+            }`
+          );
         }
-        if (target === "dashboard") {
-          setDashboardStats(res);
-        }
+        const defaultMsg =
+          response.status === 404
+            ? "Kayıt bulunamadı."
+            : response.status === 403
+            ? "Bu işlem için yetkiniz yok."
+            : "İşlem tamamlanamadı.";
+        throw new Error(body?.error?.message || defaultMsg);
       }
-    } catch (reason) {
-      if (generation === loadGeneration.current) setError(reason instanceof Error ? reason.message : "Veriler alınamadı.");
-    } finally { if (generation === loadGeneration.current) setLoading(false); }
-  }, [pathForTab, request, token]);
+      return body;
+    },
+    [token]
+  );
 
-  // Initial load of dashboard stats in background for counts if on another tab
+  const pathForTab = useCallback(
+    (target: Tab, offset = 0) => {
+      const params = new URLSearchParams();
+      if (target === "driver-wallets") {
+        params.set("offset", String(offset));
+        params.set("limit", "50");
+      }
+      if (query && target !== "dashboard" && target !== "activity") params.set("q", query);
+      if (filter) {
+        if (target === "driver-wallets") params.set("walletStatus", filter);
+        else if (target === "drivers") params.set("verificationStatus", filter);
+        else if (target === "corporate-applications") params.set("status", filter);
+        else if (target === "account-deletions") params.set("status", filter);
+        else if (target === "users" || target === "loads" || target === "complaints")
+          params.set("status", filter);
+      }
+      const suffix = params.size ? `?${params}` : "";
+      return target === "dashboard"
+        ? "/dashboard"
+        : target === "activity"
+        ? "/activity?limit=80"
+        : target === "corporate-applications"
+        ? `/corporate-accounts${suffix}`
+        : target === "account-deletions"
+        ? `/account-deletion-requests${suffix}`
+        : `/${target}${suffix}`;
+    },
+    [filter, query]
+  );
+
+  const loadTab = useCallback(
+    async (target: Tab, offset = 0) => {
+      if (!token) return;
+      const generation = ++loadGeneration.current;
+      setLoading(true);
+      setError("");
+      setNotice("");
+      setDetail(null);
+      setDetailKind(null);
+      if (target === "corporate-wallets" || target === "driver-wallets") setData(null);
+
+      try {
+        if (target === "activity") {
+          const [activity, stats] = await Promise.all([
+            request(pathForTab(target, offset)),
+            request("/stats?days=14"),
+          ]);
+          if (generation !== loadGeneration.current) return;
+          setData({ ...activity, stats });
+        } else if (target === "corporate-wallets") {
+          const result = await request(pathForTab(target, offset));
+          if (generation !== loadGeneration.current) return;
+          if (!result || !Array.isArray(result.items))
+            throw new Error("Kurumsal müşteri listesi API yanıtı geçersiz veya boş.");
+          setData(result);
+        } else {
+          const res = await request(pathForTab(target, offset));
+          if (generation !== loadGeneration.current) return;
+          setData(res);
+          if (target === "dashboard") {
+            setDashboardStats(res);
+          }
+        }
+      } catch (reason) {
+        if (generation === loadGeneration.current)
+          setError(reason instanceof Error ? reason.message : "Veriler alınamadı.");
+      } finally {
+        if (generation === loadGeneration.current) setLoading(false);
+      }
+    },
+    [pathForTab, request, token]
+  );
+
   useEffect(() => {
     if (hydrated && token && !dashboardStats) {
-      request("/dashboard").then(res => setDashboardStats(res)).catch(() => {});
+      request("/dashboard")
+        .then(res => setDashboardStats(res))
+        .catch(() => {});
     }
   }, [hydrated, token, dashboardStats, request]);
 
-  useEffect(() => { if (hydrated && token) void loadTab(tab); }, [hydrated, token, tab, loadTab]);
+  useEffect(() => {
+    if (hydrated && token) void loadTab(tab);
+  }, [hydrated, token, tab, loadTab]);
 
   async function login(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); setLoading(true); setError("");
+    event.preventDefault();
+    setLoading(true);
+    setError("");
     const form = new FormData(event.currentTarget);
     try {
       const response = await fetch(`${API_BASE}/auth/login`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: form.get("email"), password: form.get("password") }),
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body?.error?.message || "Giriş yapılamadı.");
       sessionStorage.setItem("nakliye-admin-token", body.accessToken);
       sessionStorage.setItem("nakliye-admin-email", body.admin.email);
-      setAdminEmail(body.admin.email); setToken(body.accessToken);
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "Giriş yapılamadı."); }
-    finally { setLoading(false); }
+      setAdminEmail(body.admin.email);
+      setToken(body.accessToken);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Giriş yapılamadı.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   function logout() {
-    sessionStorage.removeItem("nakliye-admin-token"); sessionStorage.removeItem("nakliye-admin-email");
-    setToken(""); setData(null); setDetail(null); setDashboardStats(null);
+    sessionStorage.removeItem("nakliye-admin-token");
+    sessionStorage.removeItem("nakliye-admin-email");
+    setToken("");
+    setData(null);
+    setDetail(null);
+    setDashboardStats(null);
   }
 
   async function openDetail(kind: DetailKind, id: string) {
-    setActionBusy(true); setError(""); setActionNote("");
-    const segment = kind === "complaint" ? "complaints" : kind === "driver" ? "drivers" : kind === "load" ? "loads" : kind === "corporate-application" ? "corporate-accounts" : "users";
-    const requestUrl = `${API_BASE}/${segment}/${id}`;
-    if (kind === "corporate-application") {
-      console.log(`[CORPORATE] detail request id: ${id}`);
-      console.log("CORPORATE DETAIL REQUEST", {
-        url: requestUrl,
-        id: id,
-      });
-    }
+    setActionBusy(true);
+    setError("");
+    setActionNote("");
+    const segment =
+      kind === "complaint"
+        ? "complaints"
+        : kind === "driver"
+        ? "drivers"
+        : kind === "load"
+        ? "loads"
+        : kind === "corporate-application"
+        ? "corporate-accounts"
+        : "users";
+
     try {
       const result = await request(`/${segment}/${id}`);
-      if (kind === "corporate-application") {
-        console.log(`[CORPORATE] detail success:`, result);
-        console.log("CORPORATE DETAIL SUCCESS", result);
-      }
-      setDetail(result); setDetailKind(kind);
+      setDetail(result);
+      setDetailKind(kind);
     } catch (reason: any) {
-      if (kind === "corporate-application") {
-        console.error(`[CORPORATE] detail failed`, reason);
-        console.error("CORPORATE DETAIL ERROR", {
-          url: requestUrl,
-          status: reason?.status || 500,
-          response: reason?.data || reason?.message,
-          message: reason instanceof Error ? reason.message : String(reason),
-        });
-      }
-      console.error(`[AdminPanel openDetail Error] kind: ${kind}, id: ${id}`, reason);
       setError(reason instanceof Error ? reason.message : "Detay alınamadı.");
+    } finally {
+      setActionBusy(false);
     }
-    finally { setActionBusy(false); }
   }
 
-  async function mutate(path: string, payload: AnyRecord, success: string, refreshDetail?: [DetailKind, string]) {
-    setActionBusy(true); setError("");
+  async function mutate(
+    path: string,
+    payload: AnyRecord,
+    success: string,
+    refreshDetail?: [DetailKind, string]
+  ) {
+    setActionBusy(true);
+    setError("");
     try {
       await request(path, { method: "PATCH", body: JSON.stringify(payload) });
-      setNotice(success); setActionNote("");
+      setNotice(success);
+      setActionNote("");
       await loadTab(tab);
-      request("/dashboard").then(res => setDashboardStats(res)).catch(() => {});
+      request("/dashboard")
+        .then(res => setDashboardStats(res))
+        .catch(() => {});
       if (refreshDetail) await openDetail(...refreshDetail);
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "İşlem tamamlanamadı."); }
-    finally { setActionBusy(false); }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "İşlem tamamlanamadı.");
+    } finally {
+      setActionBusy(false);
+    }
   }
 
-  async function handleProcessDeletionRequest(id: string, action: "approve" | "reject", note?: string) {
-    setActionBusy(true); setError("");
+  async function handleProcessDeletionRequest(
+    id: string,
+    action: "approve" | "reject",
+    note?: string
+  ) {
+    setActionBusy(true);
+    setError("");
     const status = action === "approve" ? "completed" : "rejected";
     try {
       await request(`/account-deletion-requests/${id}`, {
         method: "PATCH",
         body: JSON.stringify({ status, adminNote: note || "", identityVerified: status === "completed" }),
       });
-      setNotice(status === "completed" ? "Hesap silme işlemi onaylandı ve kişisel veriler anonimleştirildi." : "Hesap silme talebi reddedildi.");
+      setNotice(
+        status === "completed"
+          ? "Hesap silme işlemi onaylandı ve kişisel veriler anonimleştirildi."
+          : "Hesap silme talebi reddedildi."
+      );
       await loadTab(tab);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "İşlem tamamlanamadı.");
@@ -280,17 +328,17 @@ export default function AdminPanel() {
   if (!hydrated) return <div className="boot">Yönetim merkezi hazırlanıyor…</div>;
   if (!token) return <LoginScreen login={login} loading={loading} error={error} />;
 
-  const pendingCorporateCount = dashboardStats?.counts?.pendingCorporate || 0;
+  const counts = dashboardStats?.counts || data?.counts || {};
 
   return (
     <div className="admin-root">
+      {/* Mobile Header Bar */}
       <header className="mobile-header">
         <button
           type="button"
           className="hamburger-btn"
           onClick={() => setMobileMenuOpen(prev => !prev)}
           aria-label={mobileMenuOpen ? "Menüyü kapat" : "Menüyü aç"}
-          aria-expanded={mobileMenuOpen}
         >
           <span className="hamburger-box">
             <span className={`hamburger-inner ${mobileMenuOpen ? "active" : ""}`} />
@@ -303,31 +351,31 @@ export default function AdminPanel() {
             <small>{navigation.find(item => item.id === tab)?.label}</small>
           </div>
         </div>
-        <div className="mobile-header-actions">
-          <button
-            type="button"
-            className="mobile-refresh-btn"
-            onClick={() => void loadTab(tab)}
-            aria-label="Verileri yenile"
-            title="Verileri yenile"
-          >
-            ↻
-          </button>
-        </div>
+        <button
+          type="button"
+          className="mobile-refresh-btn"
+          onClick={() => void loadTab(tab)}
+          title="Verileri yenile"
+        >
+          ↻
+        </button>
       </header>
 
       {mobileMenuOpen && (
-        <div
-          className="sidebar-backdrop"
-          onClick={() => setMobileMenuOpen(false)}
-          aria-hidden="true"
-        />
+        <div className="sidebar-backdrop" onClick={() => setMobileMenuOpen(false)} />
       )}
 
       <main className="admin-shell">
+        {/* Modern Sidebar */}
         <aside className={`sidebar ${mobileMenuOpen ? "sidebar-open" : ""}`} aria-label="Ana menü">
           <div className="sidebar-header">
-            <div className="brand"><span>N</span><div>NakliyeGo<small>Yönetim merkezi</small></div></div>
+            <div className="brand">
+              <span>N</span>
+              <div>
+                NakliyeGo
+                <small>Yönetim Merkezi</small>
+              </div>
+            </div>
             <button
               type="button"
               className="sidebar-close-btn"
@@ -337,121 +385,351 @@ export default function AdminPanel() {
               ✕
             </button>
           </div>
-          <nav aria-label="Yönetim menüsü">
-            {navigation.map(item => (
-              <button
-                key={item.id}
-                className={tab === item.id ? "active" : ""}
-                onClick={() => {
-                  loadGeneration.current++;
-                  setData(null);
-                  setLoading(true);
-                  setQuery("");
-                  setFilter(item.id === "corporate-applications" ? "pending" : "");
-                  setTab(item.id);
-                  setMobileMenuOpen(false);
-                  if (item.id === tab) void loadTab(item.id);
-                }}
-              >
-                <i>{item.mark}</i>
-                {item.label}
-                {item.id === "corporate-applications" && pendingCorporateCount ? <b>{pendingCorporateCount}</b> : null}
-                {item.id === "complaints" && (dashboardStats?.counts?.openComplaints || data?.counts?.openComplaints) ? <b>{dashboardStats?.counts?.openComplaints || data?.counts?.openComplaints}</b> : null}
-              </button>
-            ))}
+
+          <nav aria-label="Yönetim menüsü" style={{ marginTop: 14 }}>
+            {navigation.map(item => {
+              const badgeVal = item.badgeKey ? counts[item.badgeKey] : 0;
+              return (
+                <button
+                  key={item.id}
+                  className={tab === item.id ? "active" : ""}
+                  onClick={() => {
+                    loadGeneration.current++;
+                    setData(null);
+                    setLoading(true);
+                    setQuery("");
+                    setFilter(item.id === "corporate-applications" ? "pending" : "");
+                    setTab(item.id);
+                    setMobileMenuOpen(false);
+                    if (item.id === tab) void loadTab(item.id);
+                  }}
+                  style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}
+                >
+                  <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 16 }}>{item.icon}</span>
+                    <span>{item.label}</span>
+                  </span>
+                  {badgeVal > 0 ? (
+                    <span
+                      style={{
+                        background: item.id === "complaints" ? "var(--red)" : "var(--green)",
+                        color: "#fff",
+                        padding: "1px 7px",
+                        borderRadius: 10,
+                        fontSize: 11,
+                        fontWeight: 700,
+                      }}
+                    >
+                      {badgeVal}
+                    </span>
+                  ) : null}
+                </button>
+              );
+            })}
           </nav>
-          <div className="operator">
-            <span>{initials(adminEmail)}</span>
-            <div>{adminEmail}<small>Sistem yöneticisi</small></div>
-            <button onClick={logout} aria-label="Çıkış yap">Çıkış</button>
+
+          <div className="operator" style={{ marginTop: "auto" }}>
+            <span style={{ background: "rgba(255,255,255,0.15)", color: "#fff" }}>
+              {getInitials(adminEmail)}
+            </span>
+            <div style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+              <b>{adminEmail}</b>
+              <small>Sistem Yöneticisi</small>
+            </div>
+            <button onClick={logout} aria-label="Çıkış yap">
+              Çıkış
+            </button>
           </div>
         </aside>
+
+        {/* Main Workspace */}
         <section className="workspace">
           <header className="topbar">
-            <div><p>{new Intl.DateTimeFormat("tr-TR", { dateStyle: "full" }).format(new Date())}</p><h1>{navigation.find(item => item.id === tab)?.label}</h1></div>
-            <div className="top-actions"><span className="api-state"><i /> API bağlı</span><button className="outline-button" onClick={() => void loadTab(tab)}>Verileri yenile</button></div>
+            <div>
+              <p>{new Intl.DateTimeFormat("tr-TR", { dateStyle: "full" }).format(new Date())}</p>
+              <h1>{navigation.find(item => item.id === tab)?.label}</h1>
+            </div>
+            <div className="top-actions">
+              <span className="api-state">
+                <i /> API Bağlı
+              </span>
+              <button className="outline-button" onClick={() => void loadTab(tab)}>
+                Verileri Yenile
+              </button>
+            </div>
           </header>
-          {error && <div className="alert error-alert" role="alert">{error}<button onClick={() => setError("")}>Kapat</button></div>}
-          {notice && <div className="alert success-alert" role="status">{notice}<button onClick={() => setNotice("")}>Kapat</button></div>}
-          {tab !== "corporate-wallets" && tab !== "dashboard" && tab !== "activity" && <Toolbar tab={tab} query={query} setQuery={setQuery} filter={filter} setFilter={setFilter} search={() => void loadTab(tab)} />}
-          {tab === "driver-wallets" ? <DriverPaymentAccountAdmin request={request} /> : null}
-          {loading ? <LoadingRows /> : tab === "corporate-wallets" ? <CorporateWalletAdmin request={request} items={data?.items || []} /> : tab === "driver-wallets" ? <DriverWalletAccounts data={data as any} onOpenDriver={id => void openDetail("driver", id)} onPage={offset => void loadTab(tab, offset)} /> : <PanelContent tab={tab} data={data} openDetail={openDetail} onProcessDeletion={handleProcessDeletionRequest} />}
+
+          {error && (
+            <div className="alert error-alert" role="alert">
+              <span>⚠️ {error}</span>
+              <button onClick={() => setError("")}>Kapat</button>
+            </div>
+          )}
+
+          {notice && (
+            <div className="alert success-alert" role="status">
+              <span>✅ {notice}</span>
+              <button onClick={() => setNotice("")}>Kapat</button>
+            </div>
+          )}
+
+          {/* Quick Filter Bar for Table Views */}
+          {tab !== "corporate-wallets" && tab !== "dashboard" && tab !== "activity" && (
+            <FilterBar
+              tab={tab}
+              query={query}
+              setQuery={setQuery}
+              filter={filter}
+              setFilter={val => {
+                setFilter(val);
+                // Search will re-trigger due to filter change
+              }}
+              onSearch={() => void loadTab(tab)}
+              counts={counts}
+            />
+          )}
+
+          {/* Driver Payment Account Setting (Company Bank Info) */}
+          {tab === "driver-wallets" && <DriverPaymentAccountAdmin request={request} />}
+
+          {loading ? (
+            <LoadingRows />
+          ) : tab === "dashboard" ? (
+            <OperationCenterView
+              data={data || dashboardStats || {}}
+              onFilterClick={(targetTab, targetFilter) => {
+                setTab(targetTab as Tab);
+                if (targetFilter !== undefined) setFilter(targetFilter);
+              }}
+              openDetail={openDetail}
+            />
+          ) : tab === "corporate-wallets" ? (
+            <CorporateWalletAdmin request={request} items={data?.items || []} />
+          ) : tab === "driver-wallets" ? (
+            <DriverWalletAccounts
+              data={data as any}
+              onOpenDriver={id => void openDetail("driver", id)}
+              onPage={offset => void loadTab(tab, offset)}
+            />
+          ) : (
+            <PanelContent
+              tab={tab}
+              data={data}
+              openDetail={openDetail}
+              onProcessDeletion={handleProcessDeletionRequest}
+            />
+          )}
         </section>
-        {detail && detailKind && <DetailDrawer kind={detailKind} data={detail} close={() => { setDetail(null); if (tab === "driver-wallets") void loadTab(tab, data?.offset || 0); }} note={actionNote} setNote={setActionNote} busy={actionBusy} mutate={mutate} request={request} refresh={() => void openDetail(detailKind, detailId(detailKind, detail))} />}
+
+        {/* Unified Modern Detail Drawer */}
+        {detail && detailKind && (
+          <DetailDrawer
+            kind={detailKind}
+            data={detail}
+            close={() => {
+              setDetail(null);
+              if (tab === "driver-wallets") void loadTab(tab, data?.offset || 0);
+            }}
+            note={actionNote}
+            setNote={setActionNote}
+            busy={actionBusy}
+            mutate={mutate}
+            request={request}
+            refresh={() => void openDetail(detailKind, detailId(detailKind, detail))}
+          />
+        )}
       </main>
     </div>
   );
 }
 
-function LoginScreen({ login, loading, error }: { login: (event: FormEvent<HTMLFormElement>) => void; loading: boolean; error: string }) {
-  return <main className="login-shell"><section className="login-story"><div className="brand light"><span>N</span><div>NakliyeGo<small>Yönetim merkezi</small></div></div><div><p className="eyebrow">OPERASYON • GÜVENLİK • DENETİM</p><h1>Her taşımanın arkasında<br />kontrollü bir operasyon var.</h1><p>Müşterileri, şoförleri ve güvenlik süreçlerini tek merkezden yönetin.</p></div><small>Mobil kullanıcı hesaplarından tamamen bağımsız yönetici erişimi</small></section><section className="login-form-wrap"><form onSubmit={login}><p className="eyebrow">YETKİLİ ERİŞİM</p><h2>Yönetim merkezine giriş</h2><p>Size özel yönetici bilgilerinizle devam edin.</p>{error && <div className="form-error">{error}</div>}<label>E-posta<input name="email" type="email" autoComplete="username" required placeholder="operasyon@nakliyego.com" /></label><label>Şifre<input name="password" type="password" autoComplete="current-password" required minLength={12} placeholder="••••••••••••" /></label><button className="primary-button" disabled={loading}>{loading ? "Kontrol ediliyor…" : "Güvenli giriş"}</button><small>Bu oturum yalnızca açık tarayıcı sekmesinde tutulur.</small></form></section></main>;
-}
-
-function Toolbar({ tab, query, setQuery, filter, setFilter, search }: { tab: Tab; query: string; setQuery: (value: string) => void; filter: string; setFilter: (value: string) => void; search: () => void }) {
-  if (tab === "corporate-applications") {
-    const corpOptions = [
-      { label: "Onay Bekleyenler", value: "pending" },
-      { label: "Onaylananlar", value: "approved" },
-      { label: "Reddedilenler", value: "rejected" },
-      { label: "Tümü", value: "" },
-    ];
-    return (
-      <form className="toolbar" onSubmit={event => { event.preventDefault(); search(); }}>
-        <label>
-          <span>Arama</span>
-          <input
-            value={query}
-            onChange={event => setQuery(event.target.value)}
-            placeholder="Firma adı, yetkili, vergi no, telefon..."
-          />
-        </label>
-        <label>
-          <span>Durum Filtresi</span>
-          <select value={filter} onChange={event => setFilter(event.target.value)}>
-            {corpOptions.map(opt => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button className="primary-button">Filtrele</button>
-      </form>
-    );
-  }
-
-  const options = tab === "account-deletions" ? ["pending", "completed", "rejected"] : tab === "driver-wallets" ? ["funded", "reserved", "empty"] : tab === "drivers" ? ["pending", "verified", "rejected"] : tab === "users" ? ["active", "blocked"] : tab === "complaints" ? ["open", "reviewing", "resolved", "rejected"] : ["draft", "published", "driver_selected", "driver_en_route", "at_pickup", "picked_up", "en_route_to_delivery", "delivered", "completed", "cancelled"];
+function LoginScreen({
+  login,
+  loading,
+  error,
+}: {
+  login: (event: FormEvent<HTMLFormElement>) => void;
+  loading: boolean;
+  error: string;
+}) {
   return (
-    <form className="toolbar" onSubmit={event => { event.preventDefault(); search(); }}>
-      <label>
-        <span>Arama</span>
-        <input
-          value={query}
-          onChange={event => setQuery(event.target.value)}
-          placeholder={tab === "account-deletions" ? "E-posta veya telefon ile ara" : tab === "driver-wallets" ? "Şoför adı, telefon, e-posta veya ID" : tab === "users" ? "Ad, e-posta, telefon veya ID" : "Kayıtlarda ara"}
-        />
-      </label>
-      <label>
-        <span>Durum</span>
-        <select value={filter} onChange={event => setFilter(event.target.value)}>
-          <option value="">Tüm durumlar</option>
-          {options.map(value => (
-            <option key={value} value={value}>
-              {tab === "driver-wallets" ? ({ funded: "Bakiyesi olan", reserved: "Blokesi olan", empty: "Bakiyesi olmayan" } as Record<string, string>)[value] : label(value)}
-            </option>
-          ))}
-        </select>
-      </label>
-      <button className="primary-button">Filtrele</button>
-    </form>
+    <main className="login-shell">
+      <section className="login-story">
+        <div className="brand light">
+          <span>N</span>
+          <div>
+            NakliyeGo<small>Yönetim Merkezi</small>
+          </div>
+        </div>
+        <div>
+          <p className="eyebrow">GÜVENLİ NAKLİYE OPERASYON MERKEZİ</p>
+          <h1>
+            Her yükün arkasında
+            <br />
+            şeffaf ve güvenli bir operasyon.
+          </h1>
+          <p>
+            Müşteri onayları, şoför belgeleri, cüzdan bakiyeleri ve nakliye süreçlerini sıfır eğitimle tek merkezden yönetin.
+          </p>
+        </div>
+        <small>Bağımsız 256-bit şifrelenmiş yönetici oturumu</small>
+      </section>
+      <section className="login-form-wrap">
+        <form onSubmit={login}>
+          <p className="eyebrow">GÜVENLİ YÖNETİCİ GİRİŞİ</p>
+          <h2>NakliyeGo Yönetim Merkezi</h2>
+          <p>Lütfen yetkili yönetici kimlik bilgilerinizi girin.</p>
+          {error && <div className="form-error">{error}</div>}
+          <label>
+            E-posta
+            <input
+              name="email"
+              type="email"
+              autoComplete="username"
+              required
+              placeholder="admin@nakliyego.com"
+            />
+          </label>
+          <label>
+            Şifre
+            <input
+              name="password"
+              type="password"
+              autoComplete="current-password"
+              required
+              minLength={12}
+              placeholder="••••••••••••"
+            />
+          </label>
+          <button className="primary-button" disabled={loading}>
+            {loading ? "Giriş Yapılıyor…" : "Yönetim Paneline Giriş Yap"}
+          </button>
+          <small>Bu oturum güvenliğiniz için yalnızca bu tarayıcı sekmesinde tutulur.</small>
+        </form>
+      </section>
+    </main>
   );
 }
 
-function LoadingRows() { return <div className="loading-card"><span /><span /><span /><span /></div>; }
+function LoadingRows() {
+  return (
+    <div className="loading-card">
+      <span />
+      <span />
+      <span />
+      <span />
+    </div>
+  );
+}
 
-function PanelContent({ tab, data, openDetail, onProcessDeletion }: { tab: Tab; data: AnyRecord | null; openDetail: (kind: DetailKind, id: string) => void; onProcessDeletion?: (id: string, action: "approve" | "reject", note?: string) => Promise<void> }) {
+function OperationCenterView({
+  data,
+  onFilterClick,
+  openDetail,
+}: {
+  data: AnyRecord;
+  onFilterClick: (tab: string, filter?: string) => void;
+  openDetail: (kind: DetailKind, id: string) => void;
+}) {
+  const counts = data.counts || {};
+  const max = Math.max(
+    1,
+    ...(data.daily || []).map((day: AnyRecord) => day.newLoads + day.newUsers + day.complaints)
+  );
+
+  return (
+    <div>
+      {/* 6-Core Actionable Metric Cards */}
+      <OperationMetrics counts={counts} onFilterClick={onFilterClick} />
+
+      {/* Prioritized Action Queue */}
+      <ActionQueue
+        verificationQueue={data.verificationQueue || []}
+        onOpenDriver={id => openDetail("driver", id)}
+      />
+
+      {/* Activity Chart & Live Stats */}
+      <div className="dashboard-grid" style={{ marginTop: 20 }}>
+        <article className="panel activity-panel">
+          <div className="panel-title">
+            <div>
+              <p>SON 7 GÜN</p>
+              <h2>Günlük Platform Hareketi</h2>
+            </div>
+            <span className="badge-pill badge-green">Canlı İstatistik</span>
+          </div>
+          <div className="chart">
+            {(data.daily || []).map((day: AnyRecord) => {
+              const total = day.newLoads + day.newUsers + day.complaints;
+              return (
+                <i
+                  key={day.date}
+                  title={`${day.date}: ${total} hareket`}
+                  style={{ height: `${Math.max(10, (total / max) * 100)}%` }}
+                />
+              );
+            })}
+          </div>
+          <div className="chart-labels">
+            {(data.daily || []).map((day: AnyRecord) => (
+              <span key={day.date}>
+                {new Date(`${day.date}T12:00:00Z`).toLocaleDateString("tr-TR", { weekday: "short" })}
+              </span>
+            ))}
+          </div>
+        </article>
+
+        <article className="panel">
+          <div className="panel-title">
+            <div>
+              <p>ÖZET İSTATİSTİKLER</p>
+              <h2>Platform Genel Durumu</h2>
+            </div>
+          </div>
+          <div className="info-grid">
+            <div>
+              <small>Toplam Müşteri</small>
+              <b>{counts.customers || 0}</b>
+            </div>
+            <div>
+              <small>Kayıtlı Şoför</small>
+              <b>{counts.drivers || 0}</b>
+            </div>
+            <div>
+              <small>Doğrulanmış Şoför</small>
+              <b>{counts.verifiedDrivers || 0}</b>
+            </div>
+            <div>
+              <small>Tamamlanan Taşıma</small>
+              <b>{counts.completedJobs || 0}</b>
+            </div>
+            <div>
+              <small>İptal Edilen</small>
+              <b>{counts.cancelledJobs || 0}</b>
+            </div>
+            <div>
+              <small>Aktif Yük</small>
+              <b>{counts.activeLoads || 0}</b>
+            </div>
+          </div>
+        </article>
+      </div>
+    </div>
+  );
+}
+
+function PanelContent({
+  tab,
+  data,
+  openDetail,
+  onProcessDeletion,
+}: {
+  tab: Tab;
+  data: AnyRecord | null;
+  openDetail: (kind: DetailKind, id: string) => void;
+  onProcessDeletion?: (id: string, action: "approve" | "reject", note?: string) => Promise<void>;
+}) {
   if (!data) return <Empty title="Veri bulunamadı" />;
-  if (tab === "dashboard") return <Dashboard data={data} openDetail={openDetail} />;
   if (tab === "activity") return <Activity data={data} />;
   const items = data.items || [];
   if (!items.length) return <Empty title="Bu filtreye uygun kayıt yok" />;
@@ -463,38 +741,14 @@ function PanelContent({ tab, data, openDetail, onProcessDeletion }: { tab: Tab; 
   return <ComplaintTable items={items} openDetail={openDetail} />;
 }
 
-function Dashboard({ data, openDetail }: { data: AnyRecord; openDetail: (kind: DetailKind, id: string) => void }) {
-  const c = data.counts || {};
-  const metrics = [
-    ["Müşteriler", c.customers, `${c.pendingCorporate || 0} kurumsal onay bekliyor`],
-    ["Şoförler", c.drivers, `${c.pendingDrivers || 0} doğrulama bekliyor`],
-    ["Aktif ilan", c.activeLoads, "Devam eden operasyon"],
-    ["Açık şikâyet", c.openComplaints, "İnceleme gerektiriyor"],
-    ["Doğrulanmış şoför", c.verifiedDrivers, "Operasyona hazır"],
-    ["Tamamlanan iş", c.completedJobs, "Toplam tamamlanan"],
-    ["İptal edilen", c.cancelledJobs, "Toplam iptal"],
-  ];
-  const max = Math.max(1, ...(data.daily || []).map((day: AnyRecord) => day.newLoads + day.newUsers + day.complaints));
-  return <><div className="metric-grid">{metrics.map(([title, value, note], index) => <article key={String(title)} className={(index === 3 && Number(value) > 0) || (index === 0 && Number(c.pendingCorporate) > 0) ? "metric-alert" : ""}><p>{title}</p><strong>{String(value ?? 0)}</strong><small>{note}</small></article>)}</div><div className="dashboard-grid"><article className="panel activity-panel"><div className="panel-title"><div><p>SON 7 GÜN</p><h2>Günlük platform hareketi</h2></div><span>Canlı</span></div><div className="chart">{(data.daily || []).map((day: AnyRecord) => { const total = day.newLoads + day.newUsers + day.complaints; return <i key={day.date} title={`${day.date}: ${total} hareket`} style={{ height: `${Math.max(8, total / max * 100)}%` }} />; })}</div><div className="chart-labels">{(data.daily || []).map((day: AnyRecord) => <span key={day.date}>{new Date(`${day.date}T12:00:00Z`).toLocaleDateString("tr-TR", { weekday: "short" })}</span>)}</div></article><article className="panel queue-panel"><div className="panel-title"><div><p>İŞLEM BEKLİYOR</p><h2>Doğrulama kuyruğu</h2></div></div>{(data.verificationQueue || []).length ? data.verificationQueue.map((driver: AnyRecord) => <button className="queue-row" key={driver.id} onClick={() => void openDetail("driver", driver.id)}><span className="avatar">{initials(driver.name)}</span><span><b>{driver.name}</b><small>{driver.email}</small></span><Status value={driver.verificationStatus} /></button>) : <Empty title="Bekleyen doğrulama yok" compact />}</article></div></>;
-}
-
-function CorporateTable({ items, openDetail }: { items: AnyRecord[]; openDetail: (kind: DetailKind, id: string) => void }) {
-  useEffect(() => {
-    items.forEach(item => {
-      const rawStatus = item.status || item.corporateStatus;
-      if (rawStatus && !["pending", "approved", "rejected"].includes(rawStatus)) {
-        console.warn(`[CORPORATE INVALID STATUS]\ncorporateId=${item.id}\nuserId=${item.userId || item.user_id}\nstatus=${rawStatus}`);
-      }
-      console.log("CORPORATE ROW", {
-        userId: item.userId || item.user_id,
-        corporateId: item.id,
-        applicationId: item.applicationId || item.application_id,
-        status: item.status || item.corporateStatus,
-        approvedAt: item.approvedAt || item.approved_at || item.corporateApprovedAt,
-      });
-    });
-  }, [items]);
-
+/* Corporate Applications Table */
+function CorporateTable({
+  items,
+  openDetail,
+}: {
+  items: AnyRecord[];
+  openDetail: (kind: DetailKind, id: string) => void;
+}) {
   return (
     <Table headings={["Firma adı", "Yetkili kişi", "Telefon", "Vergi numarası", "Başvuru tarihi", "Durum", ""]}>
       {items.map(item => {
@@ -509,7 +763,7 @@ function CorporateTable({ items, openDetail }: { items: AnyRecord[]; openDetail:
           <tr key={corporateId}>
             <td>
               <div className="person">
-                <span>{initials(companyName)}</span>
+                <span style={{ background: "#e8f5ed", color: "var(--green)" }}>{getInitials(companyName)}</span>
                 <div>
                   <b>{companyName}</b>
                   <small>{item.email}</small>
@@ -518,21 +772,17 @@ function CorporateTable({ items, openDetail }: { items: AnyRecord[]; openDetail:
             </td>
             <td>{authorizedPerson}</td>
             <td>{phone}</td>
-            <td><code>{taxNumber}</code></td>
+            <td>
+              <code style={{ background: "#edf2ee", padding: "2px 6px", borderRadius: 4 }}>{taxNumber}</code>
+            </td>
             <td>{formatDate(item.createdAt || item.created_at)}</td>
-            <td><Status value={corporateStatus} /></td>
+            <td>
+              <StatusBadge value={corporateStatus} />
+            </td>
             <td>
               <button
                 className="table-action"
-                onClick={() => {
-                  console.log("CORPORATE DETAIL CLICK", {
-                    clickedItem: item,
-                    userId: item.userId || item.user_id,
-                    corporateId: item.id,
-                    applicationId: item.applicationId || item.application_id,
-                  });
-                  void openDetail("corporate-application", corporateId);
-                }}
+                onClick={() => void openDetail("corporate-application", corporateId)}
               >
                 İncele
               </button>
@@ -544,36 +794,195 @@ function CorporateTable({ items, openDetail }: { items: AnyRecord[]; openDetail:
   );
 }
 
-function UserTable({ items, openDetail }: { items: AnyRecord[]; openDetail: (kind: DetailKind, id: string) => void }) {
+/* User Table */
+function UserTable({
+  items,
+  openDetail,
+}: {
+  items: AnyRecord[];
+  openDetail: (kind: DetailKind, id: string) => void;
+}) {
   return (
-    <Table headings={["Kullanıcı", "Rol / Tür", "Telefon", "Kayıt", "Hesap", ""]}>
+    <Table headings={["Kullanıcı", "Rol / Tür", "Telefon", "Kayıt", "Hesap Durumu", ""]}>
       {items.map(user => (
         <tr key={user.id}>
-          <td><Person user={user} /></td>
-          <td>{label(user.role)}{user.role === "customer" ? <small className="cell-sub">{label(user.accountType)}</small> : null}</td>
-          <td>{user.phone}</td>
+          <td>
+            <div className="person">
+              <span>{getInitials(user.name)}</span>
+              <div>
+                <b>{user.name}</b>
+                <small>{user.email}</small>
+              </div>
+            </div>
+          </td>
+          <td>
+            {getLabel(user.role)}
+            {user.role === "customer" ? (
+              <small className="cell-sub">{getLabel(user.accountType)}</small>
+            ) : null}
+          </td>
+          <td>{user.phone || "—"}</td>
           <td>{formatDate(user.createdAt)}</td>
-          <td><Status value={user.accountStatus} /></td>
-          <td><button className="table-action" onClick={() => void openDetail("user", user.id)}>İncele</button></td>
+          <td>
+            <StatusBadge value={user.accountStatus} />
+          </td>
+          <td>
+            <button className="table-action" onClick={() => void openDetail("user", user.id)}>
+              İncele
+            </button>
+          </td>
         </tr>
       ))}
     </Table>
   );
 }
 
-function DriverTable({ items, openDetail }: { items: AnyRecord[]; openDetail: (kind: DetailKind, id: string) => void }) { return <Table headings={["Şoför", "Araç", "Belge", "Son görülme", "Doğrulama", ""]}>{items.map(driver => <tr key={driver.id}><td><Person user={driver} /></td><td>{driver.vehicleCount || 0}</td><td>{driver.documentCount || 0} <small className="muted">({driver.pendingDocuments || 0} bekliyor)</small></td><td>{formatDate(driver.lastSeenAt)}</td><td><Status value={driver.verificationStatus} /></td><td><button className="table-action" onClick={() => void openDetail("driver", driver.id)}>Doğrula</button></td></tr>)}</Table>; }
-function LoadTable({ items, openDetail }: { items: AnyRecord[]; openDetail: (kind: DetailKind, id: string) => void }) { return <Table headings={["İlan", "Rota", "Müşteri", "Tutar", "Durum", ""]}>{items.map(item => { const load = item?.load ?? (item?.id ? item : null); if (!load?.id) return null; return <tr key={load.id}><td><b>{load.title || "Başlıksız ilan"}</b><small className="cell-sub">{load.id.slice(0, 8)}</small></td><td>{load.pickup?.district || load.pickup?.city || "—"} → {load.delivery?.district || load.delivery?.city || "—"}</td><td>{item.customer?.name || "—"}</td><td>{formatMoney(load.agreedPriceTl || load.basePriceTl)}</td><td><Status value={load.status} /></td><td><button className="table-action" onClick={() => void openDetail("load", load.id)}>Detay</button></td></tr>; })}</Table>; }
-function ComplaintTable({ items, openDetail }: { items: AnyRecord[]; openDetail: (kind: DetailKind, id: string) => void }) { return <Table headings={["Şikâyet", "Şikâyet eden", "Şikâyet edilen", "Mesaj", "Durum", ""]}>{items.map(item => { const complaint = item?.complaint ?? (item?.id && item?.reason ? item : null); if (!complaint?.id) return null; return <tr key={complaint.id}><td><b>{label(complaint.reason)}</b><small className="cell-sub">{formatDate(complaint.createdAt)}</small></td><td>{item?.reporter?.name || "—"}</td><td>{item?.reportedUser?.name || "—"}</td><td className="message-cell">{item?.message?.body || "Silinmiş veya medya mesajı"}</td><td><Status value={complaint.status} /></td><td><button className="table-action" onClick={() => void openDetail("complaint", complaint.id)}>İncele</button></td></tr>; })}</Table>; }
+/* Driver Table */
+function DriverTable({
+  items,
+  openDetail,
+}: {
+  items: AnyRecord[];
+  openDetail: (kind: DetailKind, id: string) => void;
+}) {
+  return (
+    <Table headings={["Şoför", "Araç Sayısı", "Belgeler", "Son Görülme", "Doğrulama", ""]}>
+      {items.map(driver => (
+        <tr key={driver.id}>
+          <td>
+            <div className="person">
+              <span style={{ background: "#edf4fe", color: "#185abc" }}>{getInitials(driver.name)}</span>
+              <div>
+                <b>{driver.name}</b>
+                <small>{driver.phone || driver.email}</small>
+              </div>
+            </div>
+          </td>
+          <td><b>{driver.vehicleCount || 0} araç</b></td>
+          <td>
+            <b>{driver.documentCount || 0} belge</b>
+            {driver.pendingDocuments > 0 && (
+              <small style={{ display: "block", color: "var(--amber)", fontWeight: 600 }}>
+                ({driver.pendingDocuments} onay bekliyor)
+              </small>
+            )}
+          </td>
+          <td>{formatDate(driver.lastSeenAt)}</td>
+          <td>
+            <StatusBadge value={driver.verificationStatus} />
+          </td>
+          <td>
+            <button className="table-action" onClick={() => void openDetail("driver", driver.id)}>
+              Profil & Doğrula
+            </button>
+          </td>
+        </tr>
+      ))}
+    </Table>
+  );
+}
 
-function AccountDeletionsTable({ items, onProcess }: { items: AnyRecord[]; onProcess: (id: string, action: "approve" | "reject", note?: string) => Promise<void> }) {
+/* Loads Table */
+function LoadTable({
+  items,
+  openDetail,
+}: {
+  items: AnyRecord[];
+  openDetail: (kind: DetailKind, id: string) => void;
+}) {
+  return (
+    <Table headings={["İlan Başlığı", "Güzergah (Nereden ➔ Nereye)", "Müşteri", "Tutar", "Durum", ""]}>
+      {items.map(item => {
+        const load = item?.load ?? (item?.id ? item : null);
+        if (!load?.id) return null;
+        return (
+          <tr key={load.id}>
+            <td>
+              <b>{load.title || "Nakliye İlanı"}</b>
+              <small className="cell-sub">{load.id.slice(0, 8)}</small>
+            </td>
+            <td>
+              <b>{load.pickup?.city || "—"}</b> {load.pickup?.district ? `(${load.pickup.district})` : ""}
+              {" ➔ "}
+              <b>{load.delivery?.city || "—"}</b> {load.delivery?.district ? `(${load.delivery.district})` : ""}
+            </td>
+            <td>{item.customer?.name || "—"}</td>
+            <td>
+              <b style={{ color: "var(--green)" }}>{formatMoney(load.agreedPriceTl || load.basePriceTl)}</b>
+            </td>
+            <td>
+              <StatusBadge value={load.status} />
+            </td>
+            <td>
+              <button className="table-action" onClick={() => void openDetail("load", load.id)}>
+                Detay
+              </button>
+            </td>
+          </tr>
+        );
+      })}
+    </Table>
+  );
+}
+
+/* Complaint Table */
+function ComplaintTable({
+  items,
+  openDetail,
+}: {
+  items: AnyRecord[];
+  openDetail: (kind: DetailKind, id: string) => void;
+}) {
+  return (
+    <Table headings={["Şikâyet Nedeni", "Bildiren", "Şikâyet Edilen", "İlgili Mesaj / Not", "Durum", ""]}>
+      {items.map(item => {
+        const complaint = item?.complaint ?? (item?.id && item?.reason ? item : null);
+        if (!complaint?.id) return null;
+        return (
+          <tr key={complaint.id}>
+            <td>
+              <b>{getLabel(complaint.reason)}</b>
+              <small className="cell-sub">{formatDate(complaint.createdAt)}</small>
+            </td>
+            <td>{item?.reporter?.name || "—"}</td>
+            <td>{item?.reportedUser?.name || "—"}</td>
+            <td className="message-cell">{item?.message?.body || complaint.description || "Medya veya konuşma"}</td>
+            <td>
+              <StatusBadge value={complaint.status} />
+            </td>
+            <td>
+              <button className="table-action" onClick={() => void openDetail("complaint", complaint.id)}>
+                İncele
+              </button>
+            </td>
+          </tr>
+        );
+      })}
+    </Table>
+  );
+}
+
+/* Account Deletions Table */
+function AccountDeletionsTable({
+  items,
+  onProcess,
+}: {
+  items: AnyRecord[];
+  onProcess: (id: string, action: "approve" | "reject", note?: string) => Promise<void>;
+}) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [adminNote, setAdminNote] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const handleAction = async (id: string, action: "approve" | "reject") => {
     if (action === "approve") {
-      if (!adminNote.trim()) { window.alert("Kayıtlı iletişim kanalı üzerinden kimlik doğrulama yöntemini işlem notuna yazın."); return; }
-      const confirmed = window.confirm("Talep sahibinin kimliğini kayıtlı iletişim kanalı üzerinden bağımsız olarak doğruladınız mı? Hesap kapatılacak; finansal ve saklama incelemesindeki kayıtlar korunacaktır.");
+      if (!adminNote.trim()) {
+        window.alert("Kayıtlı iletişim kanalı üzerinden kimlik doğrulama yöntemini işlem notuna yazın.");
+        return;
+      }
+      const confirmed = window.confirm(
+        "Talep sahibinin kimliğini kayıtlı iletişim kanalı üzerinden bağımsız olarak doğruladınız mı? Hesap kapatılacak; finansal ve yasal saklama incelemesindeki kayıtlar korunacaktır."
+      );
       if (!confirmed) return;
     }
     setBusyId(id);
@@ -600,13 +1009,13 @@ function AccountDeletionsTable({ items, onProcess }: { items: AnyRecord[]; onPro
             </td>
             <td>
               <code>{req.userId ? req.userId.slice(0, 8) : "—"}</code>
-              {req.role ? <small className="cell-sub">{label(req.role)}</small> : null}
+              {req.role ? <small className="cell-sub">{getLabel(req.role)}</small> : null}
             </td>
             <td>
               <span>{req.reason || "Belirtilmedi"}</span>
               {req.details ? <small className="cell-sub" style={{ display: "block" }}>{req.details}</small> : null}
             </td>
-            <td><Status value={req.status} /></td>
+            <td><StatusBadge value={req.status} /></td>
             <td>
               {req.processedAt ? (
                 <div>
@@ -616,10 +1025,10 @@ function AccountDeletionsTable({ items, onProcess }: { items: AnyRecord[]; onPro
               ) : isSelected ? (
                 <input
                   type="text"
-                  placeholder="Yönetici notu (isteğe bağlı)..."
+                  placeholder="Yönetici doğrulama notu (zorunlu)..."
                   value={adminNote}
                   onChange={e => setAdminNote(e.target.value)}
-                  style={{ width: "100%", padding: "4px 8px", fontSize: "12px" }}
+                  style={{ width: "100%", padding: "4px 8px", fontSize: "12px", borderRadius: 4, border: "1px solid var(--line)" }}
                 />
               ) : (
                 <span className="muted">—</span>
@@ -628,10 +1037,10 @@ function AccountDeletionsTable({ items, onProcess }: { items: AnyRecord[]; onPro
             <td>
               {isPending ? (
                 isSelected ? (
-                  <div className="account-deletion-actions" style={{ display: "flex", gap: "6px", flexWrap: "wrap", minWidth: 220 }}>
+                  <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", minWidth: 200 }}>
                     <button
                       className="primary-button"
-                      style={{ background: "#dc2626", borderColor: "#dc2626", padding: "6px 10px", fontSize: "12px", minHeight: "36px" }}
+                      style={{ background: "#dc2626", borderColor: "#dc2626", padding: "6px 10px", fontSize: "12px", minHeight: "34px" }}
                       disabled={busyId === req.id}
                       onClick={() => void handleAction(req.id, "approve")}
                     >
@@ -639,7 +1048,7 @@ function AccountDeletionsTable({ items, onProcess }: { items: AnyRecord[]; onPro
                     </button>
                     <button
                       className="outline-button"
-                      style={{ padding: "6px 10px", fontSize: "12px", minHeight: "36px" }}
+                      style={{ padding: "6px 10px", fontSize: "12px", minHeight: "34px" }}
                       disabled={busyId === req.id}
                       onClick={() => void handleAction(req.id, "reject")}
                     >
@@ -647,7 +1056,7 @@ function AccountDeletionsTable({ items, onProcess }: { items: AnyRecord[]; onPro
                     </button>
                     <button
                       className="outline-button"
-                      style={{ padding: "6px 10px", fontSize: "12px", minHeight: "36px" }}
+                      style={{ padding: "6px 10px", fontSize: "12px", minHeight: "34px" }}
                       onClick={() => setSelectedId(null)}
                     >
                       İptal
@@ -656,7 +1065,10 @@ function AccountDeletionsTable({ items, onProcess }: { items: AnyRecord[]; onPro
                 ) : (
                   <button
                     className="table-action"
-                    onClick={() => { setSelectedId(req.id); setAdminNote(""); }}
+                    onClick={() => {
+                      setSelectedId(req.id);
+                      setAdminNote("");
+                    }}
                   >
                     İşlem Yap
                   </button>
@@ -672,9 +1084,38 @@ function AccountDeletionsTable({ items, onProcess }: { items: AnyRecord[]; onPro
   );
 }
 
+/* Activity / Audit Log Table */
 function Activity({ data }: { data: AnyRecord }) {
   const totals = data.stats?.totals || {};
-  return <><div className="metric-grid compact-metrics">{[["Toplam kullanıcı", totals.users], ["Toplam ilan", totals.loads], ["Mesaj", totals.messages], ["Teklif", totals.offers], ["Şikâyet", totals.complaints]].map(([title, value]) => <article key={String(title)}><p>{title}</p><strong>{String(value ?? 0)}</strong></article>)}</div><Table headings={["Zaman", "Hareket", "Aktör", "Kayıt", "Ayrıntı"]}>{(data.items || []).map((event: AnyRecord) => <tr key={`${event.id}-${event.type}`}><td>{formatDate(event.createdAt)}</td><td><b>{event.type}</b></td><td>{event.actorId || "system"}</td><td><code>{event.aggregateId?.slice(0, 12) || "—"}</code></td><td className="activity-detail">{event.payload ? JSON.stringify(event.payload) : "—"}</td></tr>)}</Table></>;
+  return (
+    <>
+      <div className="metric-grid compact-metrics">
+        {[
+          ["Toplam Kullanıcı", totals.users],
+          ["Toplam İlan", totals.loads],
+          ["Mesajlar", totals.messages],
+          ["Teklifler", totals.offers],
+          ["Şikâyetler", totals.complaints],
+        ].map(([title, value]) => (
+          <article key={String(title)}>
+            <p>{title}</p>
+            <strong>{String(value ?? 0)}</strong>
+          </article>
+        ))}
+      </div>
+      <Table headings={["Zaman", "İşlem Türü", "Aktör", "Kayıt ID", "Ayrıntı"]}>
+        {(data.items || []).map((event: AnyRecord) => (
+          <tr key={`${event.id}-${event.type}`}>
+            <td>{formatDate(event.createdAt)}</td>
+            <td><b>{event.type}</b></td>
+            <td>{event.actorId || "system"}</td>
+            <td><code>{event.aggregateId?.slice(0, 12) || "—"}</code></td>
+            <td className="activity-detail">{event.payload ? JSON.stringify(event.payload) : "—"}</td>
+          </tr>
+        ))}
+      </Table>
+    </>
+  );
 }
 
 function Table({ headings, children }: { headings: string[]; children: React.ReactNode }) {
@@ -683,7 +1124,11 @@ function Table({ headings, children }: { headings: string[]; children: React.Rea
       <div className="table-scroll-container">
         <table>
           <thead>
-            <tr>{headings.map(title => <th key={title}>{title}</th>)}</tr>
+            <tr>
+              {headings.map(title => (
+                <th key={title}>{title}</th>
+              ))}
+            </tr>
           </thead>
           <tbody>{children}</tbody>
         </table>
@@ -691,8 +1136,16 @@ function Table({ headings, children }: { headings: string[]; children: React.Rea
     </div>
   );
 }
-function Person({ user }: { user: AnyRecord }) { return <div className="person"><span>{initials(user.name)}</span><div><b>{user.name}</b><small>{user.email}</small></div></div>; }
-function Empty({ title, compact = false }: { title: string; compact?: boolean }) { return <div className={`empty ${compact ? "compact" : ""}`}><span>✓</span><b>{title}</b><small>Filtreleri değiştirerek tekrar deneyebilirsiniz.</small></div>; }
+
+function Empty({ title }: { title: string }) {
+  return (
+    <div className="empty">
+      <span style={{ fontSize: 28 }}>🔍</span>
+      <b>{title}</b>
+      <small>Filtreleri veya arama kriterlerini değiştirerek tekrar deneyebilirsiniz.</small>
+    </div>
+  );
+}
 
 function detailId(kind: DetailKind, data: AnyRecord) {
   return kind === "driver"
@@ -706,174 +1159,299 @@ function detailId(kind: DetailKind, data: AnyRecord) {
     : data.id;
 }
 
-function DetailDrawer({ kind, data, close, note, setNote, busy, mutate, request, refresh }: { kind: DetailKind; data: AnyRecord; close: () => void; note: string; setNote: (value: string) => void; busy: boolean; mutate: (path: string, payload: AnyRecord, success: string, refreshDetail?: [DetailKind, string]) => Promise<void>; request: (path: string, init?: RequestInit) => Promise<any>; refresh: () => void }) {
+function DetailDrawer({
+  kind,
+  data,
+  close,
+  note,
+  setNote,
+  busy,
+  mutate,
+  request,
+  refresh,
+}: {
+  kind: DetailKind;
+  data: AnyRecord;
+  close: () => void;
+  note: string;
+  setNote: (value: string) => void;
+  busy: boolean;
+  mutate: (path: string, payload: AnyRecord, success: string, refreshDetail?: [DetailKind, string]) => Promise<void>;
+  request: (path: string, init?: RequestInit) => Promise<any>;
+  refresh: () => void;
+}) {
   const id = detailId(kind, data);
-  const user = kind === "driver" ? data.user : kind === "user" ? data : kind === "corporate-application" ? data : null;
+  const title =
+    kind === "corporate-application"
+      ? (data.companyName || data.company_name || data.company?.name || data.name || "Kurumsal Başvuru")
+      : kind === "driver"
+      ? (data.user?.name || data.name || "Şoför Profili")
+      : kind === "load"
+      ? (data.load?.title || data.title || "Nakliye İlanı")
+      : kind === "complaint"
+      ? getLabel(data.complaint?.reason || data.reason)
+      : (data.name || "Kullanıcı Profili");
+
   return (
-    <div className="drawer-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) close(); }}>
+    <div
+      className="drawer-backdrop"
+      onMouseDown={event => {
+        if (event.target === event.currentTarget) close();
+      }}
+    >
       <aside className="drawer" aria-modal="true" role="dialog">
         <header>
           <div>
-            <p>{kind === "corporate-application" ? "KURUMSAL BAŞVURU İNCELEME" : kind === "driver" ? "ŞOFÖR DOĞRULAMA" : kind === "load" ? "İLAN DETAYI" : kind === "complaint" ? "ŞİKÂYET İNCELEME" : "KULLANICI DETAYI"}</p>
-            <h2>{kind === "corporate-application" ? (data.companyName || data.company_name || data.company?.name || user?.name || "Kurumsal Başvuru") : user?.name || data.load?.title || label(data.complaint?.reason)}</h2>
+            <p>
+              {kind === "corporate-application"
+                ? "KURUMSAL HESAP İNCELEME"
+                : kind === "driver"
+                ? "ŞOFÖR YÖNETİMİ & DOĞRULAMA"
+                : kind === "load"
+                ? "NAKLİYE İLAN DETAYI"
+                : kind === "complaint"
+                ? "ŞİKÂYET İNCELEME"
+                : "KULLANICI DETAYI"}
+            </p>
+            <h2>{title}</h2>
           </div>
-          <button onClick={close} aria-label="Detayı kapat">×</button>
+          <button onClick={close} aria-label="Detayı kapat">
+            ✕
+          </button>
         </header>
+
         <div className="drawer-body">
-          {kind === "corporate-application" && <CorporateApplicationDetail data={data} note={note} setNote={setNote} busy={busy} mutate={mutate} request={request} />}
-          {kind === "user" && <UserDetail user={data} request={request} note={note} setNote={setNote} busy={busy} mutate={mutate} />}
-          {kind === "driver" && <DriverDetail data={data} note={note} setNote={setNote} busy={busy} mutate={mutate} request={request} refresh={refresh} />}
-          {kind === "load" && <LoadDetail data={data} note={note} setNote={setNote} busy={busy} mutate={mutate} />}
-          {kind === "complaint" && <ComplaintDetail data={data} note={note} setNote={setNote} busy={busy} mutate={mutate} />}
+          {kind === "corporate-application" && (
+            <CorporateDetailDrawer
+              data={data}
+              note={note}
+              setNote={setNote}
+              busy={busy}
+              mutate={mutate}
+              request={request}
+            />
+          )}
+
+          {kind === "driver" && (
+            <DriverDetailDrawer
+              data={data}
+              note={note}
+              setNote={setNote}
+              busy={busy}
+              mutate={mutate}
+              request={request}
+              refresh={refresh}
+            />
+          )}
+
+          {kind === "load" && (
+            <LoadDetailDrawer
+              data={data}
+              note={note}
+              setNote={setNote}
+              busy={busy}
+              mutate={mutate}
+            />
+          )}
+
+          {kind === "user" && (
+            <UserDetailView
+              user={data}
+              request={request}
+              note={note}
+              setNote={setNote}
+              busy={busy}
+              mutate={mutate}
+            />
+          )}
+
+          {kind === "complaint" && (
+            <ComplaintDetailView
+              data={data}
+              note={note}
+              setNote={setNote}
+              busy={busy}
+              mutate={mutate}
+            />
+          )}
         </div>
-        <footer><code>ID: {id}</code><button className="outline-button" onClick={close}>Kapat</button></footer>
+
+        <footer>
+          <code>ID: {id}</code>
+          <button className="outline-button" onClick={close}>
+            Kapat
+          </button>
+        </footer>
       </aside>
     </div>
   );
 }
 
-function CorporateApplicationDetail({ data, note, setNote, busy, mutate, request }: any) {
-  const corporateId = data.id || data.corporateId || data.corporate_id;
-  const companyName = data.companyName || data.company_name || data.company?.name || data.name || "—";
-  const authorizedPerson = data.authorizedPerson || data.authorized_person || data.company?.authorizedPerson || data.name || "—";
-  const phone = data.phone || data.company?.phone || "—";
-  const email = data.email || data.company?.email || "—";
-  const taxNumber = data.taxNumber || data.tax_number || data.company?.taxNumber || "Belirtilmedi";
-  const taxOffice = data.taxOffice || data.tax_office || data.company?.taxOffice || "Belirtilmedi";
-  const address = data.address || data.companyAddress || data.company_address || data.company?.address || "Firma adresi girilmedi.";
-  const corporateStatus = data.status || data.corporateStatus || "pending";
-  const isApproved = corporateStatus === "approved";
-
+function UserDetailView({ user, request, note, setNote, busy, mutate }: any) {
+  const blocked = user.accountStatus === "blocked";
   return (
     <>
-      <div className="person">
-        <span>{initials(companyName)}</span>
+      <div className="person" style={{ marginBottom: 14 }}>
+        <span>{getInitials(user.name)}</span>
         <div>
-          <b>{companyName}</b>
-          <small>{authorizedPerson} · {email}</small>
+          <b>{user.name}</b>
+          <small>{user.email}</small>
         </div>
       </div>
+      <div className="info-grid">
+        <div><small>Rol</small><b>{getLabel(user.role)}</b></div>
+        <div><small>Hesap türü</small><b>{user.role === "customer" ? getLabel(user.accountType) : "—"}</b></div>
+        <div><small>Telefon</small><b>{user.phone || "—"}</b></div>
+        <div><small>Kayıt Tarihi</small><b>{formatDate(user.createdAt)}</b></div>
+        <div><small>Son Görülme</small><b>{formatDate(user.lastSeenAt)}</b></div>
+        <div><small>Hesap Durumu</small><b>{getLabel(user.accountStatus)}</b></div>
+      </div>
 
-      <section>
-        <h3>Firma Bilgileri</h3>
-        <InfoGrid
-          items={[
-            ["Firma adı", companyName],
-            ["Yetkili kişi", authorizedPerson],
-            ["Vergi no", taxNumber],
-            ["Vergi dairesi", taxOffice],
-            ["Telefon", phone],
-            ["E-posta", email],
-          ]}
-        />
-        <p className="muted" style={{ marginTop: 12 }}>
-          <strong>Firma adresi:</strong> {address}
-        </p>
-      </section>
-
-      <section>
-        <h3>Kurumsal Başvuru Bilgileri</h3>
-        <InfoGrid
-          items={[
-            ["Başvuru durumu", label(corporateStatus)],
-            ["Başvuru tarihi", formatDate(data.createdAt || data.created_at)],
-            ["Hesap durumu", label(data.accountStatus || data.account_status)],
-            ["İnceleme / Onay tarihi", formatDate(data.approvedAt || data.approved_at || data.corporateApprovedAt)],
-            ["Onaylayan yönetici", data.approvedBy || data.approved_by || data.corporateApprovedBy || "—"],
-          ]}
-        />
-        {(data.rejectionReason || data.rejection_reason || data.corporateRejectionReason) && (
-          <blockquote style={{ marginTop: 12, borderColor: "var(--red)" }}>
-            <strong>Ret Gerekçesi:</strong> {data.rejectionReason || data.rejection_reason || data.corporateRejectionReason}
-          </blockquote>
-        )}
-      </section>
-
-      <section>
-        <h3>Yüklenen Belgeler</h3>
-        {(data.documents || []).length > 0 ? (
-          (data.documents || []).map((document: AnyRecord) => {
-            const fileHref = document.fileUrl?.startsWith("/")
-              ? `${API_BASE.replace("/api/admin", "")}${document.fileUrl}`
-              : document.fileUrl;
-            return (
-              <div className="review-card" key={document.id}>
-                <div>
-                  <b>{document.title || label(document.kind)}</b>
-                  <small>
-                    {label(document.kind)} ·{" "}
-                    <a href={fileHref} target="_blank" rel="noreferrer">
-                      Belgeyi görüntüle
-                    </a>
-                  </small>
-                </div>
-                <Status value={document.status} />
-              </div>
-            );
-          })
-        ) : (
-          <p className="muted">Henüz yüklenmiş kurumsal başvuru belgesi bulunmuyor.</p>
-        )}
-      </section>
-
-      {isApproved && (
-        <section>
-          <h3>Cüzdan ve Müşteri Ayarları</h3>
-          <WalletCustomer customerId={corporateId} request={request} />
+      {user.accountType === "corporate" && user.company ? (
+        <section style={{ marginTop: 18 }}>
+          <h4 style={{ margin: "0 0 10px", fontSize: 15, fontWeight: 700 }}>Kurumsal Hesap Bilgileri</h4>
+          <div className="info-grid">
+            <div><small>Firma</small><b>{user.company.name}</b></div>
+            <div><small>Yetkili</small><b>{user.company.authorizedPerson}</b></div>
+            <div><small>Vergi No</small><b>{user.company.taxNumber || "—"}</b></div>
+            <div><small>Vergi Dairesi</small><b>{user.company.taxOffice || "—"}</b></div>
+            <div><small>Firma Telefonu</small><b>{user.company.phone || "—"}</b></div>
+          </div>
+          <p className="muted" style={{ marginTop: 8 }}>{user.company.address || "Firma adresi girilmedi."}</p>
+          <div style={{ marginTop: 14 }}>
+            <WalletCustomer customerId={user.id} request={request} />
+          </div>
         </section>
-      )}
+      ) : null}
 
-      <section className="action-box">
-        <h3>Başvuru Onay / Ret İşlemi</h3>
-        <p>
-          Onay verildiğinde kullanıcının kurumsal statüsü aktif hale gelir. Reddetme işleminde admin reddetme sebebi girmek zorundadır.
+      <div className="action-box" style={{ marginTop: 18 }}>
+        <h4 style={{ margin: "0 0 8px", fontSize: 15, fontWeight: 700 }}>
+          {blocked ? "Hesabı Yeniden Aktifleştir" : "Kullanıcıyı Engelle"}
+        </h4>
+        <p style={{ fontSize: 13, color: "var(--muted)", margin: "0 0 10px" }}>
+          {blocked
+            ? "Kullanıcı yeniden giriş yapabilir ve sistem özelliklerini kullanabilir."
+            : "Kullanıcının aktif oturumları sonlandırılır ve sisteme erişimi engellenir."}
         </p>
-        <textarea
-          value={note}
-          onChange={event => setNote(event.target.value)}
-          placeholder="Reddetme sebebi veya inceleme notu (Ret işlemi için zorunludur)"
-        />
-        <div className="button-row">
-          <button
-            className="primary-button"
-            disabled={busy || isApproved}
-            onClick={() =>
-              void mutate(
-                `/corporate-accounts/${corporateId}/status`,
-                { status: "approved" },
-                "Kurumsal başvuru onaylandı.",
-                ["corporate-application", corporateId]
-              )
-            }
-          >
-            ONAYLA
-          </button>
-          <button
-            className="danger-button"
-            disabled={busy || !note.trim()}
-            onClick={() =>
-              void mutate(
-                `/corporate-accounts/${corporateId}/status`,
-                { status: "rejected", rejectionReason: note.trim() },
-                "Kurumsal başvuru reddedildi.",
-                ["corporate-application", corporateId]
-              )
-            }
-          >
-            REDDET
-          </button>
-        </div>
-      </section>
+        {!blocked && (
+          <textarea
+            value={note}
+            onChange={event => setNote(event.target.value)}
+            placeholder="Engelleme nedeni (zorunludur)..."
+            style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid var(--line)", fontSize: 13, minHeight: 70, marginBottom: 10 }}
+          />
+        )}
+        <button
+          className={blocked ? "primary-button" : "danger-button"}
+          disabled={busy || (!blocked && !note.trim())}
+          onClick={() =>
+            void mutate(
+              `/users/${user.id}/status`,
+              { status: blocked ? "active" : "blocked", reason: note },
+              blocked ? "Kullanıcı aktifleştirildi." : "Kullanıcı engellendi."
+            )
+          }
+        >
+          {blocked ? "✓ Yeniden Aktifleştir" : "✕ Hesabı Engelle"}
+        </button>
+      </div>
     </>
   );
 }
 
-function UserDetail({ user, request, note, setNote, busy, mutate }: any) { const blocked = user.accountStatus === "blocked"; return <><Person user={user} /><InfoGrid items={[["Rol", label(user.role)], ["Hesap türü", user.role === "customer" ? label(user.accountType) : "—"], ["Telefon", user.phone], ["Kayıt", formatDate(user.createdAt)], ["Son görülme", formatDate(user.lastSeenAt)], ["Hesap", label(user.accountStatus)]]} />{user.accountType === "corporate" && user.company ? <section><h3>Kurumsal hesap</h3><InfoGrid items={[["Firma", user.company.name], ["Yetkili", user.company.authorizedPerson], ["Vergi no", user.company.taxNumber || "Tamamlanmadı"], ["Vergi dairesi", user.company.taxOffice || "Tamamlanmadı"], ["Firma telefonu", user.company.phone]]} /><p className="muted">{user.company.address || "Firma adresi tamamlanmadı."}</p><WalletCustomer customerId={user.id} request={request} /></section> : null}<section className="action-box"><h3>{blocked ? "Hesabı yeniden aktifleştir" : "Hesabı engelle"}</h3><p>{blocked ? "Kullanıcı yeniden oturum açabilir ve mobil akışlara erişebilir." : "Mevcut tokenlar anında geçersiz olur; yeni giriş engellenir."}</p>{!blocked && <textarea value={note} onChange={event => setNote(event.target.value)} placeholder="Engelleme nedeni (zorunlu)" />}<button className={blocked ? "primary-button" : "danger-button"} disabled={busy || (!blocked && !note.trim())} onClick={() => void mutate(`/users/${user.id}/status`, { status: blocked ? "active" : "blocked", reason: note }, blocked ? "Kullanıcı yeniden aktifleştirildi." : "Kullanıcı engellendi.")}>{blocked ? "Yeniden aktifleştir" : "Hesabı engelle"}</button></section></>; }
+function ComplaintDetailView({ data, note, setNote, busy, mutate }: any) {
+  const complaint = data.complaint || data;
+  const [removeMessage, setRemoveMessage] = useState(false);
 
-function DriverDetail({ data, note, setNote, busy, mutate, request, refresh }: any) { const user = data.user; const [docForm, setDocForm] = useState({ kind: "driver_license", title: "", fileURL: "" }); async function addDocument(event: FormEvent) { event.preventDefault(); try { await request(`/drivers/${user.id}/documents`, { method: "POST", body: JSON.stringify(docForm) }); setDocForm({ kind: "driver_license", title: "", fileURL: "" }); refresh(); } catch { /* parent surfaces API state on next action */ } } return <><Person user={user} /><DriverWalletAdmin key={user.id} driverId={user.id} request={request} /><InfoGrid items={[["Telefon", user.phone], ["Plaka", user.driverProfile?.licensePlate || "—"], ["Hizmet bölgesi", user.driverProfile?.serviceArea || "—"], ["Tamamlanan", user.driverProfile?.completedJobs || 0], ["Puan", user.driverProfile?.rating || "—"], ["Doğrulama", label(user.verificationStatus)]]} /><section><h3>Şoför doğrulaması</h3><textarea value={note} onChange={event => setNote(event.target.value)} placeholder="İnceleme notu / ret gerekçesi" /><div className="button-row"><button className="primary-button" disabled={busy} onClick={() => void mutate(`/drivers/${user.id}/verification`, { status: "verified", note }, "Şoför doğrulandı.", ["driver", user.id])}>Doğrula</button><button className="danger-button" disabled={busy || !note.trim()} onClick={() => void mutate(`/drivers/${user.id}/verification`, { status: "rejected", note }, "Şoför doğrulaması reddedildi.", ["driver", user.id])}>Reddet</button></div></section><section><h3>Belgeler</h3>{(data.documents || []).map((document: AnyRecord) => { const fileHref = document.fileUrl?.startsWith("/") ? `${API_BASE.replace("/api/admin", "")}${document.fileUrl}` : document.fileUrl; return <div className="review-card" key={document.id}><div><b>{document.title}</b><small>{label(document.kind)} · <a href={fileHref} target="_blank" rel="noreferrer">Belgeyi aç</a></small>{document.status === "rejected" && document.reviewNote ? <small style={{ display: "block", color: "var(--danger, #dc2626)", marginTop: 4 }}>Ret nedeni: {document.reviewNote}</small> : null}</div><Status value={document.status} /><div className="review-actions"><button onClick={() => void mutate(`/driver-documents/${document.id}`, { status: "verified", note }, "Belge doğrulandı.", ["driver", user.id])}>Onayla</button><button disabled={!note.trim()} onClick={() => void mutate(`/driver-documents/${document.id}`, { status: "rejected", note }, "Belge reddedildi.", ["driver", user.id])}>Reddet</button></div></div>; })}{data.documents?.length === 0 ? <p className="muted">Henüz yüklenmiş belge bulunmuyor.</p> : null}<form className="document-form" onSubmit={addDocument}><select value={docForm.kind} onChange={event => setDocForm({ ...docForm, kind: event.target.value })}>{["identity", "driver_license", "vehicle_registration", "src", "psychotechnic", "insurance", "criminal_record", "other"].map(kind => <option key={kind} value={kind}>{label(kind)}</option>)}</select><input required placeholder="Belge başlığı" value={docForm.title} onChange={event => setDocForm({ ...docForm, title: event.target.value })} /><input required type="url" placeholder="https:// veya /api/photos/ güvenli belge adresi" value={docForm.fileURL} onChange={event => setDocForm({ ...docForm, fileURL: event.target.value })} /><button className="outline-button">Belge ekle</button></form></section><section><h3>Araçlar</h3>{(data.vehicles || []).map((vehicle: AnyRecord) => <div className="review-card" key={vehicle.id}><div><b>{vehicle.brand} {vehicle.model}</b><small>{vehicle.licensePlate} · {vehicle.capacityKg} kg</small></div><Status value={vehicle.verificationStatus} /><div className="review-actions"><button onClick={() => void mutate(`/vehicles/${vehicle.id}/verification`, { status: "verified", note }, "Araç doğrulandı.", ["driver", user.id])}>Onayla</button><button disabled={!note.trim()} onClick={() => void mutate(`/vehicles/${vehicle.id}/verification`, { status: "rejected", note }, "Araç reddedildi.", ["driver", user.id])}>Reddet</button></div></div>)}</section></>; }
+  return (
+    <>
+      <div className="info-grid">
+        <div><small>Şikâyet Eden</small><b>{data.reporter?.name || "—"}</b></div>
+        <div><small>Şikâyet Edilen</small><b>{data.reportedUser?.name || "—"}</b></div>
+        <div><small>Neden</small><b>{getLabel(complaint.reason)}</b></div>
+        <div><small>Tarih</small><b>{formatDate(complaint.createdAt)}</b></div>
+        <div><small>İlan</small><b>{data.load?.title || "—"}</b></div>
+        <div><small>Durum</small><b>{getLabel(complaint.status)}</b></div>
+      </div>
 
-function LoadDetail({ data, note, setNote, busy, mutate }: any) { const load = data.load; const options = adminLoadStatusOptions(load); const [status, setStatus] = useState(options[0] || ""); const selectedStatus = options.includes(status) ? status : options[0] || ""; return <><InfoGrid items={[["Müşteri", data.customer?.name || "—"], ["Şoför", data.driver?.name || "Atanmadı"], ["Rota", `${load.pickup?.address} → ${load.delivery?.address}`], ["Mesafe", `${load.estimatedKm || 0} km`], ["Tutar", formatMoney(load.agreedPriceTl || load.basePriceTl)], ["Durum", load.status === "payment_approval_pending" ? "Şoför ödeme onayı bekleniyor" : label(load.status)], ["Kullanılan kurumsal kredi", formatMoney((load.paymentApproval?.creditCents || 0) / 100)], ["Müşteriden alınacak", formatMoney((load.paymentApproval?.customerPayableCents ?? Math.round((load.agreedPriceTl || load.basePriceTl) * 100)) / 100)], ["Şoför ödeme onayı", load.paymentApproval ? label(load.paymentApproval.status) : "Gerekmiyor"], ["Onaylayan kullanıcı / zaman", load.paymentApproval?.decidedBy ? `${load.paymentApproval.decidedBy} / ${formatDate(load.paymentApproval.decidedAt)}` : "—"], ["Şoföre yüklenen kredi", formatMoney(load.paymentApproval?.compensationTransactionId ? load.paymentApproval.creditCents / 100 : 0)], ["Hizmet komisyonu", formatMoney((load.driverCommissionCents || 0) / 100)]]} /><section><h3>Durum geçmişi</h3>{(data.statusHistory || []).length ? <div className="timeline">{data.statusHistory.map((event: AnyRecord) => <div key={event.id}><i /><span><b>{label(event.toStatus)}</b><small>{formatDate(event.changedAt || event.createdAt)} · {label(event.changedByRole || event.actorRole)} · {label(event.source)}</small>{event.note && <p>{event.note}</p>}</span></div>)}</div> : <p className="muted">Bu eski kayıt için doğrulanabilir durum geçmişi bulunmuyor.</p>}</section><section className="action-box"><h3>Yönetici durum güncellemesi</h3><p>Operasyonel akış yalnızca bir sonraki adıma veya iptale geçirilebilir.</p>{options.length ? <select value={selectedStatus} onChange={event => setStatus(event.target.value)}>{options.map(value => <option key={value} value={value}>{label(value)}</option>)}</select> : <p className="muted">Bu durum terminaldir; başka bir duruma geçirilemez.</p>}<textarea value={note} onChange={event => setNote(event.target.value)} placeholder="İşlem notu (zorunlu)" /><button className={selectedStatus === "cancelled" ? "danger-button" : "primary-button"} disabled={busy || !selectedStatus || !note.trim()} onClick={() => void mutate(`/loads/${load.id}/status`, { status: selectedStatus, note }, "İlan durumu güncellendi.")}>Durumu güncelle</button></section></>; }
+      <div style={{ marginTop: 16 }}>
+        <h4 style={{ margin: "0 0 8px", fontSize: 15, fontWeight: 700 }}>Şikâyet Açıklaması</h4>
+        <blockquote style={{ margin: 0, padding: "10px 14px", background: "#fafbfa", borderLeft: "3px solid var(--amber)", borderRadius: 6, fontSize: 13 }}>
+          {complaint.description || complaint.detail || "Açıklama belirtilmemiş."}
+        </blockquote>
+      </div>
 
-function ComplaintDetail({ data, note, setNote, busy, mutate }: any) { const complaint = data.complaint; const [removeMessage, setRemoveMessage] = useState(false); return <><InfoGrid items={[["Şikâyet eden", data.reporter?.name || "—"], ["Şikâyet edilen", data.reportedUser?.name || "—"], ["Neden", label(complaint.reason)], ["Tarih", formatDate(complaint.createdAt)], ["İlan", data.load?.title || "—"], ["Durum", label(complaint.status)], ["İlan ID", complaint.loadId || "—"], ["Konuşma ID", complaint.conversationId || complaint.loadId || "—"], ["Mesaj ID", complaint.messageId || "İş/konuşma şikâyeti"]]} /><section><h3>Şikâyet açıklaması</h3><blockquote>{complaint.description || complaint.detail || "Açıklama eklenmemiş."}</blockquote>{(complaint.adminNote || complaint.resolutionNote) && <p className="muted">Admin notu: {complaint.adminNote || complaint.resolutionNote}</p>}</section><section><h3>{complaint.messageId ? "Şikâyet edilen mesaj" : "İlgili konuşma"}</h3><div className="reported-message"><small>{data.message?.senderRole ? label(data.message.senderRole) : "Konuşma"}</small><p>{data.message?.body || (complaint.messageId ? "Mesaj silinmiş veya medya içeriği." : `Konuşma: ${complaint.conversationId || complaint.loadId}`)}</p><time>{formatDate(data.message?.createdAt || complaint.createdAt)}</time></div></section><section className="action-box"><h3>Şikâyeti yönet</h3><textarea value={note} onChange={event => setNote(event.target.value)} placeholder="Admin notu / karar gerekçesi" />{complaint.messageId && <label className="check"><input type="checkbox" checked={removeMessage} onChange={event => setRemoveMessage(event.target.checked)} /> Mesaj içeriğini kullanıcıların sohbetinden kaldır</label>}<div className="button-row"><button className="outline-button" disabled={busy} onClick={() => void mutate(`/complaints/${complaint.id}`, { status: "reviewing", adminNote: note, removeMessage: false }, "Şikâyet incelemeye alındı.")}>İncelemeye al</button><button className="primary-button" disabled={busy || !note.trim()} onClick={() => void mutate(`/complaints/${complaint.id}`, { status: "resolved", adminNote: note, removeMessage }, "Şikâyet çözüldü.")}>Çözüldü</button><button className="outline-button" disabled={busy || !note.trim()} onClick={() => void mutate(`/complaints/${complaint.id}`, { status: "rejected", adminNote: note, removeMessage: false }, "Şikâyet reddedildi.")}>Reddet</button></div>{data.reportedUser?.id && data.reportedUser.accountStatus !== "blocked" && <button className="danger-button" disabled={busy || !note.trim()} onClick={() => void mutate(`/users/${data.reportedUser.id}/status`, { status: "blocked", reason: note }, "Şikâyet edilen kullanıcı engellendi.")}>Şikâyet edilen kullanıcıyı engelle</button>}</section></>; }
+      {complaint.messageId && (
+        <div style={{ marginTop: 16 }}>
+          <h4 style={{ margin: "0 0 8px", fontSize: 15, fontWeight: 700 }}>Şikâyet Edilen Mesaj</h4>
+          <div className="reported-message">
+            <small>{data.message?.senderRole ? getLabel(data.message.senderRole) : "Konuşma"}</small>
+            <p>{data.message?.body || "Mesaj içeriği yüklenemedi veya silinmiş."}</p>
+            <time>{formatDate(data.message?.createdAt || complaint.createdAt)}</time>
+          </div>
+        </div>
+      )}
 
-function InfoGrid({ items }: { items: [string, any][] }) { return <div className="info-grid">{items.map(([title, value]) => <div key={title}><small>{title}</small><b>{String(value ?? "—")}</b></div>)}</div>; }
+      <div className="action-box" style={{ marginTop: 18 }}>
+        <h4 style={{ margin: "0 0 8px", fontSize: 15, fontWeight: 700 }}>Şikâyeti Çöz & Karara Bağla</h4>
+        <textarea
+          value={note}
+          onChange={event => setNote(event.target.value)}
+          placeholder="Yönetici inceleme notu / karar gerekçesi..."
+          style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid var(--line)", fontSize: 13, minHeight: 70, marginBottom: 10 }}
+        />
+        {complaint.messageId && (
+          <label className="check" style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, fontSize: 13 }}>
+            <input
+              type="checkbox"
+              checked={removeMessage}
+              onChange={event => setRemoveMessage(event.target.checked)}
+            />
+            Mesaj içeriğini kullanıcı sohbetinden sil
+          </label>
+        )}
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button
+            className="outline-button"
+            disabled={busy}
+            onClick={() =>
+              void mutate(
+                `/complaints/${complaint.id}`,
+                { status: "reviewing", adminNote: note, removeMessage: false },
+                "Şikâyet incelemeye alındı."
+              )
+            }
+          >
+            İncelemeye Al
+          </button>
+          <button
+            className="primary-button"
+            disabled={busy || !note.trim()}
+            onClick={() =>
+              void mutate(
+                `/complaints/${complaint.id}`,
+                { status: "resolved", adminNote: note, removeMessage },
+                "Şikâyet çözüldü."
+              )
+            }
+          >
+            ✓ Çözüldü Olarak İşaretle
+          </button>
+          <button
+            className="outline-button"
+            disabled={busy || !note.trim()}
+            onClick={() =>
+              void mutate(
+                `/complaints/${complaint.id}`,
+                { status: "rejected", adminNote: note, removeMessage: false },
+                "Şikâyet reddedildi."
+              )
+            }
+          >
+            ✕ Reddet
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
