@@ -211,6 +211,7 @@ function DriverApp() {
 
   useEffect(() => {
     if (restoring || !user || user.role !== 'driver') return;
+    void fetchOffers(true);
     if (tab === 'jobs') {
       void fetchJobs();
       void fetchOffers();
@@ -219,13 +220,13 @@ function DriverApp() {
     if (tab === 'account') void fetchAccount();
   }, [fetchAccount, fetchJobs, fetchOffers, restoring, tab, user?.id, user?.role]);
 
-  // 12-second background silent poll for active tabs
+  // 12-second background silent poll for offers across all tabs to catch payment requests promptly
   useEffect(() => {
     if (restoring || !user || user.role !== 'driver' || !isActiveApp) return undefined;
     const interval = setInterval(() => {
-      if (tab === 'jobs' || tab === 'offers') {
+      void fetchOffers(true);
+      if (tab === 'jobs') {
         void fetchJobs(true);
-        void fetchOffers(true);
       }
     }, 12000);
     return () => clearInterval(interval);
@@ -237,9 +238,9 @@ function DriverApp() {
     const wasActive = prevActiveAppRef.current;
     prevActiveAppRef.current = isActiveApp;
     if (!wasActive && isActiveApp && user?.role === 'driver') {
-      if (tab === 'jobs' || tab === 'offers') {
+      void fetchOffers(true);
+      if (tab === 'jobs') {
         void fetchJobs(true);
-        void fetchOffers(true);
       } else if (tab === 'account') {
         void fetchAccount();
       }
