@@ -5,13 +5,18 @@ import Icon from './Icon';
 import { colors, control, radius, shadows, spacing, typography } from './theme';
 
 const {
+  EDGE_SWIPE_WIDTH,
   captureListScrollAnchor,
   pruneItemLayouts,
+  resolveCustomerAccountBackPage,
+  resolveDriverAccountBackPage,
   resolveRestoredScrollOffset,
   shouldCaptureEdgeSwipe,
   shouldCompleteEdgeSwipe,
   shouldRejectEdgeSwipe,
 } = require('../navigationState.cjs');
+
+export { resolveCustomerAccountBackPage, resolveDriverAccountBackPage };
 
 export function AppHeader({ title, subtitle, initials, action, topInset = 0 }) {
   return <View style={[styles.header, { paddingTop: topInset + spacing.sm }]}><View style={styles.brandMark}><Icon name="cube" size={23} color={colors.white} /></View><View style={styles.headerCopy}><Text style={styles.headerTitle}>{title}</Text>{subtitle ? <Text style={styles.headerSubtitle} numberOfLines={1}>{subtitle}</Text> : null}</View>{action || <View style={styles.avatar}><Text style={styles.avatarText}>{initials || '?'}</Text></View>}</View>;
@@ -116,8 +121,9 @@ export function EdgeSwipeBack({
     onStartShouldSetPanResponder: () => false,
     onStartShouldSetPanResponderCapture: event => {
       const touches = event?.nativeEvent?.touches;
-      if (!touches || touches.length === 1) {
-        startXRef.current = event?.nativeEvent?.pageX ?? 0;
+      const startX = event?.nativeEvent?.pageX ?? 0;
+      if ((!touches || touches.length === 1) && startX <= EDGE_SWIPE_WIDTH) {
+        startXRef.current = startX;
         startYRef.current = event?.nativeEvent?.pageY ?? 0;
         rejectedRef.current = false;
       } else {
@@ -131,7 +137,7 @@ export function EdgeSwipeBack({
       const dx = Math.max(0, Math.min(stateRef.current.width || 390, gestureState.dx));
       translateX.setValue(dx);
     },
-    onPanResponderTerminationRequest: () => false,
+    onPanResponderTerminationRequest: () => true,
     onPanResponderRelease: (_, gestureState) => {
       const current = stateRef.current;
       if (

@@ -13,6 +13,7 @@ const expo = {
   orientation: 'portrait',
   userInterfaceStyle: 'automatic',
   ios: {
+    entitlements: { 'aps-environment': 'development' },
     bundleIdentifier: 'com.nakliyego.driver',
     ...(googleMapsIOSKey ? { config: { googleMapsApiKey: googleMapsIOSKey } } : {}),
     infoPlist: {
@@ -27,6 +28,7 @@ const expo = {
       foregroundImage: './assets/icon.png',
       backgroundColor: '#FFFFFF',
     },
+    blockedPermissions: ['android.permission.RECORD_AUDIO'],
     permissions: ['ACCESS_COARSE_LOCATION', 'ACCESS_FINE_LOCATION', 'CAMERA'],
     ...(googleMapsAndroidKey ? { config: { googleMaps: { apiKey: googleMapsAndroidKey } } } : {}),
   },
@@ -51,6 +53,7 @@ module.exports = {
     'expo-font',
     '@react-native-community/datetimepicker',
     ['expo-image-picker', {
+      microphonePermission: false,
       photosPermission: 'Araç, teslimat veya sohbet fotoğrafı eklemek için galeri erişimi gerekir.',
       cameraPermission: 'Teslimat kaydı veya sohbette fotoğraf çekmek için kamera erişimi gerekir.',
     }],

@@ -1,8 +1,4 @@
-/**
- * Lightweight privacy-first PostHog Analytics Client for NakliyeGo.
- * Compliant with KVKK: Never transmits personal data, open addresses,
- * phone numbers, message contents, or authentication tokens.
- */
+// Optional analytics stays disabled until a separate, reviewed consent flow exists.
 class PostHogClient {
   constructor() {
     this.apiKey = '';
@@ -14,20 +10,8 @@ class PostHogClient {
   }
 
   init(options = {}) {
-    const key = options.apiKey || (typeof process !== 'undefined' ? process.env.EXPO_PUBLIC_POSTHOG_API_KEY || process.env.NEXT_PUBLIC_POSTHOG_API_KEY : '') || '';
-    if (!key || this.initialized) return;
-
-    this.apiKey = key;
-    this.host = (options.host || (typeof process !== 'undefined' ? process.env.EXPO_PUBLIC_POSTHOG_HOST || process.env.NEXT_PUBLIC_POSTHOG_HOST : '') || 'https://eu.i.posthog.com').replace(/\/$/, '');
-    this.defaultProps = {
-      app: options.appName || 'nakliyego',
-      platform: options.platform || 'mobile',
-      release: options.release || '1.0.0',
-    };
-    this.initialized = true;
-
-    // Load initial feature flags
-    this.reloadFeatureFlags();
+    // No separate analytics consent exists. Keep network collection disabled.
+    // Marketing preferences and KVKK acknowledgement must not enable it.
   }
 
   identify(userId, traits = {}) {
@@ -136,7 +120,7 @@ class PostHogClient {
   }
 
   /**
-   * KVKK Privacy Filter: Strips personal, financial, and messaging details.
+   * Defensive field filter; this does not make event data anonymous.
    */
   sanitizeProperties(props = {}) {
     const clean = {};

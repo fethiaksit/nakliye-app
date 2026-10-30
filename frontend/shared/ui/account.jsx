@@ -243,11 +243,12 @@ export function DeleteAccountPage({ loading, onDelete, onBack }) {
         <Icon name="warning" size={20} color={colors.danger} />
         <Text style={styles.dangerNoticeTitle}>Önemli Güvenlik ve Yasal Bilgilendirme</Text>
       </View>
-      <Text style={styles.dangerNoticeItem}>• Devam eden aktif veya atanmış nakliyeniz varsa hesabınız silinemez.</Text>
-      <Text style={styles.dangerNoticeItem}>• Ad, soyad, telefon ve e-posta gibi kişisel kimlik verileriniz silinir veya geri döndürülemez biçimde anonimleştirilir.</Text>
+      <Text style={styles.dangerNoticeItem}>• Kapanmamış nakliye veya ödeme onayı varsa önce tamamlanmalı veya iptal edilmelidir. Bekleyen teklifiniz varsa geri çekmelisiniz.</Text>
+      <Text style={styles.dangerNoticeItem}>• Profil adı ve iletişim bilgileri değiştirilir. Geçmiş kayıtlar tamamen anonimleşmez.</Text>
       <Text style={styles.dangerNoticeItem}>• Bildirim jetonları iptal edilir ve tüm cihaz oturumlarınız derhal sonlandırılır.</Text>
-      <Text style={styles.dangerNoticeItem}>• Türk Ticaret Kanunu ve Vergi Usul Kanunu uyarınca finansal/fatura kayıtları ve uyuşmazlık belgeleri yasal saklama sürelerince kilitli arşivde tutulur.</Text>
-      <Text style={styles.dangerNoticeItem}>• Bu işlem tamamlandığında hesabınıza bir daha giriş yapılamaz.</Text>
+      <Text style={styles.dangerNoticeItem}>• Nakliye, mesaj, şirket, cüzdan ve şikâyet kayıtları korunur. Onaylı belgeler saklama incelemesi bekler; otomatik süreli imha yoktur. Bakiye için destek mutabakatı gerekir.</Text>
+      <Text style={styles.dangerNoticeItem}>• Cüzdan bakiyesi, komisyon rezervasyonu veya açık şikâyet varsa önce destek mutabakatı gerekir.
+• Bu işlem tamamlandığında hesabınıza bir daha giriş yapılamaz.</Text>
     </View>
 
     <SectionCard title="Kimlik Doğrulama" icon="lock-closed-outline">
@@ -267,7 +268,7 @@ export function DeleteAccountPage({ loading, onDelete, onBack }) {
         multiline
         maxLength={300}
         placeholder="Ayrılma nedeninizi belirtebilirsiniz..."
-        helper="Hizmetlerimizi geliştirmemiz için geri bildiriminiz önemlidir."
+        helper="İsteğe bağlıdır. Hassas veri veya kimlik belgesi bilgisi yazmayın."
       />
       <Pressable
         accessibilityRole="checkbox"

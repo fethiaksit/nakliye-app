@@ -175,7 +175,7 @@ func TestAccountDeletionFlow(t *testing.T) {
 	}
 
 	// 4. Driver account deletion with vehicle and documents
-	driverToDelete := registerTestUser(t, handler, "driver_to_delete", models.RoleDriver)
+	driverToDelete := registerTestUser(t, handler, "driver_to_delete", models.RoleDriver, false)
 	driverUser, _ := redisStore.GetUser(driverToDelete.User.ID)
 	driverUser.DriverProfile.LicensePlate = "35 ABC 123"
 	driverUser.DriverProfile.VehicleModel = "Ford Transit"
@@ -324,10 +324,16 @@ func TestAdminAccountDeletionProcess(t *testing.T) {
 	}
 	requestID := listData.Items[0].ID
 
+	unverified := requestJSON(t, handler, http.MethodPatch, "/api/admin/account-deletion-requests/"+requestID, admin.AccessToken, map[string]any{"action": "approve", "adminNote": "unverified"})
+	if unverified.Code != http.StatusBadRequest {
+		t.Fatalf("unverified deletion: %d", unverified.Code)
+	}
+
 	// 3. Admin approves request and executes account anonymization
 	approveRes := requestJSON(t, handler, http.MethodPatch, "/api/admin/account-deletion-requests/"+requestID, admin.AccessToken, map[string]any{
-		"action":    "approve",
-		"adminNote": "Kullanıcı talebi telefon teyidiyle işleme alındı",
+		"action":           "approve",
+		"identityVerified": true,
+		"adminNote":        "Kullanıcı talebi telefon teyidiyle işleme alındı",
 	})
 	if approveRes.Code != http.StatusOK {
 		t.Fatalf("admin approve deletion failed: %d %s", approveRes.Code, approveRes.Body.String())

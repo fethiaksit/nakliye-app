@@ -12,13 +12,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/big"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/argon2"
 	"io"
 	"log"
 	"log/slog"
+	"math/big"
 	"mime/multipart"
 	"nakliye-api/internal/models"
 	"nakliye-api/internal/service"
@@ -242,6 +242,7 @@ func (a *API) Routes() http.Handler {
 	mux.Handle("POST /api/loads/{id}/complete-delivery", a.auth(http.HandlerFunc(a.completeDelivery)))
 	mux.Handle("POST /api/loads/{id}/offers", a.auth(http.HandlerFunc(a.createOffer)))
 	mux.Handle("GET /api/loads/{id}/offers", a.auth(http.HandlerFunc(a.offers)))
+	mux.Handle("POST /api/loads/{id}/payment-approval", a.auth(http.HandlerFunc(a.decidePaymentApproval)))
 	mux.Handle("POST /api/offers/{id}/accept", a.auth(http.HandlerFunc(a.acceptOffer)))
 	mux.Handle("PATCH /api/offers/{id}", a.auth(http.HandlerFunc(a.updateOffer)))
 	mux.Handle("DELETE /api/offers/{id}", a.auth(http.HandlerFunc(a.withdrawOffer)))
@@ -336,7 +337,7 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 		req.AccountType = models.AccountTypeIndividual
 	}
 	reqID := service.RequestID(r.Context())
-	slog.Info("register_started", "request_id", reqID, "email", req.Email, "phone", req.Phone)
+	slog.Info("register_started", "request_id", reqID)
 
 	// Public registration intentionally permits only the two mobile roles.
 	// A corporate customer remains a customer role and uses the same auth flow.
@@ -559,6 +560,7 @@ func (a *API) logout(w http.ResponseWriter, r *http.Request) {
 	_, _ = a.store.ConsumeRefresh(req.RefreshToken)
 	w.WriteHeader(http.StatusNoContent)
 }
+
 const genericPasswordResetMessage = "Eğer bu e-posta adresi sistemde kayıtlıysa, 6 haneli doğrulama kodu gönderilmiştir."
 
 func (a *API) forgotPassword(w http.ResponseWriter, r *http.Request) {
@@ -1023,39 +1025,16 @@ func (a *API) deleteMyAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	activeStatuses := map[string]bool{
-		models.LoadStatusDriverSelected:    true,
-		models.LoadStatusDriverEnRoute:     true,
-		models.LoadStatusAtPickup:          true,
-		models.LoadStatusPickedUp:          true,
-		models.LoadStatusEnRouteToDelivery: true,
+	if len(req.Reason) > 1000 {
+		badRequest(w, "silme gerekçesi çok uzun")
+		return
 	}
-
-	if u.Role == models.RoleCustomer {
-		loads, _, err := a.store.ListLoads(u.ID, "", store.LoadFilter{}, 0, 100)
-		if err == nil {
-			for _, l := range loads {
-				if activeStatuses[l.Status] {
-					badRequest(w, "devam eden aktif nakliyeniz bulunmaktadır; lütfen önce nakliyenizi tamamlayın veya iptal edin")
-					return
-				}
-			}
-		}
-	} else if u.Role == models.RoleDriver {
-		loads, _, err := a.store.ListLoads("", u.ID, store.LoadFilter{}, 0, 100)
-		if err == nil {
-			for _, l := range loads {
-				if activeStatuses[l.Status] {
-					badRequest(w, "üzerinizde devam eden aktif taşıma görevi bulunmaktadır; lütfen önce teslimatı tamamlayın")
-					return
-				}
-			}
-		}
+	if err := a.checkAccountDeletionAllowed(u); err != nil {
+		badRequest(w, err.Error())
+		return
 	}
 
 	now := time.Now().UTC()
-	prevEmail := u.Email
-	prevPhone := u.Phone
 
 	if err := a.anonymizeAndCloseAccount(u, req.Reason); err != nil {
 		serverError(w, err)
@@ -1065,9 +1044,6 @@ func (a *API) deleteMyAccount(w http.ResponseWriter, r *http.Request) {
 	_ = a.store.SaveAccountDeletionRequest(models.AccountDeletionRequest{
 		ID:          uuid.NewString(),
 		UserID:      u.ID,
-		Email:       prevEmail,
-		Phone:       prevPhone,
-		Reason:      req.Reason,
 		Status:      "completed",
 		CreatedAt:   now,
 		ProcessedAt: &now,
@@ -1076,18 +1052,31 @@ func (a *API) deleteMyAccount(w http.ResponseWriter, r *http.Request) {
 
 	jsonResponse(w, http.StatusOK, map[string]any{
 		"status":  "ok",
-		"message": "Hesabınız ve kişisel verileriniz başarıyla silindi ve anonimleştirildi.",
+		"message": "Hesabınız kapatıldı; profil iletişim bilgileri kaldırıldı. Nakliye, cüzdan, uyuşmazlık ve saklama incelemesindeki kayıtlar korunur.",
 	})
 }
 
+// Both self-service and support requests must check all jobs and fail closed.
+func (a *API) checkAccountDeletionAllowed(u models.User) error {
+	return a.store.CheckAccountDeletion(u.ID)
+}
+
 func (a *API) anonymizeAndCloseAccount(u models.User, reason string) error {
+	var err error
+	u, err = a.store.BeginAccountDeletion(u.ID)
+	if err != nil {
+		return err
+	}
 	now := time.Now().UTC()
 	prev := u
 	u.AccountStatus = models.AccountStatusDeleted
 	u.DeletedAt = &now
-	u.DeleteReason = strings.TrimSpace(reason)
+	u.DeleteReason = ""
+	u.BlockedReason = ""
+	u.CorporateRejectionReason = ""
 	u.Name = "Silinmiş Kullanıcı"
 	u.PasswordHash = ""
+	u.MarketingConsent = false
 	tombstoneEmail := fmt.Sprintf("deleted-%s@deleted.nakliyego.local", u.ID)
 	u.Email = tombstoneEmail
 	uPrefix := u.ID
@@ -1098,20 +1087,19 @@ func (a *API) anonymizeAndCloseAccount(u models.User, reason string) error {
 
 	// 1. Şoför profil bilgilerini anonimleştir
 	if u.Role == models.RoleDriver {
-		u.DriverProfile.LicensePlate = ""
-		u.DriverProfile.ServiceArea = ""
-		u.DriverProfile.VehicleModel = ""
-		u.DriverProfile.VehicleType = ""
-		u.DriverProfile.VerificationNote = "Hesap silindi ve anonimleştirildi"
-		u.DriverProfile.NearbyLoadNotifications = false
+		u.DriverProfile = models.DriverProfile{}
 
 		// 2. Araç kayıtlarını deaktive et ve plaka/görsel verilerini anonimleştir
-		if vehicles, err := a.store.ListVehicles(u.ID); err == nil {
+		if vehicles, err := a.store.AccountDeletionVehicles(u.ID); err != nil {
+			return err
+		} else {
 			for _, v := range vehicles {
 				v.IsActive = false
 				if strings.HasPrefix(v.PhotoURL, "/api/photos/") {
 					photoID := strings.TrimPrefix(v.PhotoURL, "/api/photos/")
-					_ = a.store.DeletePhoto(photoID)
+					if err := a.store.DeletePhoto(photoID); err != nil {
+						return err
+					}
 					v.PhotoURL = ""
 				}
 				vPrefix := v.ID
@@ -1120,43 +1108,60 @@ func (a *API) anonymizeAndCloseAccount(u models.User, reason string) error {
 				}
 				v.LicensePlate = "SİLİNDİ-" + vPrefix
 				v.VerificationNote = "Hesap silindi; araç deaktive edildi"
-				_ = a.store.SaveVehicle(v)
-			}
-		}
-
-		// 3. Şoför mesleki belgeleri ve depolama dosyaları:
-		// 4925 s. Karayolu Taşıma Kanunu ve zamanaşımı gereğince, onaylanmış resmi belgeler (ehliyet, SRC, psikoteknik, ruhsat)
-		// idari denetim için 3 yıl yasal arşivde saklanır (Status = "archived").
-		// Yasal saklama gereği olmayan (onaysız, reddedilen veya "other" türündeki) belgelerin gerçek dosyaları storage'dan silinir.
-		if docs, err := a.store.ListDriverDocuments(u.ID); err == nil {
-			for _, d := range docs {
-				isStatutoryLegalDoc := d.Kind == "driver_license" || d.Kind == "src" || d.Kind == "psychotechnic" || d.Kind == "vehicle_registration"
-				if isStatutoryLegalDoc && d.Status == "verified" {
-					d.Status = "archived"
-					d.ReviewNote = "Hesap silindi; 4925 sayılı Kanun gereği 3 yıl yasal arşivde saklanmaktadır"
-					_ = a.store.SaveDriverDocument(d)
-				} else {
-					if strings.HasPrefix(d.FileURL, "/api/photos/") {
-						photoID := strings.TrimPrefix(d.FileURL, "/api/photos/")
-						_ = a.store.DeletePhoto(photoID)
-					}
-					d.FileURL = ""
-					d.Status = "deleted"
-					d.ReviewNote = "Yasal saklama yükümlülüğü bulunmadığından dosya ve veriler güvenli silindi"
-					_ = a.store.SaveDriverDocument(d)
+				if err := a.store.SaveVehicle(v); err != nil {
+					return err
 				}
 			}
 		}
+
+		// Verified documents are retained pending a documented legal review.
+		// This is not a claim of a statutory duration or an automatic expiry.
+		if docs, err := a.store.AccountDeletionDocuments(u.ID); err != nil {
+			return err
+		} else {
+			for _, d := range docs {
+				isReviewedDocumentKind := d.Kind == "driver_license" || d.Kind == "src" || d.Kind == "psychotechnic" || d.Kind == "vehicle_registration"
+				if isReviewedDocumentKind && (d.Status == "verified" || d.Status == "archived") {
+					d.Status = "archived"
+					d.ReviewNote = "Hesap kapatıldı; saklama gerekçesi ve süresi hukuki inceleme bekliyor"
+					if err := a.store.SaveDriverDocument(d); err != nil {
+						return err
+					}
+				} else {
+					if strings.HasPrefix(d.FileURL, "/api/photos/") {
+						photoID := strings.TrimPrefix(d.FileURL, "/api/photos/")
+						if err := a.store.DeletePhoto(photoID); err != nil {
+							return err
+						}
+					}
+					d.FileURL = ""
+					d.Title = ""
+					d.Status = "deleted"
+					d.ReviewNote = "Hesap kapatıldı; yüklenen dosya kaldırıldı"
+					if err := a.store.SaveDriverDocument(d); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+
+	if err := a.store.CleanupAccountTransientData(prev); err != nil {
+		return err
+	}
+
+	// 5. Aktif oturum ve push bildirim tokenlarını iptal et
+	if err := a.store.RevokeAllUserSessions(u.ID); err != nil {
+		return err
+	}
+	if err := a.store.RevokeAllUserPushTokens(u.ID); err != nil {
+		return err
 	}
 
 	// 4. Kullanıcı ana kaydını ve email/telefon indekslerini güncelle
 	if err := a.store.UpdateUser(prev, u); err != nil {
 		return err
 	}
-
-	// 5. Aktif oturum ve push bildirim tokenlarını iptal et
-	_ = a.store.RevokeAllUserSessions(u.ID)
-	_ = a.store.RevokeAllUserPushTokens(u.ID)
 
 	return nil
 }
@@ -1177,17 +1182,25 @@ func (a *API) requestAccountDeletionPublic(w http.ResponseWriter, r *http.Reques
 	}
 	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
 	req.Phone = normalizePhone(req.Phone)
+	if len(req.Email) > 254 || len(req.Phone) > 32 || len(req.Reason) > 1000 {
+		badRequest(w, "talep alanları çok uzun")
+		return
+	}
 	if !req.Confirm || (req.Email == "" && req.Phone == "") {
 		badRequest(w, "onay kutusu ve e-posta veya telefon bilgisi zorunludur")
 		return
 	}
 
-	existingRequests, _ := a.store.ListAccountDeletionRequests("pending")
+	existingRequests, err := a.store.ListAccountDeletionRequests("pending")
+	if err != nil {
+		serverError(w, err)
+		return
+	}
 	for _, er := range existingRequests {
 		if (req.Email != "" && strings.EqualFold(er.Email, req.Email)) || (req.Phone != "" && er.Phone == req.Phone) {
 			jsonResponse(w, http.StatusOK, map[string]any{
 				"status":  "received",
-				"message": "Hesap silme talebiniz zaten alınmıştır ve inceleme sırasındadır. Güvenlik doğrulaması amacıyla kayıtlı iletişim adresiniz üzerinden sizinle iletişime geçilecektir.",
+				"message": "Hesap silme talebiniz başarıyla alınmıştır. Güvenlik doğrulaması amacıyla kayıtlı iletişim adresiniz üzerinden sizinle iletişime geçilecektir.",
 			})
 			return
 		}
@@ -1217,7 +1230,10 @@ func (a *API) requestAccountDeletionPublic(w http.ResponseWriter, r *http.Reques
 	if foundUser != nil {
 		reqRecord.UserID = foundUser.ID
 	}
-	_ = a.store.SaveAccountDeletionRequest(reqRecord)
+	if err := a.store.SaveAccountDeletionRequest(reqRecord); err != nil {
+		serverError(w, err)
+		return
+	}
 
 	jsonResponse(w, http.StatusOK, map[string]any{
 		"status":  "received",
@@ -2029,7 +2045,7 @@ func (a *API) load(w http.ResponseWriter, r *http.Request) {
 	}
 	p := current(r)
 	if p.Role == models.RoleDriver {
-		if !isOfferableStatus(l.Status) && l.AssignedDriver != p.ID {
+		if !isOfferableStatus(l.Status) && l.AssignedDriver != p.ID && !(l.PaymentApproval != nil && l.PaymentApproval.DriverID == p.ID && l.PaymentApproval.Status == "pending") {
 			forbidden(w)
 			return
 		}
@@ -2258,7 +2274,7 @@ func (a *API) createOffer(w http.ResponseWriter, r *http.Request) {
 		serverError(w, e)
 		return
 	}
-	a.sendPush(l.CustomerID, "Yeni teklif", "İlanınıza yeni bir şoför teklifi geldi.", map[string]string{"type": "offer", "loadId": l.ID, "screen": "load"})
+	a.sendPush(l.CustomerID, "Yeni teklif", "İlanınıza yeni bir şoför teklifi geldi.", map[string]string{"eventId": "offer:" + o.ID, "type": "offer", "loadId": l.ID, "screen": "load"})
 	jsonResponse(w, 201, o)
 }
 func (a *API) offers(w http.ResponseWriter, r *http.Request) {
@@ -2288,9 +2304,9 @@ func (a *API) offerViews(offers []models.Offer) []map[string]any {
 	for _, offer := range offers {
 		view := map[string]any{"offer": offer}
 		if driver, err := a.store.GetUser(offer.DriverID); err == nil {
-			view["driver"] = a.publicUser(driver)
+			view["driver"] = publicDriverSummary(driver)
 			if vehicle, err := a.store.GetActiveVehicle(offer.DriverID); err == nil {
-				view["vehicle"] = vehicle
+				view["vehicle"] = publicVehicleSummary(vehicle)
 			}
 		}
 		views = append(views, view)
@@ -2313,6 +2329,32 @@ func (a *API) acceptOffer(w http.ResponseWriter, r *http.Request) {
 		notFound(w)
 		return
 	}
+	var request struct {
+		AmountCents int64 `json:"amountCents"`
+	}
+	if r.ContentLength != 0 && !decode(w, r, &request) {
+		return
+	}
+	if request.AmountCents < 0 {
+		badRequest(w, "geçersiz kredi tutarı")
+		return
+	}
+	company, companyErr := a.companyForCorporateCustomer(l.CustomerID)
+	if companyErr != nil {
+		serverError(w, companyErr)
+		return
+	}
+	if company != nil || request.AmountCents > 0 {
+		a.selectCreditOffer(w, r, l, o, request.AmountCents)
+		return
+	}
+	if l.PaymentApproval != nil && l.PaymentApproval.Status == "rejected" {
+		l.PaymentApproval = nil
+	}
+	a.acceptSelectedOffer(w, r, l, o)
+}
+func (a *API) acceptSelectedOffer(w http.ResponseWriter, r *http.Request, l models.Load, o models.Offer) {
+	p := current(r)
 	from := l.Status
 	if !models.CanTransition(from, models.LoadStatusDriverSelected) {
 		conflict(w, "ilan şoför seçimine uygun değil")
@@ -2345,9 +2387,12 @@ func (a *API) acceptOffer(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	if l.PaymentApproval != nil && l.PaymentApproval.Status == "approved" {
+		a.sendPush(l.CustomerID, "Şoför ödeme şeklini onayladı", "Ödeme planınız şoför tarafından kabul edildi. Nakliyeniz başlatılabilir.", map[string]string{"eventId": "payment-decision:" + l.PaymentApproval.ID, "type": "payment_approval_approved", "loadId": l.ID, "screen": "load"})
+	}
 	a.addOfferMessage(l, o)
 	a.addSystemMessage(l, "Teklif kabul edildi.")
-	a.sendPush(o.DriverID, "Teklifiniz kabul edildi", fmt.Sprintf("%.2f TL hizmet bedeli bloke edildi. Ücret yalnızca nakliye tamamlandığında tahsil edilecektir.", float64(l.DriverCommissionCents)/100), map[string]string{"type": "driver_selected", "loadId": l.ID, "screen": "load"})
+	a.sendPush(o.DriverID, "Teklifiniz kabul edildi", fmt.Sprintf("%.2f TL hizmet bedeli bloke edildi. Ücret yalnızca nakliye tamamlandığında tahsil edilecektir.", float64(l.DriverCommissionCents)/100), map[string]string{"eventId": "assignment:" + l.ID + ":" + o.ID, "type": "driver_selected", "loadId": l.ID, "screen": "load"})
 	jsonResponse(w, 200, l)
 }
 func (a *API) updateOffer(w http.ResponseWriter, r *http.Request) {
@@ -2412,7 +2457,7 @@ func (a *API) driverOffers(w http.ResponseWriter, r *http.Request) {
 		}
 		item := map[string]any{"offer": offer, "load": load}
 		if activeVehicle.ID != "" {
-			item["vehicle"] = activeVehicle
+			item["vehicle"] = publicVehicleSummary(activeVehicle)
 		}
 		response = append(response, item)
 	}
@@ -3123,7 +3168,7 @@ func (a *API) sendMessage(w http.ResponseWriter, r *http.Request) {
 			if sender, getErr := a.store.GetUser(p.ID); getErr == nil && strings.TrimSpace(sender.Name) != "" {
 				senderName = strings.TrimSpace(sender.Name)
 			}
-			a.sendPush(recipientID, "Yeni mesaj", senderName+": "+shortPushPreview(created), map[string]string{"type": "message", "loadId": l.ID, "conversationId": l.ID, "screen": "conversation"})
+			a.sendPush(recipientID, "Yeni mesaj", senderName+": "+shortPushPreview(created), map[string]string{"eventId": "message:" + created.ID, "type": "message", "loadId": l.ID, "conversationId": l.ID, "screen": "conversation"})
 		}
 	}
 	status := http.StatusCreated
@@ -3388,7 +3433,12 @@ func (a *API) photo(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		userID = p.ID
-		u, _ = a.store.GetUser(userID)
+		var userErr error
+		u, userErr = a.store.GetUser(userID)
+		if userErr != nil || accountStatus(u) != models.AccountStatusActive || u.Role != p.Role {
+			unauthorized(w, "hesap erişimi kapalı")
+			return
+		}
 	}
 
 	photoID := r.PathValue("id")
@@ -3484,7 +3534,7 @@ func (a *API) photo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", ct)
-	w.Header().Set("Cache-Control", "private, max-age=86400")
+	w.Header().Set("Cache-Control", "private, no-store")
 	_, _ = w.Write(data)
 }
 
@@ -3568,6 +3618,20 @@ func verifyPassword(encoded, value string) bool {
 	actual := argon2.IDKey([]byte(value), salt, iterations, memory, parallelism, uint32(len(expected)))
 	return hmac.Equal(expected, actual)
 }
+func publicVehicleSummary(v models.Vehicle) map[string]any {
+	return map[string]any{"id": v.ID, "vehicleType": v.VehicleType, "brand": v.Brand, "model": v.Model,
+		"licensePlate": v.LicensePlate, "capacityKg": v.CapacityKG, "lengthCm": v.LengthCM, "widthCm": v.WidthCM,
+		"heightCm": v.HeightCM, "photoUrl": v.PhotoURL, "isActive": v.IsActive, "verificationStatus": v.VerificationStatus}
+}
+
+func publicDriverSummary(u models.User) map[string]any {
+	p := u.DriverProfile
+	return map[string]any{"id": u.ID, "name": u.Name, "role": u.Role,
+		"driverProfile": map[string]any{"vehicleType": p.VehicleType, "vehicleModel": p.VehicleModel,
+			"capacityKg": p.CapacityKG, "completedJobs": p.CompletedJobs, "rating": p.Rating,
+			"verificationStatus": p.VerificationStatus}}
+}
+
 func (a *API) publicUser(u models.User) map[string]any {
 	user := map[string]any{
 		"id":            u.ID,

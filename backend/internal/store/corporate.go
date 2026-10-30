@@ -92,7 +92,10 @@ func (s *RedisStore) SaveCompany(company models.Company) error {
 	if err != nil || ownerCompanyID != company.ID {
 		return ErrCorporateAccountRequired
 	}
-	return s.client.Set(s.ctx, "company:"+company.ID, body, 0).Err()
+	return s.watchPayment(func(tx *redis.Tx) error {
+		_, err := tx.TxPipelined(s.ctx, func(p redis.Pipeliner) error { p.Set(s.ctx, "company:"+company.ID, body, 0); return nil })
+		return err
+	}, "user:"+company.OwnerCustomerID)
 }
 
 func (s *RedisStore) GetCorporateWallet(companyID string) (models.CorporateWallet, error) {
@@ -181,7 +184,7 @@ func walletUniqueKey(transactionType, loadID string) string {
 }
 
 func (s *RedisStore) ApplyWalletCredit(company models.Company, requestedLoad models.Load, amountCents int64, transaction models.WalletTransaction) (models.CorporateWallet, models.LoadWalletAllocation, models.WalletTransaction, error) {
-	if company.ID == "" || company.OwnerCustomerID != requestedLoad.CustomerID || amountCents <= 0 || transaction.ID == "" ||
+	if requestedLoad.PaymentApproval == nil || company.ID == "" || company.OwnerCustomerID != requestedLoad.CustomerID || amountCents < 0 || transaction.ID == "" ||
 		transaction.Type != models.WalletTransactionShipmentUsage || transaction.LoadID != requestedLoad.ID || transaction.CompanyID != company.ID || transaction.CreatedAt.IsZero() {
 		return models.CorporateWallet{}, models.LoadWalletAllocation{}, models.WalletTransaction{}, ErrCorporateAccountRequired
 	}
@@ -194,12 +197,12 @@ func (s *RedisStore) ApplyWalletCredit(company models.Company, requestedLoad mod
 	allocationKey := "load-wallet:" + requestedLoad.ID
 	uniqueKey := walletUniqueKey(models.WalletTransactionShipmentUsage, requestedLoad.ID)
 	transactionKey := "wallet-transaction:" + transaction.ID
-	err = s.client.Watch(s.ctx, func(tx *redis.Tx) error {
+	err = s.watchPayment(func(tx *redis.Tx) error {
 		policy, policyErr := s.readWalletPolicy(tx)
 		if policyErr != nil {
 			return policyErr
 		}
-		if !policy.Enabled {
+		if !policy.Enabled && amountCents > 0 {
 			return ErrWalletBalance
 		}
 		loadBody, getErr := tx.Get(s.ctx, loadKey).Bytes()
@@ -210,10 +213,25 @@ func (s *RedisStore) ApplyWalletCredit(company models.Company, requestedLoad mod
 		if unmarshalErr := json.Unmarshal(loadBody, &storedLoad); unmarshalErr != nil {
 			return unmarshalErr
 		}
-		if storedLoad.CustomerID != company.OwnerCustomerID || models.CanonicalLoadStatus(storedLoad.Status) != models.LoadStatusDriverSelected || storedLoad.DeletedAt != nil {
+		if storedLoad.CustomerID != company.OwnerCustomerID || models.CanonicalLoadStatus(storedLoad.Status) != models.LoadStatusPublished || storedLoad.DeletedAt != nil {
 			return ErrInvalidLoadStatusTransition
 		}
-		priceCents, validPrice := models.TLToCents(storedLoad.AgreedPriceTL)
+		approval := requestedLoad.PaymentApproval
+		if approval == nil || approval.Status != "pending" || approval.LoadID != storedLoad.ID || requestedLoad.Status != models.LoadStatusPaymentApprovalPending || requestedLoad.AssignedDriver != "" {
+			return ErrInvalidLoadStatusTransition
+		}
+		offerBody, offerErr := tx.Get(s.ctx, "offer:"+approval.OfferID).Bytes()
+		if offerErr != nil {
+			return offerErr
+		}
+		var offer models.Offer
+		if err := json.Unmarshal(offerBody, &offer); err != nil {
+			return err
+		}
+		priceCents, validPrice := models.TLToCents(offer.AmountTL)
+		if offer.Status != "pending" || offer.LoadID != storedLoad.ID || offer.DriverID != approval.DriverID || approval.AmountCents != priceCents || approval.CreditCents != amountCents || approval.CustomerPayableCents != priceCents-amountCents {
+			return ErrLoadStatusConflict
+		}
 		if !validPrice || priceCents > models.MaxWalletCents || amountCents > models.WalletPercent(priceCents, policy.MaxUsageBps, false) {
 			return ErrWalletBalance
 		}
@@ -259,16 +277,25 @@ func (s *RedisStore) ApplyWalletCredit(company models.Company, requestedLoad mod
 			return getErr
 		}
 		_, txErr := tx.TxPipelined(s.ctx, func(pipe redis.Pipeliner) error {
-			pipe.Set(s.ctx, walletKey, walletBody, 0)
+			storedLoad.Status = models.LoadStatusPaymentApprovalPending
+			storedLoad.AgreedPriceTL = offer.AmountTL
+			storedLoad.PaymentApproval = approval
+			storedLoad.UpdatedAt = transaction.CreatedAt
+			pendingBody, _ := json.Marshal(storedLoad)
+			pipe.Set(s.ctx, loadKey, pendingBody, 0)
+			pipe.Set(s.ctx, "payment-approval:"+approval.ID, mustJSON(approval), 0)
 			pipe.Set(s.ctx, allocationKey, allocationBody, 0)
-			pipe.Set(s.ctx, transactionKey, transactionBody, 0)
-			pipe.ZAdd(s.ctx, "wallet-transactions:"+storedWallet.ID, redis.Z{Score: float64(transaction.CreatedAt.UnixMicro()), Member: transaction.ID})
-			pipe.Set(s.ctx, uniqueKey, transaction.ID, 0)
+			if amountCents > 0 {
+				pipe.Set(s.ctx, walletKey, walletBody, 0)
+				pipe.Set(s.ctx, transactionKey, transactionBody, 0)
+				pipe.ZAdd(s.ctx, "wallet-transactions:"+storedWallet.ID, redis.Z{Score: float64(transaction.CreatedAt.UnixMicro()), Member: transaction.ID})
+				pipe.Set(s.ctx, uniqueKey, transaction.ID, 0)
+			}
 			wallet = storedWallet
 			return nil
 		})
 		return txErr
-	}, loadKey, walletKey, allocationKey, uniqueKey, transactionKey, walletPolicyKey)
+	}, loadKey, walletKey, allocationKey, uniqueKey, transactionKey, walletPolicyKey, "offer:"+requestedLoad.PaymentApproval.OfferID)
 	if errors.Is(err, redis.TxFailedErr) {
 		err = ErrWalletConflict
 	}
@@ -293,7 +320,8 @@ func (s *RedisStore) TransitionLoadStatusAndReverseWallet(expectedStatus string,
 	if err != nil {
 		return nil, err
 	}
-	if updated.Status != models.LoadStatusCancelled || company.OwnerCustomerID != updated.CustomerID || allocation.CompanyID != company.ID || allocation.UsedCents <= 0 ||
+	rejected := expectedStatus == models.LoadStatusPaymentApprovalPending && updated.Status == models.LoadStatusPublished
+	if (updated.Status != models.LoadStatusCancelled && !rejected) || company.OwnerCustomerID != updated.CustomerID || allocation.CompanyID != company.ID || allocation.UsedCents < 0 ||
 		transaction.ID == "" || transaction.Type != models.WalletTransactionReversal || transaction.LoadID != updated.ID || transaction.CompanyID != company.ID || transaction.CreatedAt.IsZero() {
 		return nil, ErrInvalidLoadStatusTransition
 	}
@@ -321,7 +349,7 @@ func (s *RedisStore) TransitionLoadStatusAndReverseWallet(expectedStatus string,
 	allocationKey := "load-wallet:" + updated.ID
 	uniqueKey := walletUniqueKey(models.WalletTransactionReversal, updated.ID)
 	transactionKey := "wallet-transaction:" + transaction.ID
-	err = s.client.Watch(s.ctx, func(tx *redis.Tx) error {
+	err = s.watchPayment(func(tx *redis.Tx) error {
 		storedLoadBody, getErr := tx.Get(s.ctx, loadKey).Bytes()
 		if getErr != nil {
 			return getErr
@@ -329,6 +357,12 @@ func (s *RedisStore) TransitionLoadStatusAndReverseWallet(expectedStatus string,
 		var storedLoad models.Load
 		if unmarshalErr := json.Unmarshal(storedLoadBody, &storedLoad); unmarshalErr != nil {
 			return unmarshalErr
+		}
+		if storedLoad.PaymentApproval != nil && (storedLoad.PaymentApproval.Status == "pending" || storedLoad.PaymentApproval.Status == "approved") && !samePaymentTerms(storedLoad.PaymentApproval, updated.PaymentApproval) {
+			return ErrLoadStatusConflict
+		}
+		if rejected && (storedLoad.PaymentApproval == nil || updated.PaymentApproval == nil || storedLoad.PaymentApproval.ID != updated.PaymentApproval.ID || storedLoad.PaymentApproval.Status != "pending" || updated.PaymentApproval.Status != "rejected" || event.ChangedByUserID != storedLoad.PaymentApproval.DriverID) {
+			return ErrLoadStatusConflict
 		}
 		if models.CanonicalLoadStatus(storedLoad.Status) != expectedStatus || storedLoad.CustomerID != company.OwnerCustomerID || !models.CanTransition(storedLoad.Status, updated.Status) {
 			return ErrLoadStatusConflict
@@ -341,7 +375,7 @@ func (s *RedisStore) TransitionLoadStatusAndReverseWallet(expectedStatus string,
 		if unmarshalErr := json.Unmarshal(storedAllocationBody, &storedAllocation); unmarshalErr != nil {
 			return unmarshalErr
 		}
-		if storedAllocation.CompanyID != company.ID || storedAllocation.WalletID != wallet.ID || storedAllocation.UsedCents <= 0 || storedAllocation.UsageReversalTransactionID != "" {
+		if storedAllocation.CompanyID != company.ID || storedAllocation.WalletID != wallet.ID || storedAllocation.UsedCents < 0 || storedAllocation.UsageReversalTransactionID != "" {
 			return ErrWalletUsageExists
 		}
 		if exists, existsErr := tx.Exists(s.ctx, eventKey, uniqueKey, transactionKey).Result(); existsErr != nil {
@@ -391,11 +425,19 @@ func (s *RedisStore) TransitionLoadStatusAndReverseWallet(expectedStatus string,
 			pipe.Set(s.ctx, loadKey, loadBody, 0)
 			pipe.Set(s.ctx, eventKey, eventBody, 0)
 			pipe.ZAdd(s.ctx, "load-status-history:"+updated.ID, redis.Z{Score: float64(event.ChangedAt.UnixMicro()), Member: event.ID})
-			pipe.Set(s.ctx, walletKey, walletBody, 0)
 			pipe.Set(s.ctx, allocationKey, allocationBody, 0)
-			pipe.Set(s.ctx, transactionKey, transactionBody, 0)
-			pipe.ZAdd(s.ctx, "wallet-transactions:"+storedWallet.ID, redis.Z{Score: float64(transaction.CreatedAt.UnixMicro()), Member: transaction.ID})
-			pipe.Set(s.ctx, uniqueKey, transaction.ID, 0)
+			if storedAllocation.UsedCents > 0 {
+				pipe.Set(s.ctx, walletKey, walletBody, 0)
+				pipe.Set(s.ctx, transactionKey, transactionBody, 0)
+				pipe.ZAdd(s.ctx, "wallet-transactions:"+storedWallet.ID, redis.Z{Score: float64(transaction.CreatedAt.UnixMicro()), Member: transaction.ID})
+				pipe.Set(s.ctx, uniqueKey, transaction.ID, 0)
+			}
+			if updated.PaymentApproval != nil {
+				pipe.Set(s.ctx, "payment-approval:"+updated.PaymentApproval.ID, mustJSON(updated.PaymentApproval), 0)
+			}
+			if rejected {
+				pipe.Del(s.ctx, allocationKey, uniqueKey, walletUniqueKey(models.WalletTransactionShipmentUsage, updated.ID))
+			}
 			return nil
 		})
 		return txErr

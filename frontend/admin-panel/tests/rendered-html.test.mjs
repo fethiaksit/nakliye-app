@@ -101,5 +101,14 @@ test("server-renders the public legal routes without authentication", async () =
     const html = await res.text();
     assert.match(html, /NakliyeGo/);
     assert.match(html, /Yasal Bilgilendirme Merkezi/);
+    assert.match(html, /taslak/i);
+    assert.doesNotMatch(html, /3850507457|Feti Akşit Limited|2 yıl|10 yıl/);
+    if (route === "/account-deletion") {
+      assert.match(html, /Hesap Silme Talebini Gönder/);
+      assert.match(html, /type="email"/);
+      assert.match(html, /type="tel"/);
+      assert.match(html, /kimlik doğrul/i);
+    }
+
   }
 });

@@ -97,6 +97,7 @@ type Stop struct {
 }
 
 type Load struct {
+	PaymentApproval       *PaymentApproval `json:"paymentApproval,omitempty"`
 	DriverCommissionCents int64            `json:"driverCommissionCents,omitempty"`
 	ID                    string           `json:"id"`
 	CustomerID            string           `json:"customerId"`
@@ -204,18 +205,18 @@ type User struct {
 	// LastSeenAt records a real authenticated API activity. It deliberately does
 	// not imply a live socket connection, so clients must present it as
 	// "son görülme" rather than "çevrimiçi".
-	LastSeenAt               time.Time  `json:"lastSeenAt,omitempty"`
-	AccountStatus            string     `json:"accountStatus,omitempty"`
-	BlockedAt                *time.Time `json:"blockedAt,omitempty"`
-	BlockedReason            string     `json:"blockedReason,omitempty"`
-	TermsAccepted            bool       `json:"termsAccepted,omitempty"`
-	TermsVersion             string     `json:"termsVersion,omitempty"`
-	TermsAcceptedAt          *time.Time `json:"termsAcceptedAt,omitempty"`
-	MarketingConsent         bool       `json:"marketingConsent,omitempty"`
-	MarketingConsentAt       *time.Time `json:"marketingConsentAt,omitempty"`
-	KVKKAcknowledged         bool       `json:"kvkkAcknowledged,omitempty"`
-	DeletedAt                *time.Time `json:"deletedAt,omitempty"`
-	DeleteReason             string     `json:"deleteReason,omitempty"`
+	LastSeenAt         time.Time  `json:"lastSeenAt,omitempty"`
+	AccountStatus      string     `json:"accountStatus,omitempty"`
+	BlockedAt          *time.Time `json:"blockedAt,omitempty"`
+	BlockedReason      string     `json:"blockedReason,omitempty"`
+	TermsAccepted      bool       `json:"termsAccepted,omitempty"`
+	TermsVersion       string     `json:"termsVersion,omitempty"`
+	TermsAcceptedAt    *time.Time `json:"termsAcceptedAt,omitempty"`
+	MarketingConsent   bool       `json:"marketingConsent,omitempty"`
+	MarketingConsentAt *time.Time `json:"marketingConsentAt,omitempty"`
+	KVKKAcknowledged   bool       `json:"kvkkAcknowledged,omitempty"`
+	DeletedAt          *time.Time `json:"deletedAt,omitempty"`
+	DeleteReason       string     `json:"deleteReason,omitempty"`
 }
 
 type DriverProfile struct {
@@ -235,6 +236,7 @@ type DriverProfile struct {
 }
 
 type PushToken struct {
+	ProjectID     string    `json:"projectId,omitempty"`
 	UserID        string    `json:"userId"`
 	ExpoPushToken string    `json:"expoPushToken"`
 	Platform      string    `json:"platform"`

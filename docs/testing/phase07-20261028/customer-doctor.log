@@ -1,0 +1,5 @@
+env: load .env
+env: export EXPO_PUBLIC_API_URL GOOGLE_MAPS_ANDROID_API_KEY GOOGLE_MAPS_IOS_API_KEY
+The appConfigFieldsNotSyncedCheck is disabled. Set expo.doctor.appConfigFieldsNotSyncedCheck.enabled to true in package.json to re-enable this check.
+Running 17 checks on your project...
+17/17 checks passed. No issues detected!

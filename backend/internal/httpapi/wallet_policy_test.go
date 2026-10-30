@@ -43,16 +43,16 @@ func TestWalletDefaultRewardAndUsageCap(t *testing.T) {
 	if got := getWallet(t, h, c.AccessToken).Wallet.BalanceCents; got != 300000 {
 		t.Fatalf("default 5%%: got %d want 300000", got)
 	}
-	l := corporateAcceptedLoad(t, h, c, d, "İkinci iş", 8000)
-	r := requestJSON(t, h, "POST", "/api/corporate/loads/"+l.ID+"/wallet", c.AccessToken, map[string]int64{"amountCents": 200001})
+	l := corporateOfferedLoad(t, h, c, d, "İkinci iş", 8000)
+	r := requestJSON(t, h, "POST", "/api/offers/"+pendingOfferID(t, h, c, l)+"/accept", c.AccessToken, map[string]int64{"amountCents": 200001})
 	if r.Code != 400 {
 		t.Fatalf("25%% cap: %d %s", r.Code, r.Body.String())
 	}
-	r = requestJSON(t, h, "POST", "/api/corporate/loads/"+l.ID+"/wallet", c.AccessToken, map[string]int64{"amountCents": 200000})
-	if r.Code != 201 {
+	r = requestJSON(t, h, "POST", "/api/offers/"+pendingOfferID(t, h, c, l)+"/accept", c.AccessToken, map[string]int64{"amountCents": 200000})
+	if r.Code != 200 {
 		t.Fatalf("allowed spend: %d %s", r.Code, r.Body.String())
 	}
-	completeCorporateLoad(t, h, c, d, l)
+	completeCorporateLoad(t, h, c, d, approveCreditForTest(t, h, c, d, l))
 	if got := getWallet(t, h, c.AccessToken).Wallet.BalanceCents; got != 130000 {
 		t.Fatalf("net reward: got %d", got)
 	}
@@ -111,13 +111,13 @@ func TestWalletTierPromotionAndRateReset(t *testing.T) {
 	}
 	p.MaxUsageBps = 1000
 	save()
-	load := corporateAcceptedLoad(t, h, c, d, "Düşük kullanım limiti", 8000)
-	r = requestJSON(t, h, "POST", "/api/corporate/loads/"+load.ID+"/wallet", c.AccessToken, map[string]int64{"amountCents": 80001})
+	load := corporateOfferedLoad(t, h, c, d, "Düşük kullanım limiti", 8000)
+	r = requestJSON(t, h, "POST", "/api/offers/"+pendingOfferID(t, h, c, load)+"/accept", c.AccessToken, map[string]int64{"amountCents": 80001})
 	if r.Code != 400 {
 		t.Fatalf("changed usage cap %d", r.Code)
 	}
-	r = requestJSON(t, h, "POST", "/api/corporate/loads/"+load.ID+"/wallet", c.AccessToken, map[string]int64{"amountCents": 80000})
-	if r.Code != 201 {
+	r = requestJSON(t, h, "POST", "/api/offers/"+pendingOfferID(t, h, c, load)+"/accept", c.AccessToken, map[string]int64{"amountCents": 80000})
+	if r.Code != 200 {
 		t.Fatal(r.Body.String())
 	}
 	p.Enabled = false
@@ -188,11 +188,12 @@ func TestWalletAdminPolicyAndAdjustments(t *testing.T) {
 	if r = requestJSON(t, h, "PUT", path, admin.AccessToken, policy); r.Code != 200 {
 		t.Fatal(r.Body.String())
 	}
-	l := corporateAcceptedLoad(t, h, c, d, "Kapalı sistem", 10000)
-	if r = requestJSON(t, h, "POST", "/api/corporate/loads/"+l.ID+"/wallet", c.AccessToken, map[string]int64{"amountCents": 1}); r.Code != 400 {
+	l := corporateOfferedLoad(t, h, c, d, "Kapalı sistem", 10000)
+	if r = requestJSON(t, h, "POST", "/api/offers/"+pendingOfferID(t, h, c, l)+"/accept", c.AccessToken, map[string]int64{"amountCents": 1}); r.Code != 400 {
 		t.Fatalf("disabled spend %d", r.Code)
 	}
-	completeCorporateLoad(t, h, c, d, l)
+	requestJSON(t, h, "POST", "/api/offers/"+pendingOfferID(t, h, c, l)+"/accept", c.AccessToken, nil)
+	completeCorporateLoad(t, h, c, d, approveCreditForTest(t, h, c, d, l))
 	if got := getWallet(t, h, c.AccessToken); got.Wallet.BalanceCents != 100000 || len(got.Transactions) != 2 {
 		t.Fatalf("disabled earn %#v", got)
 	}

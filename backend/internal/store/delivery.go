@@ -103,7 +103,7 @@ func (s *RedisStore) CompleteDeliveryWithReward(expectedStatus string, updated m
 	verificationKey := "load-delivery-verification:" + updated.ID
 	eventKey := "load-status-event:" + event.ID
 	photoKey := "photo:" + photoID
-	watchKeys := []string{loadKey, verificationKey, eventKey, photoKey}
+	watchKeys := []string{loadKey, verificationKey, eventKey, photoKey, "load-wallet:" + updated.ID, "driver-wallet-transaction:" + updated.ID + ":CORPORATE_CREDIT_COMPENSATION"}
 
 	watchKeys = append(watchKeys, driverWatchKeys(updated)...)
 	var reward models.WalletTransaction
@@ -142,7 +142,7 @@ func (s *RedisStore) CompleteDeliveryWithReward(expectedStatus string, updated m
 	}
 rewardSetupDone:
 
-	err = s.client.Watch(s.ctx, func(tx *redis.Tx) error {
+	err = s.watchPayment(func(tx *redis.Tx) error {
 		storedLoadBody, getErr := tx.Get(s.ctx, loadKey).Bytes()
 		if getErr != nil {
 			return getErr
@@ -150,6 +150,9 @@ rewardSetupDone:
 		var storedLoad models.Load
 		if unmarshalErr := json.Unmarshal(storedLoadBody, &storedLoad); unmarshalErr != nil {
 			return unmarshalErr
+		}
+		if e := s.requireDriverPaymentConsent(tx, storedLoad); e != nil {
+			return e
 		}
 		currentStatus := models.CanonicalLoadStatus(storedLoad.Status)
 		if currentStatus != expectedStatus || storedLoad.CustomerID != verification.CustomerID || storedLoad.AssignedDriver != verification.DriverID {
@@ -185,6 +188,44 @@ rewardSetupDone:
 		driverMutation, commissionErr := s.prepareDriverCommission(tx, storedLoad, "COMMISSION", event.ChangedByUserID, event.ChangedAt)
 		if commissionErr != nil {
 			return commissionErr
+		}
+		var compensation *models.DriverWalletTransaction
+		if approval := storedLoad.PaymentApproval; approval != nil && approval.Status == "approved" && approval.CreditCents > 0 {
+			price, valid := models.TLToCents(storedLoad.AgreedPriceTL)
+			if !valid || approval.LoadID != storedLoad.ID || approval.DriverID != storedLoad.AssignedDriver || approval.DecidedAt == nil || approval.DecidedBy != storedLoad.AssignedDriver || approval.CreditCents <= 0 || approval.AmountCents != price || approval.CustomerPayableCents != price-approval.CreditCents || !samePaymentTerms(approval, updated.PaymentApproval) || approval.CompensationTransactionID != "" || driverMutation == nil {
+				return ErrLoadStatusConflict
+			}
+			body, e := tx.Get(s.ctx, "load-wallet:"+storedLoad.ID).Bytes()
+			if e != nil {
+				return e
+			}
+			var allocation models.LoadWalletAllocation
+			if e = json.Unmarshal(body, &allocation); e != nil {
+				return e
+			}
+			if allocation.LoadID != storedLoad.ID || allocation.UsedCents != approval.CreditCents || allocation.OriginalAmountCents != price || allocation.NetEligibleAmountCents != approval.CustomerPayableCents || allocation.UsageTransactionID == "" || allocation.UsageReversalTransactionID != "" {
+				return ErrLoadStatusConflict
+			}
+			entryID := storedLoad.ID + ":" + models.DriverTransactionCorporateCreditCompensation
+			if n, e := tx.Exists(s.ctx, "driver-wallet-transaction:"+entryID).Result(); e != nil {
+				return e
+			} else if n != 0 {
+				return ErrLoadStatusConflict
+			}
+			w := &driverMutation.wallet
+			if w.BalanceCents > models.MaxWalletCents-approval.CreditCents {
+				return ErrDriverWalletBalance
+			}
+			before := w.BalanceCents
+			w.BalanceCents += approval.CreditCents
+			w.AvailableCents = w.BalanceCents - w.ReservedCents
+			compensation = &models.DriverWalletTransaction{ID: entryID, DriverID: w.DriverID, LoadID: storedLoad.ID, Type: models.DriverTransactionCorporateCreditCompensation, AmountCents: approval.CreditCents, BalanceBeforeCents: before, BalanceAfterCents: w.BalanceCents, ReservedAfterCents: w.ReservedCents, Reference: approval.ID, ActorID: event.ChangedByUserID, CreatedAt: event.ChangedAt}
+			copied := *approval
+			copied.CompensationTransactionID = entryID
+			updated.PaymentApproval = &copied
+			loadBody = mustJSON(updated)
+		} else if storedLoad.PaymentApproval != nil && storedLoad.PaymentApproval.Status == "pending" {
+			return ErrLoadStatusConflict
 		}
 		var walletBody, allocationBody, rewardBody []byte
 		var allocation models.LoadWalletAllocation
@@ -241,9 +282,14 @@ rewardSetupDone:
 				rewardCents = 0
 			}
 			if !priceValid || priceCents > models.MaxWalletCents || allocation.UsedCents < 0 || eligibleCents < 0 || allocation.CompanyID != company.ID || allocation.WalletID != wallet.ID || allocation.LoadID != storedLoad.ID ||
-				allocation.OriginalAmountCents != priceCents || allocation.NetEligibleAmountCents != eligibleCents || allocation.UsageReversalTransactionID != "" || allocation.RewardTransactionID != "" ||
+				allocation.OriginalAmountCents != priceCents || allocation.NetEligibleAmountCents != eligibleCents ||
 				wallet.BalanceCents > models.MaxWalletCents-rewardCents {
 				return ErrWalletBalance
+			}
+			// Another completion/cancellation can commit between WATCH reads.
+			// Its ledger markers are a state conflict, never a balance error.
+			if allocation.UsageReversalTransactionID != "" || allocation.RewardTransactionID != "" {
+				return ErrLoadStatusConflict
 			}
 			reward.SchemaVersion = 1
 			reward.CorporateCustomerID = company.OwnerCustomerID
@@ -274,6 +320,11 @@ rewardSetupDone:
 
 		_, txErr := tx.TxPipelined(s.ctx, func(pipe redis.Pipeliner) error {
 			s.writeDriverCommission(pipe, driverMutation)
+			if compensation != nil {
+				pipe.Set(s.ctx, "driver-wallet-transaction:"+compensation.ID, mustJSON(compensation), 0)
+				pipe.ZAdd(s.ctx, "driver-wallet-transactions:"+compensation.DriverID, redis.Z{Score: float64(compensation.CreatedAt.UnixMicro()), Member: compensation.ID})
+				pipe.Set(s.ctx, "payment-approval:"+updated.PaymentApproval.ID, mustJSON(updated.PaymentApproval), 0)
+			}
 			pipe.Set(s.ctx, loadKey, loadBody, 0)
 			pipe.Set(s.ctx, verificationKey, verificationBody, 0)
 			pipe.Set(s.ctx, eventKey, eventBody, 0)

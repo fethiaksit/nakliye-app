@@ -6,7 +6,11 @@
   "build": {
     "development": {
       "developmentClient": true,
-      "distribution": "internal"
+      "distribution": "internal",
+      "environment": "development",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://beta-api-18-157-76-136.sslip.io/api"
+      }
     },
     "preview": {
       "distribution": "internal",
@@ -14,7 +18,7 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://nakliyemusteri.youpp.com.tr/api"
+        "EXPO_PUBLIC_API_URL": "https://beta-api-18-157-76-136.sslip.io/api"
       },
       "environment": "preview"
     },

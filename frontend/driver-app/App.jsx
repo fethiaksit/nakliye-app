@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { KeyboardAvoidingView, Platform, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { AppState, KeyboardAvoidingView, Platform, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -15,7 +15,7 @@ import {
 import LegalModal from '../shared/ui/LegalModal';
 import { ListSkeleton } from '../shared/ui/primitives';
 import { colors, control, spacing, typography } from '../shared/ui/theme';
-import { registerDevicePushToken, subscribeNotificationResponses, unregisterDevicePushToken } from '../shared/notifications';
+import { subscribeDevicePushRegistration, subscribeNotificationResponses, unregisterDevicePushToken } from '../shared/notifications';
 import { apiError, auth, conversations, loads, logApiError, maps, offers, profile, push, restoreSession, saveSession, subscribeSessionExpired, updateStoredUser } from './src/services/api';
 import AuthFlow from './src/components/AuthFlow';
 import ConversationCenter from './src/components/ConversationCenter';
@@ -73,6 +73,18 @@ function DriverApp() {
   const [notificationData, setNotificationData] = useState(null);
   const [pendingConversationId, setPendingConversationId] = useState('');
   const pushToken = useRef(null);
+  const pushRegistration = useRef(null);
+  const [isChatActive, setIsChatActive] = useState(false);
+  const [isActiveApp, setIsActiveApp] = useState(AppState.currentState === 'active');
+  const jobsRequestId = useRef(0);
+  const jobsBusy = useRef(false);
+  const offersRequestId = useRef(0);
+  const offersBusy = useRef(false);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', state => setIsActiveApp(state === 'active'));
+    return () => subscription.remove();
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -101,46 +113,84 @@ function DriverApp() {
   useEffect(() => subscribeNotificationResponses(setNotificationData), []);
   useEffect(() => {
     if (!user) return undefined;
-    let active = true;
-    registerDevicePushToken(push).then(token => { if (active) pushToken.current = token; }).catch(error => logApiError('DRIVER PUSH REGISTER', error));
-    return () => { active = false; };
+    const stop = subscribeDevicePushRegistration(push, token => { pushToken.current = token; }, error => logApiError('DRIVER PUSH REGISTER', error));
+    pushRegistration.current = stop;
+    return () => { void stop(); };
   }, [user?.id]);
 
-  const fetchJobs = useCallback(async () => {
-    if (restoring || !user || user.role !== 'driver') return;
+  const fetchJobs = useCallback(async (silent = false) => {
+    if (restoring || !user || user.role !== 'driver' || jobsBusy.current) return;
+    jobsBusy.current = true;
+    const reqId = ++jobsRequestId.current;
     jobsAbort.current?.abort();
     const controller = new AbortController();
     jobsAbort.current = controller;
-    setJobsLoading(true);
-    setJobsError('');
+    if (!silent) {
+      setJobsLoading(true);
+      setJobsError('');
+    }
     try {
       const { data } = await loads.list({ limit: 100 }, { signal: controller.signal });
       if (!Array.isArray(data?.items)) throw new Error('Jobs response is not an items array.');
-      setJobs(data.items);
+      if (reqId === jobsRequestId.current) {
+        setJobs(data.items);
+        setSelected(current => {
+          if (!current?.id) return current;
+          const updated = data.items.find(item => item.id === current.id);
+          return updated || current;
+        });
+        setJobsError('');
+      }
     } catch (error) {
-      if (error.code !== 'ERR_CANCELED') {
+      if (error.name !== 'CanceledError' && error.code !== 'ERR_CANCELED') {
         logApiError('DRIVER JOBS', error);
-        setJobsError(apiError(error));
+        if (!silent && reqId === jobsRequestId.current) {
+          setJobsError(apiError(error));
+        }
       }
     } finally {
+      jobsBusy.current = false;
       if (jobsAbort.current === controller) {
         jobsAbort.current = null;
-        setJobsLoading(false);
+        if (!silent && reqId === jobsRequestId.current) {
+          setJobsLoading(false);
+        }
       }
     }
   }, [restoring, user?.id, user?.role]);
-  const fetchOffers = useCallback(async () => {
-    setMyOffersLoading(true);
-    setOffersError('');
+
+  const fetchOffers = useCallback(async (silent = false) => {
+    if (offersBusy.current) return;
+    offersBusy.current = true;
+    const reqId = ++offersRequestId.current;
+    if (!silent) {
+      setMyOffersLoading(true);
+      setOffersError('');
+    }
     try {
       const { data } = await offers.list();
-      setMyOffers(data.items || []);
+      if (reqId === offersRequestId.current) {
+        const incoming = data.items || [];
+        setMyOffers(incoming);
+        setSelectedOffer(current => {
+          if (!current?.id) return current;
+          const match = incoming.find(item => item.offer?.id === current.id);
+          return match?.offer ? { ...current, ...match.offer } : current;
+        });
+        setOffersError('');
+      }
     } catch (error) {
-      setOffersError(apiError(error));
+      if (!silent && reqId === offersRequestId.current) {
+        setOffersError(apiError(error));
+      }
     } finally {
-      setMyOffersLoading(false);
+      offersBusy.current = false;
+      if (!silent && reqId === offersRequestId.current) {
+        setMyOffersLoading(false);
+      }
     }
   }, []);
+
   const fetchAccount = useCallback(async () => {
     setAccountLoading(true);
     setAccountError('');
@@ -155,6 +205,7 @@ function DriverApp() {
       setAccountLoading(false);
     }
   }, []);
+
   useEffect(() => {
     if (restoring || !user || user.role !== 'driver') return;
     if (tab === 'jobs') {
@@ -165,8 +216,56 @@ function DriverApp() {
     if (tab === 'account') void fetchAccount();
   }, [fetchAccount, fetchJobs, fetchOffers, restoring, tab, user?.id, user?.role]);
 
+  // 12-second background silent poll for active tabs
+  useEffect(() => {
+    if (restoring || !user || user.role !== 'driver' || !isActiveApp) return undefined;
+    const interval = setInterval(() => {
+      if (tab === 'jobs' || tab === 'offers') {
+        void fetchJobs(true);
+        void fetchOffers(true);
+      }
+    }, 12000);
+    return () => clearInterval(interval);
+  }, [fetchJobs, fetchOffers, isActiveApp, restoring, tab, user]);
+
+  // Immediate refresh on foreground resume
+  const prevActiveAppRef = useRef(isActiveApp);
+  useEffect(() => {
+    const wasActive = prevActiveAppRef.current;
+    prevActiveAppRef.current = isActiveApp;
+    if (!wasActive && isActiveApp && user?.role === 'driver') {
+      if (tab === 'jobs' || tab === 'offers') {
+        void fetchJobs(true);
+        void fetchOffers(true);
+      } else if (tab === 'account') {
+        void fetchAccount();
+      }
+    }
+  }, [fetchAccount, fetchJobs, fetchOffers, isActiveApp, tab, user?.role]);
+
   const isDetailOpen = Boolean(selected) && (tab === 'jobs' || tab === 'offers');
   const hasModal = Boolean(confirmation || (user && user.termsUpdateRequired));
+  // Detail approval state must not depend on whether the job is in the first
+  // list page. Fetch immediately on open/resume and poll the authoritative load.
+  useEffect(() => {
+    if (!isDetailOpen || !isActiveApp || !selected?.id) return undefined;
+    const id = selected.id;
+    let active = true;
+    let busy = false;
+    const refresh = async () => {
+      if (busy) return;
+      busy = true;
+      try {
+        const { data } = await loads.get(id);
+        if (active) setSelected(current => current?.id === id ? data : current);
+      } catch (error) { if (active) logApiError('DRIVER LOAD DETAIL', error); }
+      finally { busy = false; }
+    };
+    void refresh();
+    const interval = setInterval(refresh, 12000);
+    return () => { active = false; clearInterval(interval); };
+  }, [isDetailOpen, isActiveApp, selected?.id, selected?.status, selected?.paymentApproval?.status]);
+
   const offerLoadItems = useMemo(
     () => myOffers.filter(item => item?.offer && item?.load).map(item => ({ id: item.load.id })),
     [myOffers],
@@ -230,6 +329,17 @@ function DriverApp() {
     setNotificationData(null);
   }, [notificationData, openMessageLoad, user]);
   const handleInitialConversation = useCallback(() => setPendingConversationId(''), []);
+  const decidePayment = useCallback(async (load, accept) => {
+    if (!load?.paymentApproval?.id || confirmationLoading) return;
+    setConfirmationLoading(true);
+    try {
+      const { data } = await loads.paymentApproval(load.id, load.paymentApproval.id, accept);
+      setSelected(data);
+      await Promise.all([fetchJobs(), fetchOffers()]);
+      showToast(accept ? 'Ödeme şekli onaylandı; iş size atandı.' : 'Ödeme şekli reddedildi; kredi müşteriye iade edildi.', { type: 'success' });
+    } catch (error) { showToast(apiError(error), { type: 'error', title: 'Ödeme kararı kaydedilemedi' }); }
+    finally { setConfirmationLoading(false); }
+  }, [confirmationLoading, fetchJobs, fetchOffers, showToast]);
   const adjustOffer = useCallback(delta => {
     setOfferForm(current => ({ ...current, amount: String(Math.max(0, toFiniteNumber(current.amount) + delta)) }));
     setOfferErrors(current => ({ ...current, amount: '' }));
@@ -372,7 +482,9 @@ function DriverApp() {
   const performLogout = useCallback(async () => {
     setConfirmationLoading(true);
     try {
-      await unregisterDevicePushToken(push, pushToken.current).catch(error => logApiError('DRIVER PUSH UNREGISTER', error));
+      const pendingToken = await pushRegistration.current?.();
+      pushRegistration.current = null;
+      await unregisterDevicePushToken(push, pendingToken || pushToken.current).catch(error => logApiError('DRIVER PUSH UNREGISTER', error));
       pushToken.current = null;
       await auth.logout();
     } catch (error) {
@@ -390,7 +502,7 @@ function DriverApp() {
     openJob(load, null, 'jobs');
   }, [openJob]);
   const registerPushAfterPermission = useCallback(async () => {
-    const token = await registerDevicePushToken(push);
+    const token = await pushRegistration.current?.refresh();
     if (token) pushToken.current = token;
   }, []);
   const handleMainPaneSwipeBack = useCallback(() => {
@@ -405,15 +517,31 @@ function DriverApp() {
   if (!user) return <AuthFlow auth={auth} saveSession={saveSession} apiError={apiError} onSession={setUser} allowedRole="driver" />;
 
   const body = tab === 'jobs'
-    ? <DriverJobs renderDetailInline={false} onItemLayout={listScroll.onItemLayout} onFilterChange={handleFilterChange} loading={jobsLoading} error={jobsError} jobs={jobs} selected={selected} selectedOffer={selectedOffer} form={offerForm} setForm={setOfferForm} formErrors={offerErrors} setFormErrors={setOfferErrors} saving={offerSaving} deliverySaving={deliverySaving} onOpen={load => openJob(load, null, 'jobs')} onClose={closeJobDetail} onAdjust={adjustOffer} onSaveOffer={saveOffer} onStatus={(load, status) => setConfirmation({ type: 'status', target: load, status })} onCompleteDelivery={performCompleteDelivery} retry={fetchJobs} onShowOffers={() => setTab('offers')} myOffers={myOffers} user={user} />
+    ? <DriverJobs renderDetailInline={false} onItemLayout={listScroll.onItemLayout} onFilterChange={handleFilterChange} loading={jobsLoading} error={jobsError} jobs={jobs} selected={selected} selectedOffer={selectedOffer} form={offerForm} setForm={setOfferForm} formErrors={offerErrors} setFormErrors={setOfferErrors} saving={offerSaving} deliverySaving={deliverySaving} onOpen={load => openJob(load, null, 'jobs')} onClose={closeJobDetail} onAdjust={adjustOffer} onSaveOffer={saveOffer} onStatus={(load, status) => setConfirmation({ type: 'status', target: load, status })} onPaymentApproval={decidePayment} paymentSaving={confirmationLoading} onCompleteDelivery={performCompleteDelivery} retry={fetchJobs} onShowOffers={() => setTab('offers')} myOffers={myOffers} user={user} />
     : tab === 'offers'
       ? <DriverOffers onItemLayout={listScroll.onItemLayout} loading={myOffersLoading} error={offersError} items={myOffers} onOpen={(load, offer) => openJob(load, offer, 'offers')} onWithdraw={offer => setConfirmation({ type: 'withdraw', target: offer })} retry={fetchOffers} />
       : tab === 'messages'
-        ? <ConversationCenter currentUser={user} api={conversations} apiError={apiError} resolveMediaUrl={resolveMediaUrl} formatMoney={formatMoney} loadStatusLabel={loadStatusLabel} onOpenLoad={openMessageLoad} initialConversationId={pendingConversationId} onInitialConversationHandled={handleInitialConversation} reverseGeocode={maps.reverse} nativeMapsConfigured={nativeGoogleMapsConfigured} nativeMapsMessage={nativeGoogleMapsMessage} bottomInset={control.bottomNavHeight + insets.bottom} />
+        ? <ConversationCenter
+            currentUser={user}
+            api={conversations}
+            apiError={apiError}
+            resolveMediaUrl={resolveMediaUrl}
+            formatMoney={formatMoney}
+            loadStatusLabel={loadStatusLabel}
+            onOpenLoad={openMessageLoad}
+            initialConversationId={pendingConversationId}
+            onInitialConversationHandled={handleInitialConversation}
+            reverseGeocode={maps.reverse}
+            nativeMapsConfigured={nativeGoogleMapsConfigured}
+            nativeMapsMessage={nativeGoogleMapsMessage}
+            onActiveChange={setIsChatActive}
+            topInset={insets.top}
+            bottomInset={isChatActive ? insets.bottom : (control.bottomNavHeight + insets.bottom)}
+          />
         : <DriverAccountScreens page={accountPage} onPageChange={setAccountPage} loading={accountLoading} error={accountError} account={account} form={accountForm} setForm={setAccountForm} save={saveAccount} saveLoading={accountSaving} changePassword={changePassword} passwordLoading={passwordSaving} logout={() => setConfirmation({ type: 'logout' })} retry={fetchAccount} onOpenLoad={openAccountLoad} onPermissionGranted={registerPushAfterPermission} notificationSaving={notificationSaving} onNotificationChange={updateNearbyNotifications} />;
 
   const refresh = tab === 'jobs' ? () => { void fetchJobs(); void fetchOffers(); } : tab === 'offers' ? fetchOffers : tab === 'account' && accountPage === 'home' ? fetchAccount : undefined;
-  const showBottomNav = tab !== 'account' || accountPage === 'home';
+  const showBottomNav = (tab !== 'account' || accountPage === 'home') && !(tab === 'messages' && isChatActive);
   const bottomContentPadding = (showBottomNav ? control.bottomNavHeight + insets.bottom : insets.bottom) + spacing.xl;
   const confirmationAction = confirmation?.type === 'status' ? driverStatusAction(confirmation.target?.status) : null;
   const canSwipeMainPane = !isDetailOpen && !hasModal && ((tab === 'account' && accountPage !== 'home') || tab === 'offers');
@@ -473,7 +601,7 @@ function DriverApp() {
                   onAdjust={adjustOffer}
                   onSaveOffer={saveOffer}
                   onStatus={(load, status) => setConfirmation({ type: 'status', target: load, status })}
-                  onCompleteDelivery={performCompleteDelivery}
+                  onPaymentApproval={decidePayment} paymentSaving={confirmationLoading} onCompleteDelivery={performCompleteDelivery}
                   user={user}
                   backLabel={tab === 'offers' ? 'Tekliflerime dön' : 'İşlere dön'}
                 />

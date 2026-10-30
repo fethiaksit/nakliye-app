@@ -277,5 +277,8 @@ func (a *API) completeDelivery(w http.ResponseWriter, r *http.Request) {
 	}
 	a.addSystemMessage(load, "Teslimat kodu ve fotoğraf doğrulandı. Nakliye tamamlandı.")
 	a.pushLoadStatus(load, principal.ID)
+	if stored, e := a.store.GetLoad(load.ID); e == nil {
+		load = stored
+	}
 	jsonResponse(w, http.StatusOK, load)
 }

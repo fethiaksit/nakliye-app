@@ -1,10 +1,6 @@
 package httpapi
 
 import (
-	"bytes"
-	"encoding/json"
-	"fmt"
-	"io"
 	"log"
 	"nakliye-api/internal/models"
 	"nakliye-api/internal/store"
@@ -18,62 +14,18 @@ type PushSender interface {
 	Send(userID, title, body string, data map[string]string) error
 }
 
-type expoPushSender struct {
-	store  *store.RedisStore
-	client *http.Client
-}
-
-func newExpoPushSender(s *store.RedisStore) PushSender {
-	return &expoPushSender{store: s, client: &http.Client{Timeout: 5 * time.Second}}
-}
-
-func (s *expoPushSender) Send(userID, title, body string, data map[string]string) error {
-	tokens, err := s.store.ListPushTokens(userID)
-	if err != nil || len(tokens) == 0 {
-		return err
-	}
-	messages := make([]map[string]any, 0, len(tokens))
-	for _, token := range tokens {
-		messages = append(messages, map[string]any{"to": token.ExpoPushToken, "sound": "default", "title": title, "body": body, "data": data})
-	}
-	payload, err := json.Marshal(messages)
-	if err != nil {
-		return err
-	}
-	request, err := http.NewRequest(http.MethodPost, "https://exp.host/--/api/v2/push/send", bytes.NewReader(payload))
-	if err != nil {
-		return err
-	}
-	request.Header.Set("Content-Type", "application/json")
-	response, err := s.client.Do(request)
-	if err != nil {
-		return err
-	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		message, _ := io.ReadAll(io.LimitReader(response.Body, 1024))
-		return fmt.Errorf("expo push status %d: %s", response.StatusCode, strings.TrimSpace(string(message)))
-	}
-	var result struct {
-		Data []struct {
-			Status  string `json:"status"`
-			Message string `json:"message"`
-		} `json:"data"`
-	}
-	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&result); err != nil {
-		return fmt.Errorf("expo push response: %w", err)
-	}
-	for _, ticket := range result.Data {
-		if ticket.Status == "error" {
-			return fmt.Errorf("expo push ticket: %s", ticket.Message)
-		}
-	}
-	return nil
-}
-
 func (a *API) sendPush(userID, title, body string, data map[string]string) {
 	if userID == "" || a.push == nil {
 		return
+	}
+	if eventID := data["eventId"]; eventID != "" {
+		first, err := a.store.MarkPushOnce(userID + ":" + eventID)
+		if err != nil || !first {
+			if err != nil {
+				log.Printf("push event claim failed: %v", err)
+			}
+			return
+		}
 	}
 	if err := a.push.Send(userID, title, body, data); err != nil {
 		log.Printf("push notification failed user=%s type=%s: %v", userID, data["type"], err)
@@ -86,8 +38,9 @@ func validExpoPushToken(value string) bool {
 
 func (a *API) registerPushToken(w http.ResponseWriter, r *http.Request) {
 	var request struct {
-		Token    string `json:"token"`
-		Platform string `json:"platform"`
+		Token     string `json:"token"`
+		Platform  string `json:"platform"`
+		ProjectID string `json:"projectId"`
 	}
 	if !decode(w, r, &request) {
 		return
@@ -98,7 +51,7 @@ func (a *API) registerPushToken(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, "geçerli Expo push token ve platform zorunludur")
 		return
 	}
-	token := models.PushToken{UserID: current(r).ID, ExpoPushToken: request.Token, Platform: request.Platform, UpdatedAt: time.Now().UTC()}
+	token := models.PushToken{ProjectID: request.ProjectID, UserID: current(r).ID, ExpoPushToken: request.Token, Platform: request.Platform, UpdatedAt: time.Now().UTC()}
 	if err := a.store.SavePushToken(token); err != nil {
 		serverError(w, err)
 		return
@@ -151,7 +104,7 @@ func (a *API) pushLoadStatus(load models.Load, actorID string) {
 	if title == "" {
 		return
 	}
-	data := map[string]string{"type": "load_status", "status": load.Status, "loadId": load.ID, "screen": "load"}
+	data := map[string]string{"type": "load_status", "status": load.Status, "loadId": load.ID, "screen": "load", "eventId": "status:" + load.ID + ":" + load.Status + ":" + load.UpdatedAt.UTC().Format(time.RFC3339Nano)}
 	if load.Status == models.LoadStatusCompleted {
 		a.sendPush(load.CustomerID, title, title, data)
 		a.sendPush(load.AssignedDriver, title, title, data)

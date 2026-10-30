@@ -1,6 +1,7 @@
 export const LOAD_STATUS_LABELS = Object.freeze({
   draft: 'TASLAK',
   published: 'YAYINDA',
+  payment_approval_pending: 'ŞOFÖR ÖDEME ONAYI BEKLENİYOR',
   driver_selected: 'ŞOFÖR SEÇİLDİ',
   driver_en_route: 'ŞOFÖR YOLA ÇIKTI',
   at_pickup: 'YÜKLEME NOKTASINDA',
@@ -12,6 +13,7 @@ export const LOAD_STATUS_LABELS = Object.freeze({
 });
 
 export function canonicalLoadStatus(status) {
+  if (status === 'driver_payment_approval_pending') return 'payment_approval_pending';
   if (status === 'open' || status === 'offers_received') return 'published';
   if (status === 'in_transit') return 'en_route_to_delivery';
   return status;
@@ -54,4 +56,9 @@ const DRIVER_ACTIONS = Object.freeze({
 
 export function driverStatusAction(status) {
   return DRIVER_ACTIONS[canonicalLoadStatus(status)] || null;
+}
+
+export function requiresDriverPaymentApproval(load) {
+  const status = canonicalLoadStatus(load?.status);
+  return !['completed', 'cancelled'].includes(status) && (status === 'payment_approval_pending' || load?.paymentApproval?.status === 'pending');
 }

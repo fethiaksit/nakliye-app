@@ -96,7 +96,7 @@ func decodeResponse[T any](t *testing.T, recorder *httptest.ResponseRecorder) T 
 	return response
 }
 
-func registerTestUser(t *testing.T, handler http.Handler, suffix, role string) testSession {
+func registerTestUser(t *testing.T, handler http.Handler, suffix, role string, funding ...bool) testSession {
 	t.Helper()
 	recorder := requestJSON(t, handler, http.MethodPost, "/api/auth/register", "", map[string]any{
 		"name": "Test " + suffix, "email": suffix + "@example.com", "phone": testPhone(suffix),
@@ -107,7 +107,7 @@ func registerTestUser(t *testing.T, handler http.Handler, suffix, role string) t
 		t.Fatalf("register %s status=%d body=%s", role, recorder.Code, recorder.Body.String())
 	}
 	session := decodeResponse[testSession](t, recorder)
-	if role == models.RoleDriver && !strings.Contains(suffix, "commission_empty") {
+	if role == models.RoleDriver && !strings.Contains(suffix, "commission_empty") && (len(funding) == 0 || funding[0]) {
 		fundDriver(t, handler, session, 1000000000, "fixture-payment")
 	}
 	return session

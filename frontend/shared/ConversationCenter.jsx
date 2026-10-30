@@ -1,5 +1,6 @@
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, FlatList, Image, Keyboard, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
@@ -12,7 +13,9 @@ import { Badge, ScreenState } from './ui/primitives';
 import { colors, radius, shadows, spacing, typography } from './ui/theme';
 import { posthog } from './posthog';
 
-const { canSendMessage, draftAfterSendAttempt, normalizeMessageDraft } = require('./conversationComposer.cjs');
+const { canSendMessage, draftAfterSendAttempt, mergeByID, normalizeMessageDraft } = require('./conversationComposer.cjs');
+
+const { createConversationScroll } = require('./conversationScroll.cjs');
 
 const LIST_POLL_MS = 15000;
 const CHAT_POLL_MS = 5000;
@@ -34,16 +37,6 @@ const formatDate = value => {
   return new Intl.DateTimeFormat('tr-TR', { day: 'numeric', month: 'long', year: 'numeric', timeZone: ISTANBUL }).format(date);
 };
 const messagePreview = message => ({ image: 'Fotoğraf gönderdi', location: 'Konum paylaştı', offer: 'Teklif gönderdi', load: 'İlan bilgisi paylaştı' }[message.type] || message.body || 'Mesaj');
-const mergeByID = (current, incoming) => {
-  const map = new Map(current.map(item => [item.id, item]));
-  const clientIDs = new Map(current.filter(item => item.clientMessageId).map(item => [item.clientMessageId, item.id]));
-  incoming.forEach(item => {
-    const optimisticID = item.clientMessageId && clientIDs.get(item.clientMessageId);
-    if (optimisticID && optimisticID !== item.id) map.delete(optimisticID);
-    map.set(item.id, { ...map.get(item.id), ...item });
-  });
-  return [...map.values()].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-};
 const newClientMessageID = () => `mobile-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 const lastSeenLabel = value => {
   if (!value) return 'Son görülme bilgisi yok';
@@ -114,7 +107,23 @@ function MessageContent({ item, mine, formatMoney, resolveMediaUrl, onPreviewIma
   return <Text style={[styles.textMessage, mine && { color: colors.white }]}>{item.body}</Text>;
 }
 
-export default function ConversationCenter({ currentUser, api, apiError, resolveMediaUrl, formatMoney, loadStatusLabel, onOpenLoad, initialConversationId, onInitialConversationHandled, reverseGeocode, nativeMapsConfigured = true, nativeMapsMessage = 'Google haritası yüklenemedi. Harita anahtarı ve uygulama yapılandırmasını kontrol edin.', bottomInset = 0 }) {
+export default function ConversationCenter({
+  currentUser,
+  api,
+  apiError,
+  resolveMediaUrl,
+  formatMoney,
+  loadStatusLabel,
+  onOpenLoad,
+  initialConversationId,
+  onInitialConversationHandled,
+  reverseGeocode,
+  nativeMapsConfigured = true,
+  nativeMapsMessage = 'Google haritası yüklenemedi. Harita anahtarı ve uygulama yapılandırmasını kontrol edin.',
+  bottomInset = 0,
+  onActiveChange,
+}) {
+  const safeArea = useSafeAreaInsets();
   const { showToast } = useToast();
   const [items, setItems] = useState([]);
 	const [totalUnread, setTotalUnread] = useState(0);
@@ -140,6 +149,9 @@ export default function ConversationCenter({ currentUser, api, apiError, resolve
   const [unseenCount, setUnseenCount] = useState(0);
   const [isActiveApp, setIsActiveApp] = useState(AppState.currentState === 'active');
   const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const rootRef = useRef(null);
+  const [keyboardOffset, setKeyboardOffset] = useState(0);
+  const scrollInteractionRef = useRef(false);
   const [actionSheet, setActionSheet] = useState(null);
   const [confirmation, setConfirmation] = useState(null);
   const [confirmationLoading, setConfirmationLoading] = useState(false);
@@ -154,55 +166,112 @@ export default function ConversationCenter({ currentUser, api, apiError, resolve
   const listRef = useRef(null);
   const chatRef = useRef(null);
   const composerInputRef = useRef(null);
-  const atBottomRef = useRef(true);
+  const scrollStateRef = useRef(null);
+  if (!scrollStateRef.current) {
+    scrollStateRef.current = createConversationScroll({
+      schedule: callback => requestAnimationFrame(callback),
+      cancel: frame => cancelAnimationFrame(frame),
+      scrollToEnd: options => chatRef.current?.scrollToEnd(options),
+    });
+  }
+  const measureKeyboardOffset = useCallback(() => {
+    if (Platform.OS !== 'ios') return;
+    // KAV lives at y=0 inside this root; only its window origin is outside it.
+    rootRef.current?.measureInWindow((_x, y) => setKeyboardOffset(y));
+  }, []);
+  useEffect(() => () => scrollStateRef.current.dispose(), []);
   const openedInitialConversation = useRef('');
   const selectedID = active?.id || active?.loadId;
+  const activeSelectedIdRef = useRef(null);
+  const nextCursorRef = useRef('');
+  const hasMoreRef = useRef(false);
+  const messageSeqRef = useRef(0);
+  const conversationsSeqRef = useRef(0);
+
+  useEffect(() => {
+    onActiveChange?.(Boolean(active));
+  }, [active, onActiveChange]);
 
   const loadConversations = useCallback(async (showSpinner = false, searchOverride = query) => {
     if (listBusy.current) return;
     listBusy.current = true;
+    const seq = ++conversationsSeqRef.current;
     if (showSpinner) setListLoading(true);
     try {
       const { data } = await api.list({ q: searchOverride.trim(), filter: filter === 'all' ? '' : filter });
-      setItems(data.items || []);
-		setTotalUnread(Number(data.unreadCount || 0));
-      setListError('');
+      if (seq === conversationsSeqRef.current) {
+        setItems(data.items || []);
+        setTotalUnread(Number(data.unreadCount || 0));
+        setListError('');
+      }
     } catch (error) {
-      setListError(apiError(error));
+      if (seq === conversationsSeqRef.current) {
+        setListError(apiError(error));
+      }
     } finally {
       listBusy.current = false;
-      if (showSpinner) setListLoading(false);
+      if (showSpinner && seq === conversationsSeqRef.current) setListLoading(false);
     }
   }, [api, apiError, filter, query]);
 
-  const loadMessages = useCallback(async (older = false) => {
-    if (!selectedID || chatBusy.current || (older && !hasMore)) return;
+  const loadConversationsRef = useRef(loadConversations);
+  loadConversationsRef.current = loadConversations;
+
+  const loadMessages = useCallback(async (older = false, isSilent = false) => {
+    if (!selectedID || chatBusy.current) return;
+    if (older && !hasMoreRef.current) return;
     chatBusy.current = true;
-    if (!older) setChatLoading(true);
+    const seq = ++messageSeqRef.current;
+    if (!older && !isSilent) setChatLoading(true);
     try {
-      const { data } = await api.messages(selectedID, { limit: PAGE_SIZE, cursor: older ? nextCursor : undefined });
+      const cursor = older ? nextCursorRef.current : undefined;
+      const { data } = await api.messages(selectedID, { limit: PAGE_SIZE, cursor });
+      if (seq !== messageSeqRef.current || selectedID !== activeSelectedIdRef.current) return;
+
       const incoming = data.items || [];
       setChat(current => {
         const newIncoming = incoming.filter(message => !current.some(existing => existing.id === message.id) && message.senderId !== currentUser.id);
-        if (!older && newIncoming.length && !atBottomRef.current) setUnseenCount(count => count + newIncoming.length);
+        if (!older && newIncoming.length && !scrollStateRef.current.isAtBottom()) setUnseenCount(count => count + newIncoming.length);
         return mergeByID(current, incoming);
       });
-		if (older || !paginationInitialized.current) {
-			setNextCursor(data.nextCursor || '');
-			setHasMore(Boolean(data.hasMore));
-			paginationInitialized.current = true;
-		}
+
+      if (older || !paginationInitialized.current) {
+        nextCursorRef.current = data.nextCursor || '';
+        hasMoreRef.current = Boolean(data.hasMore);
+        setNextCursor(data.nextCursor || '');
+        setHasMore(Boolean(data.hasMore));
+        paginationInitialized.current = true;
+      }
       setChatError('');
+
       // Mark only the batch that has reached the device, never unseen history.
-      if (!older && incoming.length) await api.read(selectedID, incoming.map(message => message.id));
-      if (!older) void loadConversations(false);
+      if (!older && incoming.length) {
+        await api.read(selectedID, incoming.map(message => message.id)).catch(() => {});
+      }
+      if (!older) void loadConversationsRef.current?.(false);
     } catch (error) {
-      if (!older) setChatError(apiError(error));
+      if (!older && !isSilent && seq === messageSeqRef.current) {
+        setChatError(apiError(error));
+      }
     } finally {
       chatBusy.current = false;
-      if (!older) setChatLoading(false);
+      if (!older && !isSilent && seq === messageSeqRef.current) {
+        setChatLoading(false);
+      }
     }
-  }, [api, apiError, currentUser.id, hasMore, loadConversations, nextCursor, selectedID]);
+  }, [api, apiError, currentUser.id, selectedID]);
+
+  const handleChatScroll = useCallback(event => {
+    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+    scrollStateRef.current.onScroll({
+      offset: contentOffset.y,
+      height: layoutMeasurement.height,
+      contentHeight: contentSize.height,
+      interacting: scrollInteractionRef.current,
+    });
+    if (scrollStateRef.current.isAtBottom()) setUnseenCount(0);
+    if (scrollInteractionRef.current && contentOffset.y < 32) void loadMessages(true);
+  }, [loadMessages]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', state => setIsActiveApp(state === 'active'));
@@ -211,9 +280,17 @@ export default function ConversationCenter({ currentUser, api, apiError, resolve
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const showSubscription = Keyboard.addListener(showEvent, () => setKeyboardVisible(true));
-    const hideSubscription = Keyboard.addListener(hideEvent, () => setKeyboardVisible(false));
-    return () => { showSubscription.remove(); hideSubscription.remove(); };
+    const showSubscription = Keyboard.addListener(showEvent, event => {
+      Keyboard.scheduleLayoutAnimation(event);
+      setKeyboardVisible(true);
+    });
+    const hideSubscription = Keyboard.addListener(hideEvent, event => {
+      Keyboard.scheduleLayoutAnimation(event);
+      setKeyboardVisible(false);
+    });
+    // A final follow after the native animation complements list onLayout events.
+    const settledSubscription = Keyboard.addListener('keyboardDidShow', () => scrollStateRef.current.follow());
+    return () => { showSubscription.remove(); hideSubscription.remove(); settledSubscription.remove(); };
   }, []);
 
   useEffect(() => { void loadConversations(true); }, [filter]);
@@ -221,18 +298,59 @@ export default function ConversationCenter({ currentUser, api, apiError, resolve
     const timeout = setTimeout(() => void loadConversations(false, query), 350);
     return () => clearTimeout(timeout);
   }, [loadConversations, query]);
+
+  // 15-second conversation list polling when not in active chat
   useEffect(() => {
     if (active || !isActiveApp) return undefined;
     const interval = setInterval(() => void loadConversations(false), LIST_POLL_MS);
     return () => clearInterval(interval);
   }, [active, isActiveApp, loadConversations]);
+
+  // When selected conversation changes (open, close, or switch)
+  useEffect(() => {
+    if (selectedID !== activeSelectedIdRef.current) {
+      activeSelectedIdRef.current = selectedID;
+      messageSeqRef.current += 1;
+      chatBusy.current = false;
+      setChat([]);
+      setChatError('');
+      setNextCursor('');
+      nextCursorRef.current = '';
+      hasMoreRef.current = false;
+      setHasMore(false);
+      setUnseenCount(0);
+      paginationInitialized.current = false;
+      scrollStateRef.current.reset();
+      scrollInteractionRef.current = false;
+
+      if (selectedID && isActiveApp) {
+        void loadMessages(false, false);
+      }
+    }
+  }, [isActiveApp, loadMessages, selectedID]);
+
+  // 5-second silent chat polling for active conversation
   useEffect(() => {
     if (!selectedID || !isActiveApp) return undefined;
-    setChat([]); setNextCursor(''); setHasMore(false); setUnseenCount(0); paginationInitialized.current = false;
-    void loadMessages(false);
-    const interval = setInterval(() => void loadMessages(false), CHAT_POLL_MS);
+    const interval = setInterval(() => {
+      void loadMessages(false, true);
+    }, CHAT_POLL_MS);
     return () => clearInterval(interval);
   }, [isActiveApp, loadMessages, selectedID]);
+
+  // Immediate refresh on foreground resume
+  const prevActiveAppRef = useRef(isActiveApp);
+  useEffect(() => {
+    const wasActive = prevActiveAppRef.current;
+    prevActiveAppRef.current = isActiveApp;
+    if (!wasActive && isActiveApp) {
+      if (selectedID) {
+        void loadMessages(false, true);
+      } else {
+        void loadConversations(false);
+      }
+    }
+  }, [isActiveApp, loadConversations, loadMessages, selectedID]);
 
   const openConversation = useCallback(async item => {
     setActive(item);
@@ -251,10 +369,9 @@ export default function ConversationCenter({ currentUser, api, apiError, resolve
     void openConversation({ id: initialConversationId, loadId: initialConversationId }).finally(() => onInitialConversationHandled?.());
   }, [initialConversationId, onInitialConversationHandled, openConversation]);
 
-  const scrollToBottom = useCallback(() => {
-    atBottomRef.current = true;
+  const scrollToBottom = useCallback((animated = true) => {
     setUnseenCount(0);
-    requestAnimationFrame(() => chatRef.current?.scrollToEnd({ animated: true }));
+    scrollStateRef.current.toBottom(animated);
   }, []);
 
   const sendPayload = useCallback(async payload => {
@@ -454,26 +571,48 @@ export default function ConversationCenter({ currentUser, api, apiError, resolve
     setActive(null);
     setChat([]);
     setAttachment(null);
+    activeSelectedIdRef.current = null;
+    scrollStateRef.current.reset();
+    scrollInteractionRef.current = false;
   }, []);
   useAndroidBackHandler(Boolean(active) && !hasModal, closeConversation);
 
   const routeSummary = active ? `${active.pickupAddress || ''} → ${active.deliveryAddress || ''}` : '';
   const initials = active?.otherParty?.name?.split(' ').map(part => part[0]).join('').slice(0, 2).toUpperCase() || '?';
-  return <View style={styles.root}>
+
+  // Composer bottom padding: clears home-indicator when keyboard is hidden.
+  const composerBottomPadding = Platform.OS === 'ios'
+    ? (keyboardVisible ? 0 : (bottomInset || safeArea.bottom))
+    : 0;
+
+  return <View ref={rootRef} collapsable={false} onLayout={measureKeyboardOffset} style={styles.root}>
     <View style={styles.listPane} pointerEvents={active ? 'none' : 'auto'}>
       <FlatList data={items} keyExtractor={item => item.id || item.loadId} renderItem={({ item }) => <ConversationCard item={item} onPress={openConversation} loadStatusLabel={loadStatusLabel} />} refreshControl={<RefreshControl refreshing={listLoading} onRefresh={() => void loadConversations(true)} tintColor={colors.primary} />} contentContainerStyle={styles.listContent} ListHeaderComponent={<><View style={styles.pageTitleRow}><View style={styles.pageIcon}><Icon name="chatbubbles-outline" size={23} color={colors.primary} /></View><View style={styles.pageCopy}><Text style={styles.pageTitle}>Mesajlar</Text><Text style={styles.pageSub}>Aktif nakliyeleriniz için güvenli iletişim</Text></View>{totalUnread ? <View style={styles.totalUnread}><Text style={styles.totalUnreadText}>{totalUnread > 99 ? '99+' : totalUnread}</Text></View> : null}</View><View style={styles.searchFrame}><Icon name="search-outline" size={19} color={colors.textMuted} /><TextInput value={query} onChangeText={setQuery} placeholder="Kişi veya rota ara" placeholderTextColor={colors.textMuted} style={styles.search} returnKeyType="search" />{query ? <Pressable onPress={() => setQuery('')} hitSlop={8}><Icon name="close-circle" size={19} color={colors.textMuted} /></Pressable> : null}</View><View style={styles.filters}>{filterOptions.map(([value, label]) => <Pressable key={value} onPress={() => setFilter(value)} style={[styles.filter, filter === value && styles.filterActive]}><Text style={[styles.filterText, filter === value && styles.filterTextActive]}>{label}</Text></Pressable>)}</View></>} ListEmptyComponent={!listLoading ? <EmptyState title="Henüz mesajınız yok" detail="Bir teklif kabul edildiğinde veya aktif bir nakliye için iletişim başladığında konuşmalarınız burada görünecek." retry={() => void loadConversations(true)} /> : <ActivityIndicator style={styles.loader} color={colors.primary} />} />
       {listError ? <View style={styles.errorBar}><Text style={styles.errorText}>{listError}</Text><Pressable onPress={() => void loadConversations(true)}><Text style={styles.errorAction}>Tekrar Dene</Text></Pressable></View> : null}
     </View>
     {active ? <EdgeSwipeBack enabled={!hasModal} modalOpen={hasModal} onBack={closeConversation} style={styles.chatOverlay}>
-      <KeyboardAvoidingView style={[styles.root, { paddingBottom: keyboardVisible ? 0 : bottomInset }]} behavior={Platform.select({ ios: 'padding', android: undefined })} keyboardVerticalOffset={0}>
-        <View style={styles.chatHeader}><Pressable style={styles.backButton} onPress={closeConversation} hitSlop={10}><Icon name="arrow-back" size={22} color={colors.text} /></Pressable><View style={styles.personAvatar}><Text style={styles.personAvatarText}>{initials}</Text></View><View style={styles.chatPerson}><Text style={styles.chatName}>{active.otherParty?.name || 'Karşı taraf'}</Text><Text style={styles.lastSeen}>{active.otherParty?.role === 'driver' ? 'Şoför · ' : 'Müşteri · '}{lastSeenLabel(active.otherParty?.lastSeenAt)}</Text></View><Pressable accessibilityLabel="Konuşmayı şikâyet et" style={styles.complaintButton} onPress={() => openComplaint(null)}><Icon name="alert-circle-outline" size={19} color={colors.danger} /></Pressable><Pressable style={styles.loadOpenButton} onPress={() => onOpenLoad?.(selectedID)}><Icon name="document-text-outline" size={17} color={colors.primary} /><Text style={styles.loadOpen}>İlan</Text></Pressable></View>
-        <Pressable style={styles.loadSummary} onPress={() => onOpenLoad?.(selectedID)}><View style={styles.loadSummaryIcon}><Icon name="navigate-outline" size={19} color={colors.primary} /></View><View style={styles.loadSummaryCopy}><Text style={styles.loadSummaryRoute} numberOfLines={1}>{routeSummary}</Text><Text style={styles.loadSummaryMeta}>{Number(active.estimatedKm || 0).toFixed(1)} km · Tahmini fiyat: {formatMoney(active.estimatedPriceTl)}</Text></View><Icon name="chevron-forward" size={18} color={colors.textMuted} /></Pressable>
+      <KeyboardAvoidingView style={styles.root} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={keyboardOffset}>
+        <View>
+          <View style={styles.chatHeader}><Pressable style={styles.backButton} onPress={closeConversation} hitSlop={10}><Icon name="arrow-back" size={22} color={colors.text} /></Pressable><View style={styles.personAvatar}><Text style={styles.personAvatarText}>{initials}</Text></View><View style={styles.chatPerson}><Text style={styles.chatName}>{active.otherParty?.name || 'Karşı taraf'}</Text><Text style={styles.lastSeen}>{active.otherParty?.role === 'driver' ? 'Şoför · ' : 'Müşteri · '}{lastSeenLabel(active.otherParty?.lastSeenAt)}</Text></View><Pressable accessibilityLabel="Konuşmayı şikâyet et" style={styles.complaintButton} onPress={() => openComplaint(null)}><Icon name="alert-circle-outline" size={19} color={colors.danger} /></Pressable><Pressable style={styles.loadOpenButton} onPress={() => onOpenLoad?.(selectedID)}><Icon name="document-text-outline" size={17} color={colors.primary} /><Text style={styles.loadOpen}>İlan</Text></Pressable></View>
+          <Pressable style={styles.loadSummary} onPress={() => onOpenLoad?.(selectedID)}><View style={styles.loadSummaryIcon}><Icon name="navigate-outline" size={19} color={colors.primary} /></View><View style={styles.loadSummaryCopy}><Text style={styles.loadSummaryRoute} numberOfLines={1}>{routeSummary}</Text><Text style={styles.loadSummaryMeta}>{Number(active.estimatedKm || 0).toFixed(1)} km · Tahmini fiyat: {formatMoney(active.estimatedPriceTl)}</Text></View><Icon name="chevron-forward" size={18} color={colors.textMuted} /></Pressable>
+        </View>
         {chatError ? <View style={styles.chatError}><Text style={styles.errorText}>{chatError}</Text><Pressable onPress={() => void loadMessages(false)}><Text style={styles.errorAction}>Tekrar Dene</Text></Pressable></View> : null}
-        <FlatList ref={chatRef} data={chat} keyExtractor={item => item.id} renderItem={renderMessage} contentContainerStyle={styles.chatContent} refreshing={chatLoading} onRefresh={() => void loadMessages(false)} keyboardShouldPersistTaps="handled" keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'} onScroll={event => { const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent; atBottomRef.current = contentOffset.y + layoutMeasurement.height >= contentSize.height - 72; if (contentOffset.y < 32) void loadMessages(true); }} scrollEventThrottle={80} ListHeaderComponent={hasMore ? <Pressable style={styles.loadOlder} onPress={() => void loadMessages(true)}><Icon name="time-outline" size={15} color={colors.primary} /><Text style={styles.loadOlderText}>Eski mesajları yükle</Text></Pressable> : null} ListEmptyComponent={chatLoading ? <ActivityIndicator style={styles.loader} color={colors.primary} /> : <EmptyState title="İlk mesajınızı gönderin" detail="Nakliye ayrıntıları ve mesajlar bu güvenli konuşmada kalır." />} />
-        {unseenCount ? <Pressable style={styles.newMessages} onPress={scrollToBottom}><Icon name="arrow-down" size={15} color={colors.white} /><Text style={styles.newMessagesText}>{unseenCount} yeni mesaj</Text></Pressable> : null}
-        {replyTo ? <View style={styles.replyComposer}><Icon name="return-down-back-outline" size={18} color={colors.primary} /><View style={styles.replyComposerCopy}><Text style={styles.replyComposerTitle}>Yanıtlanıyor</Text><Text style={styles.replyComposerText} numberOfLines={1}>{replyTo.deletedAt ? 'Bu mesaj silindi.' : messagePreview(replyTo)}</Text></View><Pressable onPress={() => setReplyTo(null)}><Icon name="close-circle" size={21} color={colors.textSecondary} /></Pressable></View> : null}
-        {attachment ? <View style={styles.attachmentPreview}><Image source={{ uri: attachment.uri }} style={styles.attachmentThumb} /><Text style={styles.attachmentText}>{uploading ? `Yükleniyor${uploadProgress ? ` %${uploadProgress}` : '…'}` : 'Göndermeye hazır'}</Text><Pressable onPress={() => setAttachment(null)} disabled={uploading}><Icon name="close-circle" size={22} color={colors.textSecondary} /></Pressable></View> : null}
-        <View style={styles.composer}><Pressable accessibilityLabel="Fotoğraf ekle" style={styles.composerIcon} onPress={choosePhoto} disabled={uploading || sending}><Icon name="camera-outline" size={21} color={colors.primary} /></Pressable><Pressable accessibilityLabel="Konum paylaş" style={styles.composerIcon} onPress={chooseLocation} disabled={uploading || sending}><Icon name="location-outline" size={21} color={colors.primary} /></Pressable><Pressable accessibilityLabel="İlanı paylaş" style={styles.composerIcon} onPress={shareLoad} disabled={uploading || sending}><Icon name="document-text-outline" size={21} color={colors.primary} /></Pressable><TextInput ref={composerInputRef} testID="conversation-message-input" accessibilityLabel="Mesaj" value={draft} onChangeText={setDraft} onFocus={scrollToBottom} editable={!uploading} placeholder="Mesaj yazın" placeholderTextColor={colors.textMuted} selectionColor={colors.primary} style={styles.input} multiline maxLength={2000} textAlignVertical="top" blurOnSubmit={false} /><Pressable testID="conversation-send-button" accessibilityLabel="Mesajı gönder" style={[styles.send, ((!canSendMessage(draft) && !attachment) || uploading || sending) && styles.sendDisabled]} disabled={(!canSendMessage(draft) && !attachment) || uploading || sending} onPress={attachment ? () => void sendAttachment() : () => void sendText()}>{uploading || sending ? <ActivityIndicator color={colors.white} size="small" /> : <Icon name="send" size={19} color={colors.white} />}</Pressable></View>
+        <View style={styles.messageList}>
+        <FlatList style={styles.messageList} ref={chatRef} data={chat} keyExtractor={item => item.id} renderItem={renderMessage} contentContainerStyle={styles.chatContent} refreshing={chatLoading} onRefresh={() => void loadMessages(false)} keyboardShouldPersistTaps="handled" keyboardDismissMode="none" automaticallyAdjustKeyboardInsets={false} maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+          onLayout={event => scrollStateRef.current.layout(event.nativeEvent.layout.height)}
+          onContentSizeChange={(_width, height) => scrollStateRef.current.content(height)}
+          onScrollBeginDrag={event => { scrollInteractionRef.current = true; handleChatScroll(event); }}
+          onScrollEndDrag={event => { handleChatScroll(event); scrollInteractionRef.current = false; }}
+          onMomentumScrollBegin={() => { scrollInteractionRef.current = true; }}
+          onMomentumScrollEnd={event => { handleChatScroll(event); scrollInteractionRef.current = false; }}
+          onScroll={handleChatScroll} scrollEventThrottle={80} ListHeaderComponent={hasMore ? <Pressable style={styles.loadOlder} onPress={() => void loadMessages(true)}><Icon name="time-outline" size={15} color={colors.primary} /><Text style={styles.loadOlderText}>Eski mesajları yükle</Text></Pressable> : null} ListEmptyComponent={chatLoading ? <ActivityIndicator style={styles.loader} color={colors.primary} /> : <EmptyState title="İlk mesajınızı gönderin" detail="Nakliye ayrıntıları ve mesajlar bu güvenli konuşmada kalır." />} />
+        {unseenCount ? <Pressable style={styles.newMessages} onPress={() => scrollToBottom(true)}><Icon name="arrow-down" size={15} color={colors.white} /><Text style={styles.newMessagesText}>{unseenCount} yeni mesaj</Text></Pressable> : null}
+        </View>
+        <View style={{ paddingBottom: composerBottomPadding }}>
+          {replyTo ? <View style={styles.replyComposer}><Icon name="return-down-back-outline" size={18} color={colors.primary} /><View style={styles.replyComposerCopy}><Text style={styles.replyComposerTitle}>Yanıtlanıyor</Text><Text style={styles.replyComposerText} numberOfLines={1}>{replyTo.deletedAt ? 'Bu mesaj silindi.' : messagePreview(replyTo)}</Text></View><Pressable onPress={() => setReplyTo(null)}><Icon name="close-circle" size={21} color={colors.textSecondary} /></Pressable></View> : null}
+          {attachment ? <View style={styles.attachmentPreview}><Image source={{ uri: attachment.uri }} style={styles.attachmentThumb} /><Text style={styles.attachmentText}>{uploading ? `Yükleniyor${uploadProgress ? ` %${uploadProgress}` : '…'}` : 'Göndermeye hazır'}</Text><Pressable onPress={() => setAttachment(null)} disabled={uploading}><Icon name="close-circle" size={22} color={colors.textSecondary} /></Pressable></View> : null}
+          <View style={styles.composer}><Pressable accessibilityLabel="Fotoğraf ekle" style={styles.composerIcon} onPress={choosePhoto} disabled={uploading || sending}><Icon name="camera-outline" size={21} color={colors.primary} /></Pressable><Pressable accessibilityLabel="Konum paylaş" style={styles.composerIcon} onPress={chooseLocation} disabled={uploading || sending}><Icon name="location-outline" size={21} color={colors.primary} /></Pressable><Pressable accessibilityLabel="İlanı paylaş" style={styles.composerIcon} onPress={shareLoad} disabled={uploading || sending}><Icon name="document-text-outline" size={21} color={colors.primary} /></Pressable><TextInput ref={composerInputRef} testID="conversation-message-input" accessibilityLabel="Mesaj" value={draft} onChangeText={setDraft} editable={!uploading} placeholder="Mesaj yazın" placeholderTextColor={colors.textMuted} selectionColor={colors.primary} style={styles.input} multiline maxLength={2000} textAlignVertical="top" blurOnSubmit={false} /><Pressable testID="conversation-send-button" accessibilityLabel="Mesajı gönder" style={[styles.send, ((!canSendMessage(draft) && !attachment) || uploading || sending) && styles.sendDisabled]} disabled={(!canSendMessage(draft) && !attachment) || uploading || sending} onPress={attachment ? () => void sendAttachment() : () => void sendText()}>{uploading || sending ? <ActivityIndicator color={colors.white} size="small" /> : <Icon name="send" size={19} color={colors.white} />}</Pressable></View>
+        </View>
         <Modal visible={mapPickerVisible} animationType="slide" onRequestClose={() => setMapPickerVisible(false)}><View style={styles.mapModal}><View style={styles.mapHeader}><Pressable onPress={() => setMapPickerVisible(false)}><Text style={styles.mapCancel}>Vazgeç</Text></Pressable><Text style={styles.mapTitle}>Konum seç</Text><Pressable onPress={() => void sharePickedLocation()}><Text style={styles.mapShare}>Paylaş</Text></Pressable></View>{mapCoordinate ? <MapAdapter style={styles.map} initialRegion={{ ...mapCoordinate, latitudeDelta: 0.035, longitudeDelta: 0.035 }} onPress={event => setMapCoordinate(event.nativeEvent.coordinate)} markers={[{ id: 'selected-location', coordinate: mapCoordinate, draggable: true, onDragEnd: event => setMapCoordinate(event.nativeEvent.coordinate) }]} fallback={<MapUnavailable message={nativeMapsMessage} />} /> : <MapUnavailable message={nativeMapsMessage} />}<Text style={styles.mapHint}>İğneyi sürükleyin veya haritada bir noktaya dokunun.</Text></View></Modal>
         <Modal visible={Boolean(previewURI)} transparent animationType="fade" onRequestClose={() => setPreviewURI(null)}><View style={styles.modal}><Pressable style={styles.modalClose} onPress={() => setPreviewURI(null)}><Icon name="close" size={25} color={colors.white} /></Pressable>{previewURI ? <Image source={{ uri: previewURI }} resizeMode="contain" style={styles.fullImage} /> : null}</View></Modal>
         <ActionSheet visible={Boolean(actionSheet)} title={actionSheet?.type === 'photo' ? 'Fotoğraf gönder' : actionSheet?.type === 'location' ? 'Konum paylaş' : 'Mesaj işlemleri'} message={actionSheet?.type === 'photo' ? 'Göndermeden önce fotoğrafı önizleyebilirsiniz.' : actionSheet?.type === 'location' ? 'Paylaşmak istediğiniz konumu seçin.' : undefined} options={actionOptions} onClose={() => setActionSheet(null)} />
@@ -489,10 +628,11 @@ const styles = StyleSheet.create({
   conversationCard: { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.lg, borderWidth: 1, flexDirection: 'row', marginTop: spacing.sm, padding: spacing.md, ...shadows.card }, personAvatar: { alignItems: 'center', backgroundColor: colors.primarySoft, borderRadius: 23, height: 46, justifyContent: 'center', width: 46 }, personAvatarText: { ...typography.smallMedium, color: colors.primaryDark }, conversationBody: { flex: 1, marginLeft: spacing.sm, minWidth: 0 }, conversationTop: { alignItems: 'center', flexDirection: 'row' }, personName: { ...typography.bodyMedium, color: colors.ink, flex: 1 }, conversationTime: { ...typography.caption, color: colors.textMuted }, routeRow: { alignItems: 'center', flexDirection: 'row', gap: spacing.xxs, marginTop: spacing.xxs }, route: { ...typography.caption, color: colors.textSecondary, flex: 1 }, previewRow: { alignItems: 'center', flexDirection: 'row', marginBottom: spacing.xs, marginTop: spacing.xs }, preview: { ...typography.small, color: colors.textSecondary, flex: 1 }, unread: { alignItems: 'center', backgroundColor: colors.primary, borderRadius: radius.pill, justifyContent: 'center', marginLeft: spacing.xs, minWidth: 22, paddingHorizontal: 5, paddingVertical: 2 }, unreadText: { ...typography.caption, color: colors.white }, loader: { marginTop: spacing.xxl },
   errorBar: { alignItems: 'center', backgroundColor: colors.dangerSoft, borderTopColor: '#E7B6B2', borderTopWidth: 1, flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: spacing.md, paddingVertical: spacing.sm }, chatError: { alignItems: 'center', backgroundColor: colors.dangerSoft, flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: spacing.md, paddingVertical: spacing.xs }, errorText: { ...typography.caption, color: colors.danger, flex: 1 }, errorAction: { ...typography.caption, color: colors.primary, marginLeft: spacing.sm },
   chatHeader: { alignItems: 'center', backgroundColor: colors.surface, borderBottomColor: colors.border, borderBottomWidth: StyleSheet.hairlineWidth, flexDirection: 'row', paddingHorizontal: spacing.sm, paddingVertical: spacing.sm }, backButton: { alignItems: 'center', height: 42, justifyContent: 'center', marginRight: spacing.xs, width: 38 }, chatPerson: { flex: 1, marginLeft: spacing.sm, minWidth: 0 }, chatName: { ...typography.bodyMedium, color: colors.ink }, lastSeen: { ...typography.caption, color: colors.textSecondary, marginTop: 2 }, complaintButton: { alignItems: 'center', height: 38, justifyContent: 'center', marginRight: spacing.xxs, width: 38 }, loadOpenButton: { alignItems: 'center', backgroundColor: colors.primarySoft, borderRadius: radius.sm, flexDirection: 'row', gap: spacing.xxs, minHeight: 38, paddingHorizontal: spacing.sm }, loadOpen: { ...typography.caption, color: colors.primaryDark }, loadSummary: { alignItems: 'center', backgroundColor: colors.primarySoft, borderBottomColor: '#C9E1DB', borderTopWidth: 0, borderBottomWidth: 1, flexDirection: 'row', paddingHorizontal: spacing.md, paddingVertical: spacing.sm }, loadSummaryIcon: { alignItems: 'center', backgroundColor: colors.surface, borderRadius: radius.sm, height: 38, justifyContent: 'center', marginRight: spacing.sm, width: 38 }, loadSummaryCopy: { flex: 1 }, loadSummaryRoute: { ...typography.smallMedium, color: colors.primaryDark }, loadSummaryMeta: { ...typography.caption, color: colors.textSecondary, marginTop: 2 },
+  messageList: { flex: 1, minHeight: 0 },
   chatContent: { flexGrow: 1, paddingBottom: spacing.sm, paddingHorizontal: spacing.sm, paddingTop: spacing.xs }, loadOlder: { alignItems: 'center', alignSelf: 'center', backgroundColor: colors.primarySoft, borderRadius: radius.pill, flexDirection: 'row', gap: spacing.xxs, marginBottom: spacing.xs, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs }, loadOlderText: { ...typography.caption, color: colors.primaryDark }, dateSeparator: { alignItems: 'center', marginBottom: spacing.xs, marginTop: spacing.xs }, dateText: { ...typography.caption, backgroundColor: colors.surfaceStrong, borderRadius: radius.pill, color: colors.textSecondary, overflow: 'hidden', paddingHorizontal: spacing.sm, paddingVertical: spacing.xxs }, system: { alignSelf: 'center', backgroundColor: colors.surfaceStrong, borderRadius: radius.sm, marginBottom: spacing.xs, maxWidth: '88%', paddingHorizontal: spacing.sm, paddingVertical: spacing.xs }, systemText: { ...typography.caption, color: colors.textSecondary, textAlign: 'center' }, messageRow: { alignItems: 'flex-start', flexDirection: 'row', marginBottom: spacing.xs }, messageRowMine: { justifyContent: 'flex-end' }, bubble: { borderRadius: radius.md, maxWidth: '84%', padding: spacing.sm }, bubbleMine: { backgroundColor: colors.primary, borderBottomRightRadius: radius.xs }, bubbleOther: { backgroundColor: colors.surface, borderBottomLeftRadius: radius.xs, ...shadows.card }, bubbleDeleted: { backgroundColor: colors.surfaceStrong }, textMessage: { ...typography.body, color: colors.text }, deletedText: { ...typography.small, color: colors.textMuted, fontStyle: 'italic' },
   meta: { alignItems: 'center', alignSelf: 'flex-end', flexDirection: 'row', gap: spacing.xxs, marginTop: spacing.xxs }, messageTime: { fontSize: 9, color: colors.textMuted }, messageTimeMine: { color: '#D7EEE9' }, failedRetry: { alignItems: 'center', alignSelf: 'flex-end', flexDirection: 'row', gap: spacing.xxs, marginBottom: spacing.xxs, marginRight: spacing.xxs }, failedRetryText: { ...typography.caption, color: colors.danger }, replyQuote: { borderLeftColor: '#9EDBCF', borderLeftWidth: 3, marginBottom: spacing.xs, paddingLeft: spacing.xs }, replyAuthor: { ...typography.caption, color: colors.primaryDark }, replyText: { ...typography.caption, color: colors.textSecondary, marginTop: 1 }, messageImage: { backgroundColor: colors.surfaceStrong, borderRadius: radius.sm, height: 180, width: 220 }, imageFallback: { alignItems: 'center', backgroundColor: colors.surfaceStrong, borderRadius: radius.sm, height: 100, justifyContent: 'center', width: 180 }, imageCaption: { ...typography.caption, color: '#E9F5F2', marginTop: spacing.xxs }, locationCard: { minWidth: 190 }, locationIcon: { alignItems: 'center', backgroundColor: colors.primarySoft, borderRadius: radius.sm, height: 38, justifyContent: 'center', marginBottom: spacing.xs, width: 38 }, locationTitle: { ...typography.smallMedium, color: colors.text }, locationAddress: { ...typography.caption, color: colors.textSecondary, marginTop: spacing.xxs }, mapLinkRow: { alignItems: 'center', flexDirection: 'row', gap: spacing.xxs, marginTop: spacing.xs }, mapLink: { ...typography.caption, color: colors.primary },
   offerMessage: { backgroundColor: colors.warningSoft, borderColor: '#E8C98C', borderRadius: radius.sm, borderWidth: 1, minWidth: 205, padding: spacing.sm }, loadMessage: { backgroundColor: colors.primarySoft, borderRadius: radius.sm, padding: spacing.sm }, offerEyebrow: { ...typography.caption, color: colors.warning, letterSpacing: .5 }, offerPrice: { ...typography.h2, color: colors.warning, marginTop: spacing.xxs }, offerDifference: { ...typography.caption, color: colors.textSecondary, marginTop: spacing.xxs }, offerNote: { ...typography.caption, color: colors.text, marginTop: spacing.xs }, offerStatus: { ...typography.caption, color: colors.warning, marginTop: spacing.xs },
-  newMessages: { alignItems: 'center', alignSelf: 'center', backgroundColor: colors.primary, borderRadius: radius.pill, bottom: 72, flexDirection: 'row', gap: spacing.xs, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs, position: 'absolute', ...shadows.floating }, newMessagesText: { ...typography.caption, color: colors.white }, replyComposer: { alignItems: 'center', backgroundColor: colors.primarySoft, borderTopColor: '#C9E1DB', borderTopWidth: 1, flexDirection: 'row', gap: spacing.xs, paddingHorizontal: spacing.md, paddingVertical: spacing.xs }, replyComposerCopy: { flex: 1 }, replyComposerTitle: { ...typography.caption, color: colors.primaryDark }, replyComposerText: { ...typography.caption, color: colors.textSecondary }, attachmentPreview: { alignItems: 'center', backgroundColor: colors.primarySoft, borderTopColor: '#C9E1DB', borderTopWidth: 1, flexDirection: 'row', paddingHorizontal: spacing.md, paddingVertical: spacing.xs }, attachmentThumb: { borderRadius: radius.xs, height: 40, width: 40 }, attachmentText: { ...typography.caption, color: colors.text, flex: 1, marginLeft: spacing.sm }, composer: { alignItems: 'flex-end', backgroundColor: colors.surface, borderTopColor: colors.border, borderTopWidth: 1, flexDirection: 'row', paddingHorizontal: spacing.xs, paddingVertical: spacing.xs, position: 'relative', zIndex: 2 }, composerIcon: { alignItems: 'center', height: 42, justifyContent: 'center', width: 34 }, input: { ...typography.body, backgroundColor: colors.surfaceMuted, borderColor: colors.border, borderRadius: radius.md, borderWidth: 1, color: colors.ink, flex: 1, maxHeight: 104, minHeight: 42, paddingHorizontal: spacing.sm, paddingTop: 10 }, send: { alignItems: 'center', backgroundColor: colors.primary, borderRadius: 21, height: 42, justifyContent: 'center', marginLeft: spacing.xs, width: 42 }, sendDisabled: { backgroundColor: colors.borderStrong },
+  newMessages: { alignItems: 'center', alignSelf: 'center', backgroundColor: colors.primary, borderRadius: radius.pill, bottom: spacing.sm, flexDirection: 'row', gap: spacing.xs, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs, position: 'absolute', ...shadows.floating }, newMessagesText: { ...typography.caption, color: colors.white }, replyComposer: { alignItems: 'center', backgroundColor: colors.primarySoft, borderTopColor: '#C9E1DB', borderTopWidth: 1, flexDirection: 'row', gap: spacing.xs, paddingHorizontal: spacing.md, paddingVertical: spacing.xs }, replyComposerCopy: { flex: 1 }, replyComposerTitle: { ...typography.caption, color: colors.primaryDark }, replyComposerText: { ...typography.caption, color: colors.textSecondary }, attachmentPreview: { alignItems: 'center', backgroundColor: colors.primarySoft, borderTopColor: '#C9E1DB', borderTopWidth: 1, flexDirection: 'row', paddingHorizontal: spacing.md, paddingVertical: spacing.xs }, attachmentThumb: { borderRadius: radius.xs, height: 40, width: 40 }, attachmentText: { ...typography.caption, color: colors.text, flex: 1, marginLeft: spacing.sm }, composer: { alignItems: 'flex-end', backgroundColor: colors.surface, borderTopColor: colors.border, borderTopWidth: 1, flexDirection: 'row', paddingHorizontal: spacing.xs, paddingVertical: spacing.xs, position: 'relative', zIndex: 2 }, composerIcon: { alignItems: 'center', height: 42, justifyContent: 'center', width: 34 }, input: { ...typography.body, backgroundColor: colors.surfaceMuted, borderColor: colors.border, borderRadius: radius.md, borderWidth: 1, color: colors.ink, flex: 1, maxHeight: 104, minHeight: 42, paddingHorizontal: spacing.sm, paddingTop: 10 }, send: { alignItems: 'center', backgroundColor: colors.primary, borderRadius: 21, height: 42, justifyContent: 'center', marginLeft: spacing.xs, width: 42 }, sendDisabled: { backgroundColor: colors.borderStrong },
   modal: { alignItems: 'center', backgroundColor: 'rgba(0,0,0,.94)', flex: 1, justifyContent: 'center' }, fullImage: { height: '88%', width: '100%' }, modalClose: { alignItems: 'center', backgroundColor: 'rgba(255,255,255,.16)', borderRadius: 22, height: 44, justifyContent: 'center', position: 'absolute', right: spacing.lg, top: 55, width: 44, zIndex: 2 }, mapModal: { backgroundColor: colors.surface, flex: 1 }, mapHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: spacing.lg, paddingVertical: spacing.md }, mapCancel: { ...typography.bodyMedium, color: colors.textSecondary }, mapTitle: { ...typography.h3, color: colors.ink }, mapShare: { ...typography.bodyMedium, color: colors.primary }, map: { flex: 1 }, mapHint: { ...typography.small, color: colors.textSecondary, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, textAlign: 'center' }, complaintOverlay: { backgroundColor: colors.overlay, flex: 1, justifyContent: 'flex-end' }, complaintSheet: { backgroundColor: colors.surface, borderTopLeftRadius: radius.xl, borderTopRightRadius: radius.xl, padding: spacing.lg }, complaintHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' }, complaintTitle: { ...typography.h2, color: colors.ink }, complaintLabel: { ...typography.smallMedium, color: colors.text, marginTop: spacing.md }, complaintReasons: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, marginTop: spacing.xs }, complaintReason: { backgroundColor: colors.surfaceStrong, borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs }, complaintReasonActive: { backgroundColor: colors.primary }, complaintReasonText: { ...typography.caption, color: colors.textSecondary }, complaintReasonTextActive: { color: colors.white }, complaintInput: { ...typography.body, borderColor: colors.border, borderRadius: radius.sm, borderWidth: 1, color: colors.ink, marginTop: spacing.xs, minHeight: 88, padding: spacing.sm, textAlignVertical: 'top' }, complaintActions: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md }, complaintCancel: { alignItems: 'center', borderColor: colors.border, borderRadius: radius.sm, borderWidth: 1, flex: 1, justifyContent: 'center', minHeight: 46 }, complaintCancelText: { ...typography.bodyMedium, color: colors.textSecondary }, complaintSubmit: { alignItems: 'center', backgroundColor: colors.danger, borderRadius: radius.sm, flex: 1, justifyContent: 'center', minHeight: 46 }, complaintSubmitText: { ...typography.bodyMedium, color: colors.white },
 });
 

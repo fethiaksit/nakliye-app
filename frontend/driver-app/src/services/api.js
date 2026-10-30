@@ -172,6 +172,7 @@ const getAllLoadPages = async (params = {}, request = {}) => {
 };
 
 export const loads = {
+  paymentApproval: (id, selectionId, accept) => client.post(`/api/loads/${id}/payment-approval`, { selectionId, accept }),
   list: getAllLoadPages,
   get: async id => { const response = await client.get(`/api/loads/${id}`); return { ...response, data: normalizeLoad(response.data) }; },
   status: (id, status) => client.patch(`/api/loads/${id}/status`, { status }),
@@ -221,7 +222,7 @@ export const support = {
   get: id => client.get(`/api/complaints/${id}`),
   create: data => client.post('/api/complaints', data),
 };
-export const push = { register: (token, platform) => client.post('/api/push/token', { token, platform }), unregister: token => client.delete('/api/push/token', { data: { token } }) };
+export const push = { register: (token, platform, projectId) => client.post('/api/push/token', { token, platform, projectId }), unregister: token => client.delete('/api/push/token', { data: { token } }) };
 export const documents = {
   list: () => client.get('/api/driver/documents'),
   get: id => client.get(`/api/driver/documents/${id}`),

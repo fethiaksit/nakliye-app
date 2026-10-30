@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"nakliye-api/internal/models"
 	"nakliye-api/internal/store"
@@ -210,7 +209,7 @@ func (a *API) corporateLoadWalletView(company models.Company, load models.Load) 
 	}
 	priceCents, valid := models.TLToCents(load.AgreedPriceTL)
 	if !valid {
-		priceCents = 0
+		priceCents, _ = models.TLToCents(load.BasePriceTL)
 	}
 	var allocation *models.LoadWalletAllocation
 	stored, allocationErr := a.store.GetLoadWalletAllocation(load.ID)
@@ -219,6 +218,7 @@ func (a *API) corporateLoadWalletView(company models.Company, load models.Load) 
 			return nil, store.ErrCorporateAccountRequired
 		}
 		allocation = &stored
+		priceCents = stored.OriginalAmountCents
 	} else if !errors.Is(allocationErr, redis.Nil) {
 		return nil, allocationErr
 	}
@@ -227,7 +227,7 @@ func (a *API) corporateLoadWalletView(company models.Company, load models.Load) 
 		usedCents = allocation.UsedCents
 	}
 	maxUsable := int64(0)
-	if policy.Enabled && load.Status == models.LoadStatusDriverSelected && allocation == nil {
+	if policy.Enabled && models.CanonicalLoadStatus(load.Status) == models.LoadStatusPublished && allocation == nil {
 		maxUsable = minCents(wallet.BalanceCents, models.WalletPercent(priceCents, policy.MaxUsageBps, false))
 	}
 	return map[string]any{
@@ -279,46 +279,13 @@ func isWalletError(err error) bool {
 		errors.Is(err, store.ErrWalletConflict) || errors.Is(err, store.ErrCorporateAccountRequired)
 }
 
+// Credit must be selected together with an offer, never added after assignment.
 func (a *API) applyCorporateWallet(w http.ResponseWriter, r *http.Request) {
-	user, company, ok := a.corporateContext(w, r)
+	_, _, ok := a.corporateContext(w, r)
 	if !ok {
 		return
 	}
-	load, err := a.store.GetLoad(r.PathValue("id"))
-	if err != nil || load.DeletedAt != nil {
-		notFound(w)
-		return
-	}
-	if load.CustomerID != user.ID {
-		forbidden(w)
-		return
-	}
-	var request struct {
-		AmountCents int64 `json:"amountCents"`
-	}
-	if !decode(w, r, &request) {
-		return
-	}
-	if request.AmountCents <= 0 {
-		badRequest(w, "kullanılacak kredi sıfırdan büyük olmalıdır")
-		return
-	}
-	now := time.Now().UTC()
-	transaction := models.WalletTransaction{
-		ID: uuid.NewString(), CompanyID: company.ID, LoadID: load.ID, Type: models.WalletTransactionShipmentUsage,
-		Description: "Nakliyede kullanılan kurumsal kredi", PickupAddress: load.Pickup.Address, DeliveryAddress: load.Delivery.Address,
-		ActorID: user.ID, ActorRole: user.Role, CreatedAt: now,
-	}
-	wallet, allocation, created, err := a.store.ApplyWalletCredit(company, load, request.AmountCents, transaction)
-	if err != nil {
-		writeWalletError(w, err)
-		return
-	}
-	jsonResponse(w, http.StatusCreated, map[string]any{
-		"wallet": wallet, "allocation": allocation, "transaction": created,
-		"agreedAmountCents": allocation.OriginalAmountCents, "usedCents": allocation.UsedCents,
-		"customerPayableCents": allocation.NetEligibleAmountCents, "maxUsableCents": 0,
-	})
+	conflict(w, "Cüzdan kredisini teklif seçerken belirleyin; şoförün ödeme onayı zorunludur.")
 }
 
 func (a *API) favoriteDrivers(w http.ResponseWriter, r *http.Request) {
@@ -337,9 +304,9 @@ func (a *API) favoriteDrivers(w http.ResponseWriter, r *http.Request) {
 		if getErr != nil || driver.Role != models.RoleDriver {
 			continue
 		}
-		item := map[string]any{"favorite": favorite, "driver": a.publicUser(driver)}
+		item := map[string]any{"favorite": favorite, "driver": publicDriverSummary(driver)}
 		if vehicle, vehicleErr := a.store.GetActiveVehicle(driver.ID); vehicleErr == nil {
-			item["vehicle"] = vehicle
+			item["vehicle"] = publicVehicleSummary(vehicle)
 		}
 		items = append(items, item)
 	}
@@ -380,9 +347,9 @@ func (a *API) addFavoriteDriver(w http.ResponseWriter, r *http.Request) {
 		serverError(w, err)
 		return
 	}
-	item := map[string]any{"favorite": favorite, "driver": a.publicUser(driver)}
+	item := map[string]any{"favorite": favorite, "driver": publicDriverSummary(driver)}
 	if vehicle, vehicleErr := a.store.GetActiveVehicle(driver.ID); vehicleErr == nil {
-		item["vehicle"] = vehicle
+		item["vehicle"] = publicVehicleSummary(vehicle)
 	}
 	jsonResponse(w, http.StatusCreated, item)
 }

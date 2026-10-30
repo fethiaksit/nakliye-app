@@ -11,21 +11,44 @@ import (
 
 func (s *RedisStore) SavePushToken(token models.PushToken) error {
 	key := "push-token:" + token.ExpoPushToken
-	var previous models.PushToken
-	if body, err := s.client.Get(s.ctx, key).Bytes(); err == nil {
-		_ = json.Unmarshal(body, &previous)
-	}
-	body, err := json.Marshal(token)
-	if err != nil {
+	return s.watchPush(func(tx *redis.Tx) error {
+		if err := s.guardAccounts(tx, token.UserID); err != nil {
+			return err
+		}
+		var previous models.PushToken
+		body, err := tx.Get(s.ctx, key).Bytes()
+		if err != nil && err != redis.Nil {
+			return err
+		}
+		if err == nil {
+			if err = json.Unmarshal(body, &previous); err != nil {
+				return err
+			}
+		}
+		body, err = json.Marshal(token)
+		if err != nil {
+			return err
+		}
+		_, err = tx.TxPipelined(s.ctx, func(pipe redis.Pipeliner) error {
+			if previous.UserID != "" && previous.UserID != token.UserID {
+				pipe.SRem(s.ctx, "user-push-tokens:"+previous.UserID, token.ExpoPushToken)
+			}
+			pipe.Set(s.ctx, key, body, 0)
+			pipe.SAdd(s.ctx, "user-push-tokens:"+token.UserID, token.ExpoPushToken)
+			return nil
+		})
 		return err
+	}, key)
+}
+
+func (s *RedisStore) watchPush(fn func(*redis.Tx) error, keys ...string) error {
+	var err error
+	for i := 0; i < 8; i++ {
+		err = s.client.Watch(s.ctx, fn, keys...)
+		if err != redis.TxFailedErr {
+			return err
+		}
 	}
-	pipe := s.client.TxPipeline()
-	if previous.UserID != "" && previous.UserID != token.UserID {
-		pipe.SRem(s.ctx, "user-push-tokens:"+previous.UserID, token.ExpoPushToken)
-	}
-	pipe.Set(s.ctx, key, body, 0)
-	pipe.SAdd(s.ctx, "user-push-tokens:"+token.UserID, token.ExpoPushToken)
-	_, err = pipe.Exec(s.ctx)
 	return err
 }
 
@@ -46,19 +69,37 @@ func (s *RedisStore) ListPushTokens(userID string) ([]models.PushToken, error) {
 }
 
 func (s *RedisStore) DeletePushToken(userID, token string) error {
-	var stored models.PushToken
-	body, err := s.client.Get(s.ctx, "push-token:"+token).Bytes()
-	if err != nil && err != redis.Nil {
+	return s.deletePushToken(userID, token, nil)
+}
+
+// A late APNs failure cannot delete a token registered again or reassigned since
+// the original send. Logout and account cleanup also preserve a new owner.
+func (s *RedisStore) DeletePushTokenIfCurrent(token models.PushToken) error {
+	return s.deletePushToken(token.UserID, token.ExpoPushToken, &token.UpdatedAt)
+}
+func (s *RedisStore) deletePushToken(userID, token string, updatedAt *time.Time) error {
+	key := "push-token:" + token
+	return s.watchPush(func(tx *redis.Tx) error {
+		var stored models.PushToken
+		body, err := tx.Get(s.ctx, key).Bytes()
+		if err != nil && err != redis.Nil {
+			return err
+		}
+		if err == nil {
+			if err = json.Unmarshal(body, &stored); err != nil {
+				return err
+			}
+			if stored.UserID != userID || updatedAt != nil && !stored.UpdatedAt.Equal(*updatedAt) {
+				return nil
+			}
+		}
+		_, err = tx.TxPipelined(s.ctx, func(pipe redis.Pipeliner) error {
+			pipe.Del(s.ctx, key)
+			pipe.SRem(s.ctx, "user-push-tokens:"+userID, token)
+			return nil
+		})
 		return err
-	}
-	if err == nil && (json.Unmarshal(body, &stored) != nil || stored.UserID != userID) {
-		return nil
-	}
-	pipe := s.client.TxPipeline()
-	pipe.Del(s.ctx, "push-token:"+token)
-	pipe.SRem(s.ctx, "user-push-tokens:"+userID, token)
-	_, err = pipe.Exec(s.ctx)
-	return err
+	}, key)
 }
 
 func (s *RedisStore) MarkPushOnce(key string) (bool, error) {
@@ -73,11 +114,10 @@ func (s *RedisStore) RevokeAllUserPushTokens(userID string) error {
 	if err != nil && err != redis.Nil {
 		return err
 	}
-	pipe := s.client.TxPipeline()
-	for _, val := range values {
-		pipe.Del(s.ctx, "push-token:"+val)
+	for _, token := range values {
+		if err := s.DeletePushToken(userID, token); err != nil {
+			return err
+		}
 	}
-	pipe.Del(s.ctx, "user-push-tokens:"+userID)
-	_, err = pipe.Exec(s.ctx)
-	return err
+	return nil
 }

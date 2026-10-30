@@ -12,7 +12,7 @@ export default function PublicLayout({
   title,
   subtitle,
   version = "1.0.0",
-  updatedAt = "14 Ekim 2026",
+  updatedAt = "28 Ekim 2026",
   children,
 }: PublicLayoutProps) {
   return (
@@ -48,7 +48,7 @@ export default function PublicLayout({
                 Sürüm {version}
               </span>
               <span style={{ fontSize: 12, color: "#667069" }}>
-                Yürürlük / Son Güncelleme: {updatedAt}
+                Taslak güncelleme: {updatedAt}
               </span>
             </div>
             <h1 style={{ fontSize: "clamp(22px, 4.5vw, 28px)", fontWeight: 800, color: "#14261c", margin: "4px 0 8px", letterSpacing: "-0.03em" }}>
@@ -71,8 +71,8 @@ export default function PublicLayout({
       <footer style={{ background: "#ffffff", borderTop: "1px solid #e3e8e4", padding: "24px clamp(14px, 4vw, 24px)", marginTop: "auto", fontSize: 12, color: "#667069" }}>
         <div style={{ maxWidth: 960, margin: "0 auto", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 16 }}>
           <div>
-            <div style={{ fontWeight: 700, color: "#17221b" }}>Feti Akşit Limited Şirketi [DOĞRULAMA GEREKLİ: Resmî Ticaret Sicil Unvanı Kontrolü]</div>
-            <div>Aracı Hizmet Sağlayıcı · 6698 Sayılı KVKK Uyumlu Bilgilendirme</div>
+            <div style={{ fontWeight: 700, color: "#17221b" }}>Veri sorumlusunun resmî unvanı doğrulanmalıdır</div>
+            <div>Hukuk incelemesi bekleyen taslak bilgilendirme</div>
           </div>
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
             <a href="/privacy" style={{ color: "#246b45", textDecoration: "none" }}>Gizlilik Politikası</a>

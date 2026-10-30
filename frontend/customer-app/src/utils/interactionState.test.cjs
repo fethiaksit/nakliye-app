@@ -4,7 +4,15 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { asValidDate, clampToMinimum, formatPickerValue, pickerValueForOpen } = require('../../../shared/ui/datePicker.cjs');
-const { canSendMessage, draftAfterSendAttempt, normalizeMessageDraft } = require('../../../shared/conversationComposer.cjs');
+const {
+  canSendMessage,
+  draftAfterSendAttempt,
+  normalizeMessageDraft,
+  calculateKeyboardVerticalOffset,
+  mergeByID,
+  isStaleResponse,
+  shouldSilentPoll,
+} = require('../../../shared/conversationComposer.cjs');
 const {
   captureListScrollAnchor,
   pruneItemLayouts,
@@ -239,5 +247,67 @@ test('account subpage back resolvers match customer, corporate, and driver hiera
   assert.equal(resolveDriverAccountBackPage('vehicle-edit'), 'vehicle-detail');
   assert.equal(resolveDriverAccountBackPage('vehicle-detail'), 'vehicles');
   assert.equal(resolveDriverAccountBackPage('vehicles'), 'home');
+});
+
+test('calculateKeyboardVerticalOffset offsets header only on iOS and keeps 0 on Android', () => {
+  // iOS with iPhone Dynamic Island / notch top inset (e.g. 47) + standard header (78)
+  assert.equal(calculateKeyboardVerticalOffset({ platform: 'ios', topInset: 47, headerHeight: 78 }), 125);
+  // iOS without safe inset (e.g. older devices)
+  assert.equal(calculateKeyboardVerticalOffset({ platform: 'ios', topInset: 0, headerHeight: 78 }), 78);
+  // iOS default fallback
+  assert.equal(calculateKeyboardVerticalOffset({ platform: 'ios' }), 78);
+  // Android leaves offset at 0 so windowSoftInputMode: adjustResize handles layout natively
+  assert.equal(calculateKeyboardVerticalOffset({ platform: 'android', topInset: 24, headerHeight: 78 }), 0);
+  assert.equal(calculateKeyboardVerticalOffset({ platform: 'android' }), 0);
+});
+
+test('mergeByID merges, replaces optimistic messages, and sorts chronologically', () => {
+  const current = [
+    { id: 'msg-1', body: 'İlk mesaj', createdAt: '2026-10-23T10:00:00.000Z' },
+    { id: 'temp-123', clientMessageId: 'cli-abc', body: 'Gönderiliyor...', createdAt: '2026-10-23T10:02:00.000Z' },
+  ];
+  const incoming = [
+    { id: 'msg-1', body: 'İlk mesaj', read: true, createdAt: '2026-10-23T10:00:00.000Z' },
+    { id: 'server-999', clientMessageId: 'cli-abc', body: 'Gönderildi!', createdAt: '2026-10-23T10:02:00.000Z' },
+    { id: 'msg-2', body: 'Cevap', createdAt: '2026-10-23T10:05:00.000Z' },
+  ];
+
+  const merged = mergeByID(current, incoming);
+  assert.equal(merged.length, 3);
+  // Temporary client message replaced by server id
+  assert.equal(merged.find(m => m.id === 'temp-123'), undefined);
+  assert.equal(merged.find(m => m.id === 'server-999')?.body, 'Gönderildi!');
+  // Read status updated on msg-1
+  assert.equal(merged.find(m => m.id === 'msg-1')?.read, true);
+  // Chronological order maintained
+  assert.equal(merged[0].id, 'msg-1');
+  assert.equal(merged[1].id, 'server-999');
+  assert.equal(merged[2].id, 'msg-2');
+
+  // Handles empty inputs safely
+  assert.deepEqual(mergeByID([], []), []);
+  assert.deepEqual(mergeByID(null, null), []);
+});
+
+test('isStaleResponse prevents race conditions when older requests resolve out-of-order', () => {
+  const currentRequestId = 5;
+  assert.equal(isStaleResponse(4, currentRequestId), true);
+  assert.equal(isStaleResponse(3, currentRequestId), true);
+  assert.equal(isStaleResponse(5, currentRequestId), false);
+});
+
+test('shouldSilentPoll respects app state and user presence', () => {
+  assert.equal(shouldSilentPoll({ isActiveApp: true, hasUser: true }), true);
+  assert.equal(shouldSilentPoll({ isActiveApp: false, hasUser: true }), false);
+  assert.equal(shouldSilentPoll({ isActiveApp: true, hasUser: false }), false);
+  assert.equal(shouldSilentPoll({ isActiveApp: false, hasUser: false }), false);
+});
+
+test('bottom nav visibility rule hides bottom navigation exclusively during active chat', () => {
+  const isBottomNavVisible = (tab, isChatActive) => !(tab === 'messages' && isChatActive);
+  assert.equal(isBottomNavVisible('home', false), true);
+  assert.equal(isBottomNavVisible('loads', false), true);
+  assert.equal(isBottomNavVisible('messages', false), true); // conversation list visible -> show bottom nav
+  assert.equal(isBottomNavVisible('messages', true), false); // inside an open chat -> hide bottom nav
 });
 

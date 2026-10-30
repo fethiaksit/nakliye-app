@@ -6,9 +6,10 @@ import (
 )
 
 const (
-	AccountStatusActive  = "active"
-	AccountStatusBlocked = "blocked"
-	AccountStatusDeleted = "deleted"
+	AccountStatusActive   = "active"
+	AccountStatusBlocked  = "blocked"
+	AccountStatusDeleted  = "deleted"
+	AccountStatusDeleting = "deleting"
 )
 
 const (

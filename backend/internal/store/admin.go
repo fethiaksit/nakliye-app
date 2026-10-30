@@ -109,11 +109,17 @@ func (s *RedisStore) SaveDriverDocument(document models.DriverDocument) error {
 	if err != nil {
 		return err
 	}
-	pipe := s.client.TxPipeline()
-	pipe.Set(s.ctx, "driver-document:"+document.ID, body, 0)
-	pipe.SAdd(s.ctx, "driver-documents:driver:"+document.DriverID, document.ID)
-	_, err = pipe.Exec(s.ctx)
-	return err
+	return s.watchPush(func(tx *redis.Tx) error {
+		if err := s.guardCleanup(tx, document.DriverID, document.Status == "archived" || (document.Status == "deleted" && document.FileURL == "")); err != nil {
+			return err
+		}
+		_, err := tx.TxPipelined(s.ctx, func(pipe redis.Pipeliner) error {
+			pipe.Set(s.ctx, "driver-document:"+document.ID, body, 0)
+			pipe.SAdd(s.ctx, "driver-documents:driver:"+document.DriverID, document.ID)
+			return nil
+		})
+		return err
+	}, "user:"+document.DriverID)
 }
 
 func (s *RedisStore) GetDriverDocument(id string) (models.DriverDocument, error) {
@@ -151,18 +157,28 @@ func (s *RedisStore) SaveComplaint(complaint models.MessageComplaint) error {
 	if err != nil {
 		return err
 	}
-	pipe := s.client.TxPipeline()
-	pipe.Set(s.ctx, "complaint:"+complaint.ID, body, 0)
-	pipe.ZAdd(s.ctx, "complaints", redis.Z{Score: float64(complaint.CreatedAt.UnixMilli()), Member: complaint.ID})
-	pipe.SAdd(s.ctx, "complaints:reporter:"+complaint.ReporterID, complaint.ID)
-	if complaint.LoadID != "" {
-		pipe.SAdd(s.ctx, "complaints:load:"+complaint.LoadID, complaint.ID)
-	}
-	if complaint.MessageID != "" {
-		pipe.SAdd(s.ctx, "complaints:message:"+complaint.MessageID, complaint.ID)
-	}
-	_, err = pipe.Exec(s.ctx)
-	return err
+	return s.watchPush(func(tx *redis.Tx) error {
+		if err := s.guardCleanup(tx, complaint.ReporterID, false); err != nil {
+			return err
+		}
+		if err := s.guardAccounts(tx, complaint.ReportedUserID); err != nil {
+			return err
+		}
+
+		_, err := tx.TxPipelined(s.ctx, func(pipe redis.Pipeliner) error {
+			pipe.Set(s.ctx, "complaint:"+complaint.ID, body, 0)
+			pipe.ZAdd(s.ctx, "complaints", redis.Z{Score: float64(complaint.CreatedAt.UnixMilli()), Member: complaint.ID})
+			pipe.SAdd(s.ctx, "complaints:reporter:"+complaint.ReporterID, complaint.ID)
+			if complaint.LoadID != "" {
+				pipe.SAdd(s.ctx, "complaints:load:"+complaint.LoadID, complaint.ID)
+			}
+			if complaint.MessageID != "" {
+				pipe.SAdd(s.ctx, "complaints:message:"+complaint.MessageID, complaint.ID)
+			}
+			return nil
+		})
+		return err
+	}, "user:"+complaint.ReporterID)
 }
 
 func (s *RedisStore) GetComplaint(id string) (models.MessageComplaint, error) {
@@ -273,7 +289,7 @@ func (s *RedisStore) TransitionLoadStatus(expectedStatus string, updated models.
 	}
 	loadKey := "load:" + updated.ID
 	eventKey := "load-status-event:" + event.ID
-	err = s.client.Watch(s.ctx, func(tx *redis.Tx) error {
+	err = s.watchPayment(func(tx *redis.Tx) error {
 		// A wallet allocation can appear between cancellation's initial lookup
 		// and this fallback. Retry through the refund path instead of losing credit.
 		if updated.Status == models.LoadStatusCancelled {
@@ -292,6 +308,19 @@ func (s *RedisStore) TransitionLoadStatus(expectedStatus string, updated models.
 		var stored models.Load
 		if unmarshalErr := json.Unmarshal(storedBody, &stored); unmarshalErr != nil {
 			return unmarshalErr
+		}
+		if stored.Status == models.LoadStatusPaymentApprovalPending || updated.Status == models.LoadStatusPaymentApprovalPending {
+			return ErrInvalidLoadStatusTransition
+		}
+		if stored.PaymentApproval != nil && stored.PaymentApproval.Status == "approved" && !samePaymentTerms(stored.PaymentApproval, updated.PaymentApproval) {
+			return ErrLoadStatusConflict
+		}
+		if updated.Status != models.LoadStatusCancelled {
+			consentLoad := stored
+			consentLoad.Status = updated.Status
+			if e := s.requireDriverPaymentConsent(tx, consentLoad); e != nil {
+				return e
+			}
 		}
 		currentStatus := models.CanonicalLoadStatus(stored.Status)
 		if currentStatus != expectedStatus {

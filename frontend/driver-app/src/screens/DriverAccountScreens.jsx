@@ -316,7 +316,7 @@ export default function DriverAccountScreens({ page, onPageChange, loading, erro
     setDeleteLoading(true);
     try {
       await profile.deleteAccount(payload);
-      showToast('Şoför hesabınız silindi ve kişisel verileriniz anonimleştirildi.', { type: 'success', title: 'Hesap Silindi' });
+      showToast('Hesabınız kapatıldı; profil iletişim bilgileri kaldırıldı.', { type: 'success', title: 'Hesap Silindi' });
       await logout();
     } catch (delError) {
       showToast(apiError(delError), { type: 'error', title: 'Hesap silinemedi' });

@@ -6,7 +6,7 @@ import { AppButton, ListSkeleton, ScreenState, SectionCard } from '../../../shar
 import { formatWalletCents } from '../../../shared/walletMoney.mjs';
 import { driverWallet, apiError } from '../services/api';
 
-const labels = { TOPUP: 'Bakiye yükleme', RESERVE: 'Hizmet bedeli blokesi', RELEASE: 'Bloke kaldırıldı', COMMISSION: 'Hizmet bedeli tahsilatı' };
+const labels = { CORPORATE_CREDIT_COMPENSATION: 'Müşterinin kullandığı kurumsal kredi karşılığı', TOPUP: 'Bakiye yükleme', RESERVE: 'Hizmet bedeli blokesi', RELEASE: 'Bloke kaldırıldı', COMMISSION: 'Hizmet bedeli tahsilatı' };
 export default function DriverWalletScreen({ onBack }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);

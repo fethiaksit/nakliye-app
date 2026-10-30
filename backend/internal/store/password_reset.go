@@ -31,7 +31,10 @@ func (s *RedisStore) SavePasswordResetCode(record PasswordResetRecord, ttl time.
 		return err
 	}
 	key := "pwdreset:code:" + strings.ToLower(strings.TrimSpace(record.Email))
-	return s.client.Set(s.ctx, key, b, ttl).Err()
+	return s.watchPayment(func(tx *redis.Tx) error {
+		_, err := tx.TxPipelined(s.ctx, func(p redis.Pipeliner) error { p.Set(s.ctx, key, b, ttl); return nil })
+		return err
+	}, "user:"+record.UserID)
 }
 
 func (s *RedisStore) GetPasswordResetCode(email string) (*PasswordResetRecord, error) {
@@ -86,7 +89,10 @@ func (s *RedisStore) SavePasswordResetToken(token string, record PasswordResetTo
 		return err
 	}
 	key := "pwdreset:token:" + strings.TrimSpace(token)
-	return s.client.Set(s.ctx, key, b, ttl).Err()
+	return s.watchPayment(func(tx *redis.Tx) error {
+		_, err := tx.TxPipelined(s.ctx, func(p redis.Pipeliner) error { p.Set(s.ctx, key, b, ttl); return nil })
+		return err
+	}, "user:"+record.UserID)
 }
 
 func (s *RedisStore) ConsumePasswordResetToken(token string) (*PasswordResetTokenRecord, error) {

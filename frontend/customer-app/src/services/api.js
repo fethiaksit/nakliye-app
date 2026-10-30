@@ -141,7 +141,7 @@ export const maps = {
 // still use the normalized backend maps endpoints and never expose a provider
 // key to the mobile application.
 export const locations = { reverse: (latitude, longitude, signal) => maps.reverse(latitude, longitude, signal) };
-export const offers = { create: (loadId, data) => client.post(`/api/loads/${loadId}/offers`, data), list: loadId => client.get(`/api/loads/${loadId}/offers`), accept: id => client.post(`/api/offers/${id}/accept`), withdraw: id => client.delete(`/api/offers/${id}`) };
+export const offers = { create: (loadId, data) => client.post(`/api/loads/${loadId}/offers`, data), list: loadId => client.get(`/api/loads/${loadId}/offers`), accept: (id, amountCents = 0) => client.post(`/api/offers/${id}/accept`, { amountCents }), withdraw: id => client.delete(`/api/offers/${id}`) };
 export const messages = { list: (loadId, { signal, ...params } = {}) => client.get(`/api/loads/${loadId}/messages`, { params, signal }), send: (loadId, data) => client.post(`/api/loads/${loadId}/messages`, data) };
 export const conversations = {
   list: (params = {}, request = {}) => client.get('/api/conversations', { params, signal: request.signal }),
@@ -181,7 +181,7 @@ export const corporate = {
   addFavorite: driverId => client.post('/api/corporate/favorite-drivers', { driverId }),
   removeFavorite: driverId => client.delete(`/api/corporate/favorite-drivers/${driverId}`),
 };
-export const push = { register: (token, platform) => client.post('/api/push/token', { token, platform }), unregister: token => client.delete('/api/push/token', { data: { token } }) };
+export const push = { register: (token, platform, projectId) => client.post('/api/push/token', { token, platform, projectId }), unregister: token => client.delete('/api/push/token', { data: { token } }) };
 const responseErrorMessage = data => {
   const error = data?.error;
   if (typeof error === 'string') return error;

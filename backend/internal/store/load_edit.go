@@ -15,7 +15,7 @@ func (s *RedisStore) SaveLoadIfUnchanged(expected, updated models.Load) error {
 		return ErrLoadStatusConflict
 	}
 	key := "load:" + expected.ID
-	err := s.client.Watch(s.ctx, func(tx *redis.Tx) error {
+	err := s.watchPayment(func(tx *redis.Tx) error {
 		b, e := tx.Get(s.ctx, key).Bytes()
 		if e != nil {
 			return e

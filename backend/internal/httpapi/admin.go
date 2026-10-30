@@ -17,7 +17,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"nakliye-api/internal/models"
-	"nakliye-api/internal/store"
 )
 
 const adminScope = "admin-panel"
@@ -137,6 +136,9 @@ func currentAdmin(r *http.Request) adminPrincipal {
 }
 
 func accountStatus(user models.User) string {
+	if user.AccountStatus == models.AccountStatusDeleting {
+		return models.AccountStatusDeleting
+	}
 	if user.AccountStatus == models.AccountStatusDeleted || user.DeletedAt != nil {
 		return models.AccountStatusDeleted
 	}
@@ -1457,9 +1459,10 @@ func (a *API) adminProcessAccountDeletionRequest(w http.ResponseWriter, r *http.
 		return
 	}
 	var request struct {
-		Status    string `json:"status"`
-		Action    string `json:"action"`
-		AdminNote string `json:"adminNote"`
+		Status           string `json:"status"`
+		Action           string `json:"action"`
+		AdminNote        string `json:"adminNote"`
+		IdentityVerified bool   `json:"identityVerified"`
 	}
 	if !decode(w, r, &request) {
 		return
@@ -1485,6 +1488,11 @@ func (a *API) adminProcessAccountDeletionRequest(w http.ResponseWriter, r *http.
 	adminEmail := currentAdmin(r).Email
 
 	if request.Status == "completed" {
+		if !request.IdentityVerified || strings.TrimSpace(request.AdminNote) == "" {
+			badRequest(w, "kayıtlı iletişim kanalı üzerinden kimlik doğrulaması ve işlem notu zorunludur")
+			return
+		}
+
 		var targetUser *models.User
 		if reqRecord.UserID != "" {
 			if u, err := a.store.GetUser(reqRecord.UserID); err == nil && u.ID != "" {
@@ -1508,33 +1516,9 @@ func (a *API) adminProcessAccountDeletionRequest(w http.ResponseWriter, r *http.
 		}
 
 		if targetUser.AccountStatus != models.AccountStatusDeleted {
-			activeStatuses := map[string]bool{
-				models.LoadStatusDriverSelected:    true,
-				models.LoadStatusDriverEnRoute:     true,
-				models.LoadStatusAtPickup:          true,
-				models.LoadStatusPickedUp:          true,
-				models.LoadStatusEnRouteToDelivery: true,
-			}
-			if targetUser.Role == models.RoleCustomer {
-				loads, _, err := a.store.ListLoads(targetUser.ID, "", store.LoadFilter{}, 0, 100)
-				if err == nil {
-					for _, l := range loads {
-						if activeStatuses[l.Status] {
-							badRequest(w, "kullanıcının devam eden aktif nakliyesi bulunmaktadır; talep tamamlanamaz")
-							return
-						}
-					}
-				}
-			} else if targetUser.Role == models.RoleDriver {
-				loads, _, err := a.store.ListLoads("", targetUser.ID, store.LoadFilter{}, 0, 100)
-				if err == nil {
-					for _, l := range loads {
-						if activeStatuses[l.Status] {
-							badRequest(w, "şoförün devam eden aktif taşıma görevi bulunmaktadır; talep tamamlanamaz")
-							return
-						}
-					}
-				}
+			if err := a.checkAccountDeletionAllowed(*targetUser); err != nil {
+				badRequest(w, err.Error())
+				return
 			}
 
 			if err := a.anonymizeAndCloseAccount(*targetUser, reqRecord.Reason); err != nil {
@@ -1543,6 +1527,12 @@ func (a *API) adminProcessAccountDeletionRequest(w http.ResponseWriter, r *http.
 			}
 		}
 		reqRecord.UserID = targetUser.ID
+	}
+
+	if request.Status == "completed" {
+		reqRecord.Email = ""
+		reqRecord.Phone = ""
+		reqRecord.Reason = ""
 	}
 
 	reqRecord.Status = request.Status
