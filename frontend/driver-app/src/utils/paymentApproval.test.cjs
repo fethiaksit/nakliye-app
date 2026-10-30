@@ -161,3 +161,68 @@ test('pending payment is prominent on dashboard and its action opens consent ins
   nodes(cashTree).find(n => n.type === 'Pressable' && n.props.accessibilityRole === 'button').props.onPress();
   assert.deepEqual(transitions, [['cash', 'driver_en_route']]);
 });
+
+test('PaymentApprovalModal displays minimal breakdown, explanatory text, and triggers approve/reject/close', async () => {
+  const wallet = await import('../../../shared/walletMoney.mjs');
+  const theme = moduleFromFile(path.join(root, 'shared/ui/theme.js'), () => ({}));
+  const modal = moduleFromFile(path.join(root, 'driver-app/src/components/driver/PaymentApprovalModal.jsx'), name => {
+    if (name === 'react') return react;
+    if (name === 'react-native') return { Modal: 'Modal', View: 'View', Text: 'Text', Pressable: 'Pressable', ScrollView: 'ScrollView', StyleSheet: { create: s => s } };
+    if (name.endsWith('/walletMoney.mjs')) return wallet;
+    if (name.endsWith('/theme')) return theme;
+    if (name.endsWith('/primitives')) return { AppButton: 'AppButton' };
+    return { __esModule: true, default: name };
+  }).default;
+
+  const load = {
+    id: 'load-123',
+    status: 'payment_approval_pending',
+    paymentApproval: {
+      id: 'approval-456',
+      driverId: 'driver-789',
+      amountCents: 410000,
+      customerPayableCents: 404000,
+      creditCents: 6000,
+      status: 'pending',
+    },
+  };
+
+  const approved = [];
+  const rejected = [];
+  let closed = false;
+
+  const tree = modal({
+    visible: true,
+    load,
+    loading: false,
+    onApprove: l => approved.push(l.id),
+    onReject: l => rejected.push(l.id),
+    onClose: () => { closed = true; },
+  });
+
+  const all = nodes(tree);
+  const text = JSON.stringify(tree);
+
+  assert.ok(text.includes('KURUMSAL NAKLİYE'));
+  assert.ok(text.includes(wallet.formatWalletCents(410000)));
+  assert.ok(text.includes(wallet.formatWalletCents(404000)));
+  assert.ok(text.includes(wallet.formatWalletCents(6000)));
+
+  const buttons = all.filter(n => n.type === 'AppButton');
+  const approveBtn = buttons.find(n => n.props.label === 'Ödeme Şeklini Onayla ve İşi Al');
+  const rejectBtn = buttons.find(n => n.props.label === 'Reddet');
+
+  assert.ok(approveBtn);
+  assert.ok(rejectBtn);
+
+  approveBtn.props.onPress();
+  assert.deepEqual(approved, ['load-123']);
+
+  rejectBtn.props.onPress();
+  assert.deepEqual(rejected, ['load-123']);
+
+  const closePressable = all.find(n => n.type === 'Pressable' && n.props.accessibilityLabel === 'Kapat');
+  assert.ok(closePressable);
+  closePressable.props.onPress();
+  assert.equal(closed, true);
+});

@@ -22,8 +22,9 @@ import ConversationCenter from './src/components/ConversationCenter';
 import { nativeGoogleMapsConfigured, nativeGoogleMapsMessage } from './src/config/maps';
 import { DriverJobDetail, DriverJobs, DriverOffers } from './src/screens/DriverScreens';
 import DriverAccountScreens from './src/screens/DriverAccountScreens';
+import PaymentApprovalModal from './src/components/driver/PaymentApprovalModal';
 import { parseWalletUnits } from '../shared/walletMoney.mjs';
-import { driverStatusAction, formatMoney, loadStatusLabel, resolveMediaUrl, toFiniteNumber } from './src/utils/presentation';
+import { driverStatusAction, formatMoney, loadStatusLabel, requiresDriverPaymentApproval, resolveMediaUrl, toFiniteNumber } from './src/utils/presentation';
 import { mobileSentry } from '../shared/sentry';
 import { posthog } from '../shared/posthog';
 
@@ -69,6 +70,8 @@ function DriverApp() {
   const [accountForm, setAccountForm] = useState({ name: '', email: '', phone: '', vehicleType: '', vehicleModel: '', licensePlate: '', capacityKg: '', serviceArea: '', licenseStatus: '', nearbyLoadNotifications: false, currentPassword: '', newPassword: '', newPasswordConfirm: '' });
   const [confirmation, setConfirmation] = useState(null);
   const [confirmationLoading, setConfirmationLoading] = useState(false);
+  const [activePaymentModalLoad, setActivePaymentModalLoad] = useState(null);
+  const dismissedApprovalIds = useRef(new Set());
   const jobsAbort = useRef(null);
   const [notificationData, setNotificationData] = useState(null);
   const [pendingConversationId, setPendingConversationId] = useState('');
@@ -324,7 +327,15 @@ function DriverApp() {
         setTab('messages');
       }
     } else if (notificationData.screen === 'load' && notificationData.loadId) {
-      void openMessageLoad(String(notificationData.loadId));
+      const loadId = String(notificationData.loadId);
+      loads.get(loadId).then(({ data }) => {
+        openJob(data, null, 'jobs');
+        if (requiresDriverPaymentApproval(data) && data.paymentApproval?.driverId === user.id && data.paymentApproval?.status === 'pending') {
+          setActivePaymentModalLoad(data);
+        }
+      }).catch(err => {
+        openMessageLoad(loadId);
+      });
     }
     setNotificationData(null);
   }, [notificationData, openMessageLoad, user]);
@@ -335,11 +346,37 @@ function DriverApp() {
     try {
       const { data } = await loads.paymentApproval(load.id, load.paymentApproval.id, accept);
       setSelected(data);
+      setActivePaymentModalLoad(null);
       await Promise.all([fetchJobs(), fetchOffers()]);
       showToast(accept ? 'Ödeme şekli onaylandı; iş size atandı.' : 'Ödeme şekli reddedildi; kredi müşteriye iade edildi.', { type: 'success' });
     } catch (error) { showToast(apiError(error), { type: 'error', title: 'Ödeme kararı kaydedilemedi' }); }
     finally { setConfirmationLoading(false); }
   }, [confirmationLoading, fetchJobs, fetchOffers, showToast]);
+
+  const handleOpenPaymentModal = useCallback(load => {
+    if (load?.paymentApproval) {
+      setActivePaymentModalLoad(load);
+    }
+  }, []);
+
+  const handleDismissPaymentModal = useCallback(() => {
+    if (activePaymentModalLoad?.paymentApproval?.id) {
+      dismissedApprovalIds.current.add(activePaymentModalLoad.paymentApproval.id);
+    }
+    setActivePaymentModalLoad(null);
+  }, [activePaymentModalLoad]);
+
+  // Check for pending payment approvals on load/offer update or app active
+  useEffect(() => {
+    if (!user || user.role !== 'driver' || activePaymentModalLoad) return;
+    const isPendingApproval = load => requiresDriverPaymentApproval(load) && load.paymentApproval?.driverId === user.id && load.paymentApproval?.status === 'pending';
+    const pendingLoad = jobs.find(isPendingApproval) || myOffers.map(item => item?.load).find(load => load && isPendingApproval(load));
+    if (pendingLoad && pendingLoad.paymentApproval?.id) {
+      if (!dismissedApprovalIds.current.has(pendingLoad.paymentApproval.id)) {
+        setActivePaymentModalLoad(pendingLoad);
+      }
+    }
+  }, [activePaymentModalLoad, isActiveApp, jobs, myOffers, user]);
   const adjustOffer = useCallback(delta => {
     setOfferForm(current => ({ ...current, amount: String(Math.max(0, toFiniteNumber(current.amount) + delta)) }));
     setOfferErrors(current => ({ ...current, amount: '' }));
@@ -517,9 +554,9 @@ function DriverApp() {
   if (!user) return <AuthFlow auth={auth} saveSession={saveSession} apiError={apiError} onSession={setUser} allowedRole="driver" />;
 
   const body = tab === 'jobs'
-    ? <DriverJobs renderDetailInline={false} onItemLayout={listScroll.onItemLayout} onFilterChange={handleFilterChange} loading={jobsLoading} error={jobsError} jobs={jobs} selected={selected} selectedOffer={selectedOffer} form={offerForm} setForm={setOfferForm} formErrors={offerErrors} setFormErrors={setOfferErrors} saving={offerSaving} deliverySaving={deliverySaving} onOpen={load => openJob(load, null, 'jobs')} onClose={closeJobDetail} onAdjust={adjustOffer} onSaveOffer={saveOffer} onStatus={(load, status) => setConfirmation({ type: 'status', target: load, status })} onPaymentApproval={decidePayment} paymentSaving={confirmationLoading} onCompleteDelivery={performCompleteDelivery} retry={fetchJobs} onShowOffers={() => setTab('offers')} myOffers={myOffers} user={user} />
+    ? <DriverJobs renderDetailInline={false} onItemLayout={listScroll.onItemLayout} onFilterChange={handleFilterChange} loading={jobsLoading} error={jobsError} jobs={jobs} selected={selected} selectedOffer={selectedOffer} form={offerForm} setForm={setOfferForm} formErrors={offerErrors} setFormErrors={setOfferErrors} saving={offerSaving} deliverySaving={deliverySaving} onOpen={load => { openJob(load, null, 'jobs'); if (requiresDriverPaymentApproval(load) && load.paymentApproval?.driverId === user.id && load.paymentApproval?.status === 'pending') handleOpenPaymentModal(load); }} onClose={closeJobDetail} onAdjust={adjustOffer} onSaveOffer={saveOffer} onStatus={(load, status) => setConfirmation({ type: 'status', target: load, status })} onPaymentApproval={decidePayment} paymentSaving={confirmationLoading} onCompleteDelivery={performCompleteDelivery} retry={fetchJobs} onShowOffers={() => setTab('offers')} myOffers={myOffers} user={user} />
     : tab === 'offers'
-      ? <DriverOffers onItemLayout={listScroll.onItemLayout} loading={myOffersLoading} error={offersError} items={myOffers} onOpen={(load, offer) => openJob(load, offer, 'offers')} onWithdraw={offer => setConfirmation({ type: 'withdraw', target: offer })} retry={fetchOffers} />
+      ? <DriverOffers onItemLayout={listScroll.onItemLayout} loading={myOffersLoading} error={offersError} items={myOffers} onOpen={(load, offer) => { openJob(load, offer, 'offers'); if (requiresDriverPaymentApproval(load) && load.paymentApproval?.driverId === user.id && load.paymentApproval?.status === 'pending') handleOpenPaymentModal(load); }} onWithdraw={offer => setConfirmation({ type: 'withdraw', target: offer })} retry={fetchOffers} />
       : tab === 'messages'
         ? <ConversationCenter
             currentUser={user}
@@ -611,6 +648,14 @@ function DriverApp() {
         </KeyboardAvoidingView>
       )}
       {showBottomNav ? <BottomNav items={navItems} value={tab} onChange={value => { setTab(value); setAccountPage('home'); closeJobDetail(); }} bottomInset={insets.bottom} /> : null}
+      <PaymentApprovalModal
+        visible={Boolean(activePaymentModalLoad)}
+        load={activePaymentModalLoad}
+        loading={confirmationLoading}
+        onApprove={load => decidePayment(load, true)}
+        onReject={load => decidePayment(load, false)}
+        onClose={handleDismissPaymentModal}
+      />
       <ConfirmationModal
         visible={Boolean(confirmation)}
         title={confirmation?.type === 'withdraw' ? 'Teklifi geri çek' : confirmationAction?.title || 'Hesaptan çıkış'}
