@@ -1,8 +1,5 @@
 "use client";
 
-import React from "react";
-import { formatMoney } from "./StatusBadge";
-
 interface FilterBarProps {
   tab: string;
   query: string;

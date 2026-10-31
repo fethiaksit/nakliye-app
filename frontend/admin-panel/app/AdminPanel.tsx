@@ -3,7 +3,6 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import DriverWalletAccounts from "./DriverWalletAccounts";
 import DriverPaymentAccountAdmin from "./DriverPaymentAccountAdmin";
-import DriverWalletAdmin from "./DriverWalletAdmin";
 import CorporateWalletAdmin, { WalletCustomer } from "./CorporateWalletAdmin";
 import { sentry } from "./sentry";
 import { posthog } from "../../shared/posthog";
@@ -341,7 +340,9 @@ export default function AdminPanel() {
         openComplaintItems: [...openItems, ...reviewingItems],
         queueError: queueErrMsg,
       });
-    } catch {}
+    } catch {
+      /* ignore fetch errors during background dashboard stats sync */
+    }
   }
 
   async function mutate(
@@ -430,7 +431,16 @@ export default function AdminPanel() {
       </header>
 
       {mobileMenuOpen && (
-        <div className="sidebar-backdrop" onClick={() => setMobileMenuOpen(false)} />
+        <div
+          className="sidebar-backdrop"
+          onClick={() => setMobileMenuOpen(false)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape" || e.key === "Enter") setMobileMenuOpen(false);
+          }}
+          role="button"
+          tabIndex={0}
+          aria-label="Menüyü kapat"
+        />
       )}
 
       <main className="admin-shell">

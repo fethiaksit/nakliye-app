@@ -90,10 +90,11 @@ export default function AccountDeletionPage() {
 
         <form onSubmit={handleSubmit} style={{ display: "grid", gap: 16, maxWidth: 540, width: "100%", background: "#fbfcfb", padding: "clamp(16px, 4vw, 24px)", borderRadius: 12, border: "1px solid #e5ebe7", boxSizing: "border-box" }}>
           <div>
-            <label style={{ display: "block", fontSize: 13, fontWeight: 700, marginBottom: 5 }}>
+            <label htmlFor="email-input" style={{ display: "block", fontSize: 13, fontWeight: 700, marginBottom: 5 }}>
               Kayıtlı E-posta Adresi
             </label>
             <input
+              id="email-input"
               type="email" maxLength={254}
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -103,10 +104,11 @@ export default function AccountDeletionPage() {
           </div>
 
           <div>
-            <label style={{ display: "block", fontSize: 13, fontWeight: 700, marginBottom: 5 }}>
+            <label htmlFor="phone-input" style={{ display: "block", fontSize: 13, fontWeight: 700, marginBottom: 5 }}>
               Kayıtlı Cep Telefonu Numarası
             </label>
             <input
+              id="phone-input"
               type="tel" maxLength={32}
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
@@ -116,10 +118,11 @@ export default function AccountDeletionPage() {
           </div>
 
           <div>
-            <label style={{ display: "block", fontSize: 13, fontWeight: 700, marginBottom: 5 }}>
+            <label htmlFor="reason-input" style={{ display: "block", fontSize: 13, fontWeight: 700, marginBottom: 5 }}>
               Silme Gerekçesi (İsteğe bağlı)
             </label>
             <textarea
+              id="reason-input"
               rows={3} maxLength={1000}
               value={reason}
               onChange={(e) => setReason(e.target.value)}

@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useState } from "react";
-import { StatusBadge, formatDate, formatMoney, getInitials, getLabel } from "./StatusBadge";
+import { useState } from "react";
+import { StatusBadge, formatDate, getInitials, getLabel } from "./StatusBadge";
 import { WalletCustomer } from "../CorporateWalletAdmin";
 
 interface CorporateDrawerProps {
@@ -36,7 +36,6 @@ export function CorporateDetailDrawer({
   const address = data.address || data.companyAddress || data.company_address || data.company?.address || "Firma adresi girilmedi.";
   const corporateStatus = data.status || data.corporateStatus || "pending";
   const isApproved = corporateStatus === "approved";
-  const isRejected = corporateStatus === "rejected";
 
   const API_BASE = (process.env.NEXT_PUBLIC_ADMIN_API_URL || "http://localhost:8080/api/admin").replace(/\/$/, "");
 
@@ -201,10 +200,11 @@ export function CorporateDetailDrawer({
             Reddedilen firmalar için açıklama (ret sebebi) belirtilmesi zorunludur.
           </p>
 
-          <label style={{ display: "block", marginBottom: 8, fontWeight: 600, fontSize: 13 }}>
+          <label htmlFor="corporate-note-input" style={{ display: "block", marginBottom: 8, fontWeight: 600, fontSize: 13 }}>
             Yönetici Değerlendirme Notu / Ret Sebebi (rejectionReason):
           </label>
           <textarea
+            id="corporate-note-input"
             value={note}
             onChange={e => setNote(e.target.value)}
             placeholder="Başvuru onay veya ret notunuzu buraya yazın..."

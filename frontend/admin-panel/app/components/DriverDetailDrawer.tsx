@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useState, FormEvent } from "react";
-import { StatusBadge, formatDate, formatMoney, getInitials, getLabel } from "./StatusBadge";
+import { useState, FormEvent } from "react";
+import { StatusBadge, formatDate, getInitials, getLabel } from "./StatusBadge";
 import DriverWalletAdmin from "../DriverWalletAdmin";
 
 interface DriverDrawerProps {

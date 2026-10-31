@@ -1,8 +1,5 @@
 "use client";
 
-import React from "react";
-import { formatMoney } from "./StatusBadge";
-
 interface OperationMetricsProps {
   counts: Record<string, number>;
   onFilterClick: (tab: string, filter?: string) => void;
