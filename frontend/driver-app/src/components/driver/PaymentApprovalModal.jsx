@@ -1,10 +1,10 @@
 import React from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import Icon from '../../../shared/ui/Icon';
-import { AppButton } from '../../../shared/ui/primitives';
-import { colors, radius, shadows, spacing, typography } from '../../../shared/ui/theme';
-import { formatWalletCents } from '../../../shared/walletMoney.mjs';
+import Icon from '../../../../shared/ui/Icon';
+import { AppButton } from '../../../../shared/ui/primitives';
+import { colors, radius, shadows, spacing, typography } from '../../../../shared/ui/theme';
+import { formatWalletCents } from '../../../../shared/walletMoney.mjs';
 
 export default function PaymentApprovalModal({
   visible,
