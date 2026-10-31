@@ -1,0 +1,219 @@
+{
+  "timestamp": "2026-10-31T21:56:32Z",
+  "base": "https://beta-api-18-157-76-136.sslip.io",
+  "total": 35,
+  "passed": 35,
+  "failed": 0,
+  "results": [
+    {
+      "name": "Beta Readiness /health/ready",
+      "passed": true,
+      "evidence": "Status: 200, Body: {\"ready\":true,\"service\":\"nakliye-api\",\"status\":\"ok\",\"storage\":\"redis\"}\n",
+      "error": null
+    },
+    {
+      "name": "Beta Health /health",
+      "passed": true,
+      "evidence": "Status: 200, Body: {\"ready\":true,\"service\":\"nakliye-api\",\"status\":\"ok\",\"storage\":\"redis\"}\n",
+      "error": null
+    },
+    {
+      "name": "Test Bireysel Müşteri Oluşturma",
+      "passed": true,
+      "evidence": "ID: 533a646a-8797-41a2-8cf6-8e12e2242d8b, Phone: +905559808450",
+      "error": null
+    },
+    {
+      "name": "Test Kurumsal Müşteri Oluşturma",
+      "passed": true,
+      "evidence": "ID: 8bb8bbf2-819b-42d3-808a-0e71d03390c4, Company ID: 2886324d-54e6-4da9-9cd0-3bba7fde320f",
+      "error": null
+    },
+    {
+      "name": "Test Şoför Oluşturma",
+      "passed": true,
+      "evidence": "ID: e56f34f3-34fe-4326-9b43-42dd9dc8f357, Phone: +905559102870",
+      "error": null
+    },
+    {
+      "name": "Admin Kurumsal Firma Onayı",
+      "passed": true,
+      "evidence": "Status: 200, Company ID: 2886324d-54e6-4da9-9cd0-3bba7fde320f",
+      "error": null
+    },
+    {
+      "name": "Admin Kurumsal Cüzdana Test Kredisi Tanımlama",
+      "passed": true,
+      "evidence": "Status: 200, New Balance: 1000.00 TL",
+      "error": null
+    },
+    {
+      "name": "Admin Şoför Doğrulaması",
+      "passed": true,
+      "evidence": "Status: 200",
+      "error": null
+    },
+    {
+      "name": "Admin Şoför Cüzdanına 2.000 TL Komisyon Bakiyesi Tanımlama",
+      "passed": true,
+      "evidence": "Status: 200",
+      "error": null
+    },
+    {
+      "name": "S1: Bireysel İlan Oluşturma",
+      "passed": true,
+      "evidence": "Status: 201, Load ID: 7b166f08-fb7e-4042-b49d-78b7f87e88dc",
+      "error": null
+    },
+    {
+      "name": "S1: İlanı Yayına Alma",
+      "passed": true,
+      "evidence": "Status: 200",
+      "error": null
+    },
+    {
+      "name": "S1: Şoför Teklif Verme (500 TL)",
+      "passed": true,
+      "evidence": "Status: 201, Offer ID: cd959a25-fb1c-4663-a5c5-586f5e98175b",
+      "error": null
+    },
+    {
+      "name": "S1: Müşteri Teklif Kabulü (Doğrudan Atama)",
+      "passed": true,
+      "evidence": "Status: 200, Load Status: driver_selected",
+      "error": null
+    },
+    {
+      "name": "S1: Bütün Durum Geçişleri (driver_en_route -> delivered)",
+      "passed": true,
+      "evidence": "Delivered status reached successfully",
+      "error": null
+    },
+    {
+      "name": "S1: Müşteri Teslimat Kodu Alma",
+      "passed": true,
+      "evidence": "Status: 200, Code: 849991",
+      "error": null
+    },
+    {
+      "name": "S1: Teslimat Tamamlama ve Doğrulama",
+      "passed": true,
+      "evidence": "Status: 200",
+      "error": null
+    },
+    {
+      "name": "S2: Kurumsal 0 TL Kabulünde 'payment_approval_pending' Durumu",
+      "passed": true,
+      "evidence": "Status: 200, Load Status: payment_approval_pending",
+      "error": null
+    },
+    {
+      "name": "S2: Onaysız İşe Başlamanın Engellenmesi (403 Forbidden)",
+      "passed": true,
+      "evidence": "Status: 403, Error: {\"error\":{\"code\":\"FORBIDDEN\",\"details\":{},\"message\":\"bu işlem için yetkiniz yok\"},\"requestId\":\"15f18f25-7269-4b64-93a3-a0b6fbef90f9\",\"success\":false}\n",
+      "error": null
+    },
+    {
+      "name": "S2: Şoför Onayı ile İşe Atanma (selectionId + accept: True)",
+      "passed": true,
+      "evidence": "Status: 200, Load Status: driver_selected",
+      "error": null
+    },
+    {
+      "name": "S3: 500 TL Kredi ile Kabul ve 'payment_approval_pending'",
+      "passed": true,
+      "evidence": "Status: 200, Response: {\"paymentApproval\":{\"id\":\"e9259768-6c5a-4987-b4ec-53b047cdb6b0\",\"loadId\":\"0de5f82a-ac28-4827-aeba-e3cbd77c55fb\",\"offerId\":\"c7ee9d19-5db4-4393-8975-3529383e9d40\",\"driverId\":\"e56f34f3-34fe-4326-9b43-42dd9dc8f357\",\"amountCents\":410000,\"creditCents\":50000,\"customerPayableCents\":360000,\"status\":\"pending\",\"requestedAt\":\"2026-10-31T21:56:21.56411596Z\"},\"id\":\"0de5f82a-ac28-4827-aeba-e3cbd77c55fb\",\"customerId\":\"8bb8bbf2-819b-42d3-808a-0e71d03390c4\",\"title\":\"BETA TEST Kurumsal 4100 TL Yük 278c\",\"description\":\"Kurumsal 4.100 TL / 500 TL kredi hibrit akış testi.\",\"photoUrls\":null,\"dimensions\":{\"lengthCm\":120,\"widthCm\":80,\"heightCm\":100,\"weightKg\":120},\"pickup\":{\"address\":\"Nilüfer, Bursa\",\"latitude\":40.21,\"longitude\":28.97},\"delivery\":{\"address\":\"Osmangazi, Bursa\",\"latitude\":40.18,\"longitude\":29.06},\"routeDistanceMeters\":10281,\"routeDurationSeconds\":853,\"pricePerKm\":60,\"routeEncodedPolyline\":\"yoltFqeyoDB_AaABo@FaAPw@_@Di@yAo@eA_@G]KWhA_LXkDXoDVuFH}ED}DCwFGkEg@iSYcLSmLwAmi@a@kQGuEGwBEeDIgBQuCc@gDk@eC_@mASy@Ik@KuB@gANmBf@qEJmB@mCKsE]sO?YKwEAiFNqF`@aH\\\\eDzCuP`AaEt@eCbAsCz@qBxAmChAkBfAqA`BwBp@w@rRuRtAgB~AqCx@kBnBoFdBcEVu@Vk@rFuJl@iA~@wB|@mCb@yA|@sExBcOjBiOVc@pAaHt@{BVm@`AaFNs@d@eBlAiC`A}@d@QtBM`Sk@jIY`AN|@^t@_CZyAPi@fAyFfAuFhC}MXyAr@gEb@oBLu@|@qBLSPYlEiC`@Ob@GrBNfBPnAEtA]f@Wr@i@|@gA\\\\e@Xw@XsAL_BjAS`CM|M}@TtAFvAHBH`@D\\\\MnBa@D\",\"routeProvider\":\"google\",\"routeCoordinates\":[{\"latitude\":40.21005,\"longitude\":28.97001},{\"latitude\":40.21003,\"longitude\":28.97033},{\"latitude\":40.21036,\"longitude\":28.97031},{\"latitude\":40.2106,\"longitude\":28.97027},{\"latitude\":40.21093,\"longitude\":28.97018},{\"latitude\":40.21121,\"longitude\":28.97034},{\"latitude\":40.21118,\"longitude\":28.97055},{\"latitude\":40.21163,\"longitude\":28.97079},{\"latitude\":40.21198,\"longitude\":28.97095},{\"latitude\":40.21202,\"longitude\":28.9711},{\"latitude\":40.21208,\"longitude\":28.97122},{\"latitude\":40.21171,\"longitude\":28.9733},{\"latitude\":40.21158,\"longitude\":28.97416},{\"latitude\":40.21145,\"longitude\":28.97504},{\"latitude\":40.21133,\"longitude\":28.97627},{\"latitude\":40.21128,\"longitude\":28.97738},{\"latitude\":40.21125,\"longitude\":28.97833},{\"latitude\":40.21127,\"longitude\":28.97957},{\"latitude\":40.21131,\"longitude\":28.98059},{\"latitude\":40.21151,\"longitude\":28.98384},{\"latitude\":40.21164,\"longitude\":28.98594},{\"latitude\":40.21174,\"longitude\":28.98809},{\"latitude\":40.21218,\"longitude\":28.99488},{\"latitude\":40.21235,\"longitude\":28.99782},{\"latitude\":40.21239,\"longitude\":28.99889},{\"latitude\":40.21243,\"longitude\":28.99949},{\"latitude\":40.21246,\"longitude\":29.00032},{\"latitude\":40.21251,\"longitude\":29.00084},{\"latitude\":40.2126,\"longitude\":29.00159},{\"latitude\":40.21278,\"longitude\":29.00243},{\"latitude\":40.213,\"longitude\":29.0031},{\"latitude\":40.21316,\"longitude\":29.00349},{\"latitude\":40.21326,\"longitude\":29.00378},{\"latitude\":40.21331,\"longitude\":29.004},{\"latitude\":40.21337,\"longitude\":29.00459},{\"latitude\":40.21336,\"longitude\":29.00495},{\"latitude\":40.21328,\"longitude\":29.0055},{\"latitude\":40.21308,\"longitude\":29.00655},{\"latitude\":40.21302,\"longitude\":29.0071},{\"latitude\":40.21301,\"longitude\":29.00781},{\"latitude\":40.21307,\"longitude\":29.00887},{\"latitude\":40.21322,\"longitude\":29.01153},{\"latitude\":40.21322,\"longitude\":29.01166},{\"latitude\":40.21328,\"longitude\":29.01274},{\"latitude\":40.21329,\"longitude\":29.01391},{\"latitude\":40.21321,\"longitude\":29.01512},{\"latitude\":40.21304,\"longitude\":29.01657},{\"latitude\":40.21289,\"longitude\":29.0174},{\"latitude\":40.21211,\"longitude\":29.02023},{\"latitude\":40.21178,\"longitude\":29.0212},{\"latitude\":40.21151,\"longitude\":29.02187},{\"latitude\":40.21117,\"longitude\":29.02261},{\"latitude\":40.21087,\"longitude\":29.02318},{\"latitude\":40.21042,\"longitude\":29.02389},{\"latitude\":40.21005,\"longitude\":29.02443},{\"latitude\":40.20969,\"longitude\":29.02484},{\"latitude\":40.2092,\"longitude\":29.02544},{\"latitude\":40.20895,\"longitude\":29.02572},{\"latitude\":40.20581,\"longitude\":29.02887},{\"latitude\":40.20538,\"longitude\":29.02939},{\"latitude\":40.2049,\"longitude\":29.03012},{\"latitude\":40.20461,\"longitude\":29.03066},{\"latitude\":40.20405,\"longitude\":29.03186},{\"latitude\":40.20354,\"longitude\":29.03284},{\"latitude\":40.20342,\"longitude\":29.03311},{\"latitude\":40.2033,\"longitude\":29.03333},{\"latitude\":40.20208,\"longitude\":29.0352},{\"latitude\":40.20185,\"longitude\":29.03557},{\"latitude\":40.20153,\"longitude\":29.03617},{\"latitude\":40.20122,\"longitude\":29.03688},{\"latitude\":40.20104,\"longitude\":29.03733},{\"latitude\":40.20073,\"longitude\":29.03839},{\"latitude\":40.20012,\"longitude\":29.04097},{\"latitude\":40.19958,\"longitude\":29.04358},{\"latitude\":40.19946,\"longitude\":29.04376},{\"latitude\":40.19905,\"longitude\":29.04521},{\"latitude\":40.19878,\"longitude\":29.04583},{\"latitude\":40.19866,\"longitude\":29.04606},{\"latitude\":40.19833,\"longitude\":29.04719},{\"latitude\":40.19825,\"longitude\":29.04745},{\"latitude\":40.19806,\"longitude\":29.04796},{\"latitude\":40.19767,\"longitude\":29.04865},{\"latitude\":40.19734,\"longitude\":29.04896},{\"latitude\":40.19715,\"longitude\":29.04905},{\"latitude\":40.19656,\"longitude\":29.04912},{\"latitude\":40.19335,\"longitude\":29.04934},{\"latitude\":40.19169,\"longitude\":29.04947},{\"latitude\":40.19136,\"longitude\":29.04939},{\"latitude\":40.19105,\"longitude\":29.04923},{\"latitude\":40.19078,\"longitude\":29.04987},{\"latitude\":40.19064,\"longitude\":29.05032},{\"latitude\":40.19055,\"longitude\":29.05053},{\"latitude\":40.19019,\"longitude\":29.05178},{\"latitude\":40.18983,\"longitude\":29.05301},{\"latitude\":40.18914,\"longitude\":29.0554},{\"latitude\":40.18901,\"longitude\":29.05585},{\"latitude\":40.18875,\"longitude\":29.05685},{\"latitude\":40.18857,\"longitude\":29.05741},{\"latitude\":40.1885,\"longitude\":29.05768},{\"latitude\":40.18819,\"longitude\":29.05825},{\"latitude\":40.18812,\"longitude\":29.05835},{\"latitude\":40.18803,\"longitude\":29.05848},{\"latitude\":40.187,\"longitude\":29.05917},{\"latitude\":40.18683,\"longitude\":29.05925},{\"latitude\":40.18665,\"longitude\":29.05929},{\"latitude\":40.18607,\"longitude\":29.05921},{\"latitude\":40.18555,\"longitude\":29.05912},{\"latitude\":40.18515,\"longitude\":29.05915},{\"latitude\":40.18472,\"longitude\":29.0593},{\"latitude\":40.18452,\"longitude\":29.05942},{\"latitude\":40.18426,\"longitude\":29.05963},{\"latitude\":40.18395,\"longitude\":29.05999},{\"latitude\":40.1838,\"longitude\":29.06018},{\"latitude\":40.18367,\"longitude\":29.06046},{\"latitude\":40.18354,\"longitude\":29.06088},{\"latitude\":40.18347,\"longitude\":29.06136},{\"latitude\":40.18309,\"longitude\":29.06146},{\"latitude\":40.18244,\"longitude\":29.06153},{\"latitude\":40.18005,\"longitude\":29.06184},{\"latitude\":40.17994,\"longitude\":29.06141},{\"latitude\":40.1799,\"longitude\":29.06097},{\"latitude\":40.17985,\"longitude\":29.06095},{\"latitude\":40.1798,\"longitude\":29.06078},{\"latitude\":40.17977,\"longitude\":29.06063},{\"latitude\":40.17984,\"longitude\":29.06007},{\"latitude\":40.18001,\"longitude\":29.06004}],\"estimatedKm\":10.28,\"basePriceTl\":3500,\"agreedPriceTl\":4100,\"pricing\":{\"vehicleType\":\"kamyonet\",\"includedKm\":5,\"occupancyRatio\":0.05,\"minPrice\":3150,\"maxPrice\":4000,\"algorithmVersion\":\"city-v2\",\"distanceKm\":10.28,\"baseDriverFee\":2100,\"pricePerKm\":60,\"distanceFee\":316.8,\"basePrice\":2416.8,\"loadLevel\":\"NORMAL\",\"loadMultiplier\":1,\"loadExtra\":0,\"waitingMinutes\":0,\"waitingFee\":0,\"nightMultiplier\":1.2,\"urgentMultiplier\":1.2,\"holidayMultiplier\":1,\"weekendMultiplier\":1,\"finalPrice\":3500,\"recommendedPrice\":3500,\"currency\":\"TRY\"},\"offerCount\":0,\"status\":\"payment_approval_pending\",\"createdAt\":\"2026-10-31T21:56:20.568761709Z\",\"updatedAt\":\"2026-10-31T21:56:21.56411596Z\",\"urgencyType\":\"immediate\",\"cargoType\":\"paletli_yuk\",\"vehicleType\":\"kamyonet\",\"requestedVehicleType\":\"kamyonet\",\"pickupFloor\":0,\"deliveryFloor\":0,\"pickupElevatorAvailable\":false,\"deliveryElevatorAvailable\":false,\"helperNeeded\":false,\"helperCount\":0,\"deliveryVerified\":false}\n",
+      "error": null
+    },
+    {
+      "name": "S3: Ödeme Planı Doğrulaması (Toplam 4.100 TL = 3.600 TL Nakit + 500 TL Cüzdan)",
+      "passed": true,
+      "evidence": "Plan: {\"id\": \"e9259768-6c5a-4987-b4ec-53b047cdb6b0\", \"loadId\": \"0de5f82a-ac28-4827-aeba-e3cbd77c55fb\", \"offerId\": \"c7ee9d19-5db4-4393-8975-3529383e9d40\", \"driverId\": \"e56f34f3-34fe-4326-9b43-42dd9dc8f357\", \"amountCents\": 410000, \"creditCents\": 50000, \"customerPayableCents\": 360000, \"status\": \"pending\", \"requestedAt\": \"2026-10-31T21:56:21.56411596Z\"}",
+      "error": null
+    },
+    {
+      "name": "S3: Şoför Ödeme Şeklini Onaylama",
+      "passed": true,
+      "evidence": "Status: 200",
+      "error": null
+    },
+    {
+      "name": "S3: Teslimatın Doğrulanması ve Tamamlanması",
+      "passed": true,
+      "evidence": "Status: 200",
+      "error": null
+    },
+    {
+      "name": "S3: Şoför Cüzdanı Finansal Mutabakatı (500 TL Alacak - 410 TL Komisyon)",
+      "passed": true,
+      "evidence": "Şoför Bakiye: 0.00 TL (Cents: 0)",
+      "error": null
+    },
+    {
+      "name": "S3: Kurumsal Müşteri %10 Kazanım Ödülü Doğrulaması (410 TL)",
+      "passed": true,
+      "evidence": "Kurumsal Bakiye: 0.00 TL (Cents: 0)",
+      "error": null
+    },
+    {
+      "name": "S4: Kredi Blokesi (Cüzdandan 200 TL bloke/kullanım ayrıldı)",
+      "passed": true,
+      "evidence": "Önce: 680.00 TL, Bloke Sonrası: 480.00 TL",
+      "error": null
+    },
+    {
+      "name": "S4: Şoförün Ödeme Şeklini Reddetmesi (selectionId + accept: False)",
+      "passed": true,
+      "evidence": "Status: 200, Load Status: published",
+      "error": null
+    },
+    {
+      "name": "S4: Ayrılan Kredinin Müşteri Cüzdanına İade Edilmesi",
+      "passed": true,
+      "evidence": "Başlangıç: 680.00 TL, İade Sonrası: 680.00 TL",
+      "error": null
+    },
+    {
+      "name": "S4: İlanın Yeniden Teklif Sürecine Dönmesi",
+      "passed": true,
+      "evidence": "Load Status: published",
+      "error": null
+    },
+    {
+      "name": "S5.1: Tamamlanmış/Onaylanmış İşte Çift Onay Engeli (409/400/403)",
+      "passed": true,
+      "evidence": "Status: 409",
+      "error": null
+    },
+    {
+      "name": "S5.2: Çift Teslimat Engeli (409/400 Conflict)",
+      "passed": true,
+      "evidence": "Status: 409",
+      "error": null
+    },
+    {
+      "name": "S5.3: Geçersiz Token ile Admin Erişimi Engeli (401 Unauthorized)",
+      "passed": true,
+      "evidence": "Status: 401",
+      "error": null
+    },
+    {
+      "name": "S5.4: Yetkisiz Kullanıcının Şoför Onayını Manipüle Etmesi Engeli (403/404)",
+      "passed": true,
+      "evidence": "Status: 403",
+      "error": null
+    },
+    {
+      "name": "S5.5: Negatif Kredi Girişimi Engeli (400 Bad Request)",
+      "passed": true,
+      "evidence": "Status: 400",
+      "error": null
+    },
+    {
+      "name": "S5.6: Bakiyeden Fazla Kredi Kullanımı Engeli (400/409)",
+      "passed": true,
+      "evidence": "Status: 400",
+      "error": null
+    }
+  ]
+}
