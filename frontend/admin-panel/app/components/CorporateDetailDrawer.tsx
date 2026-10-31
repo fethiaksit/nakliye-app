@@ -26,7 +26,7 @@ export function CorporateDetailDrawer({
   const [activeTab, setActiveTab] = useState<CorporateTab>("company");
 
   const corporateId = data.id || data.corporateId || data.corporate_id;
-  const ownerCustomerId = data.company?.ownerCustomerId || data.ownerCustomerId || data.userId || data.user_id || corporateId;
+  const ownerCustomerId = data.company?.ownerCustomerId || data.ownerCustomerId || data.userId || data.user_id || "";
   const companyName = data.companyName || data.company_name || data.company?.name || data.name || "—";
   const authorizedPerson = data.authorizedPerson || data.authorized_person || data.company?.authorizedPerson || data.name || "—";
   const phone = data.phone || data.company?.phone || "—";
@@ -180,7 +180,15 @@ export function CorporateDetailDrawer({
       {/* Tab: Wallet */}
       {activeTab === "wallet" && isApproved && (
         <div>
-          <WalletCustomer customerId={ownerCustomerId} request={request} />
+          {ownerCustomerId ? (
+            <WalletCustomer customerId={ownerCustomerId} request={request} />
+          ) : (
+            <div style={{ padding: 20, textAlign: "center", background: "#f8faf8", borderRadius: 10, border: "1px dashed var(--line)" }}>
+              <p style={{ margin: 0, color: "var(--muted)", fontSize: 13 }}>
+                Bu kurumsal firmanın cüzdan hesap sahibi (ownerCustomerId) tespit edilemedi. Kullanıcı kaydını kontrol edin.
+              </p>
+            </div>
+          )}
         </div>
       )}
 

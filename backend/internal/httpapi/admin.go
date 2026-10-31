@@ -305,7 +305,11 @@ func (a *API) adminDashboard(w http.ResponseWriter, r *http.Request) {
 		serverError(w, err)
 		return
 	}
-	deletionRequests, _ := a.store.ListAccountDeletionRequests("pending")
+	deletionRequests, delErr := a.store.ListAccountDeletionRequests("pending")
+	if delErr != nil {
+		serverError(w, delErr)
+		return
+	}
 	counts := dashboardCounts(users, loads, complaints, deletionRequests)
 	queue := make([]map[string]any, 0)
 	for _, user := range users {

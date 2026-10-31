@@ -120,10 +120,12 @@ interface ActionQueueItem {
 
 interface ActionQueueProps {
   items: ActionQueueItem[];
+  queueError?: string;
+  onRetry?: () => void;
   onOpenItem: (kind: string, id: string) => void;
 }
 
-export function ActionQueue({ items, onOpenItem }: ActionQueueProps) {
+export function ActionQueue({ items, queueError, onRetry, onOpenItem }: ActionQueueProps) {
   return (
     <div className="action-queue-section">
       <div className="action-queue-header">
@@ -136,7 +138,18 @@ export function ActionQueue({ items, onOpenItem }: ActionQueueProps) {
         <span className="badge-pill badge-green">Öncelikli Kuyruk</span>
       </div>
 
-      {items.length === 0 ? (
+      {queueError ? (
+        <div style={{ padding: "24px 20px", textAlign: "center", background: "#fdf0ee", border: "1px solid #f7c5c0", borderRadius: 12 }}>
+          <div style={{ fontSize: 24, marginBottom: 6 }}>⚠️</div>
+          <b style={{ color: "var(--red)" }}>Bazı işlem kuyrukları yüklenirken hata oluştu:</b>
+          <p style={{ margin: "4px 0 12px", fontSize: 13, color: "#8a1f18" }}>{queueError}</p>
+          {onRetry && (
+            <button type="button" className="outline-button" onClick={onRetry}>
+              Yeniden Dene
+            </button>
+          )}
+        </div>
+      ) : items.length === 0 ? (
         <div style={{ padding: "32px 20px", textAlign: "center", color: "var(--muted)" }}>
           <div style={{ fontSize: 32, marginBottom: 8 }}>✅</div>
           <b>Harika! Bekleyen acil işlem bulunmuyor.</b>

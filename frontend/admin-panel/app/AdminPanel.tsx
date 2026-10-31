@@ -187,16 +187,29 @@ export default function AdminPanel() {
             throw new Error("Kurumsal müşteri listesi API yanıtı geçersiz veya boş.");
           setData(result);
         } else if (target === "dashboard") {
-          const [res, corpRes, complaintRes] = await Promise.all([
+          let queueErrMsg = "";
+          const [res, corpRes, complaintOpenRes, complaintReviewRes] = await Promise.all([
             request(pathForTab(target, offset)),
-            request("/corporate-accounts?status=pending").catch(() => null),
-            request("/complaints?status=open").catch(() => null),
+            request("/corporate-accounts?status=pending").catch(e => {
+              queueErrMsg = `Kurumsal başvurular alınamadı: ${e.message}`;
+              return null;
+            }),
+            request("/complaints?status=open").catch(e => {
+              queueErrMsg = queueErrMsg ? `${queueErrMsg}; Açık şikâyetler alınamadı: ${e.message}` : `Açık şikâyetler alınamadı: ${e.message}`;
+              return null;
+            }),
+            request("/complaints?status=reviewing").catch(() => null),
           ]);
           if (generation !== loadGeneration.current) return;
+          const openItems = complaintOpenRes?.items || [];
+          const reviewingItems = complaintReviewRes?.items || [];
+          const combinedComplaints = [...openItems, ...reviewingItems];
+
           const combinedData = {
             ...res,
             pendingCorporateItems: corpRes?.items || [],
-            openComplaintItems: complaintRes?.items || [],
+            openComplaintItems: combinedComplaints,
+            queueError: queueErrMsg,
           };
           setData(combinedData);
           setDashboardStats(combinedData);
@@ -217,15 +230,26 @@ export default function AdminPanel() {
 
   useEffect(() => {
     if (hydrated && token && !dashboardStats) {
+      let queueErrMsg = "";
       Promise.all([
         request("/dashboard"),
-        request("/corporate-accounts?status=pending").catch(() => null),
-        request("/complaints?status=open").catch(() => null),
-      ]).then(([dash, corp, comp]) => {
+        request("/corporate-accounts?status=pending").catch(e => {
+          queueErrMsg = `Kurumsal başvurular alınamadı: ${e.message}`;
+          return null;
+        }),
+        request("/complaints?status=open").catch(e => {
+          queueErrMsg = queueErrMsg ? `${queueErrMsg}; Açık şikâyetler alınamadı: ${e.message}` : `Açık şikâyetler alınamadı: ${e.message}`;
+          return null;
+        }),
+        request("/complaints?status=reviewing").catch(() => null),
+      ]).then(([dash, corp, compOpen, compReview]) => {
+        const openItems = compOpen?.items || [];
+        const reviewingItems = compReview?.items || [];
         setDashboardStats({
           ...dash,
           pendingCorporateItems: corp?.items || [],
-          openComplaintItems: comp?.items || [],
+          openComplaintItems: [...openItems, ...reviewingItems],
+          queueError: queueErrMsg,
         });
       }).catch(() => {});
     }
@@ -294,6 +318,32 @@ export default function AdminPanel() {
     }
   }
 
+  async function refreshDashboardStats() {
+    let queueErrMsg = "";
+    try {
+      const [dash, corp, compOpen, compReview] = await Promise.all([
+        request("/dashboard"),
+        request("/corporate-accounts?status=pending").catch(e => {
+          queueErrMsg = `Kurumsal başvurular alınamadı: ${e.message}`;
+          return null;
+        }),
+        request("/complaints?status=open").catch(e => {
+          queueErrMsg = queueErrMsg ? `${queueErrMsg}; Açık şikâyetler alınamadı: ${e.message}` : `Açık şikâyetler alınamadı: ${e.message}`;
+          return null;
+        }),
+        request("/complaints?status=reviewing").catch(() => null),
+      ]);
+      const openItems = compOpen?.items || [];
+      const reviewingItems = compReview?.items || [];
+      setDashboardStats({
+        ...dash,
+        pendingCorporateItems: corp?.items || [],
+        openComplaintItems: [...openItems, ...reviewingItems],
+        queueError: queueErrMsg,
+      });
+    } catch {}
+  }
+
   async function mutate(
     path: string,
     payload: AnyRecord,
@@ -307,9 +357,7 @@ export default function AdminPanel() {
       setNotice(success);
       setActionNote("");
       await loadTab(tab);
-      request("/dashboard")
-        .then(res => setDashboardStats(res))
-        .catch(() => {});
+      void refreshDashboardStats();
       if (refreshDetail) await openDetail(...refreshDetail);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "İşlem tamamlanamadı.");
@@ -337,6 +385,7 @@ export default function AdminPanel() {
           : "Hesap silme talebi reddedildi."
       );
       await loadTab(tab);
+      void refreshDashboardStats();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "İşlem tamamlanamadı.");
     } finally {
@@ -521,6 +570,7 @@ export default function AdminPanel() {
                 if (targetFilter !== undefined) setFilter(targetFilter);
               }}
               openDetail={openDetail}
+              onRetry={() => void loadTab("dashboard")}
             />
           ) : tab === "corporate-wallets" ? (
             <CorporateWalletAdmin request={request} items={data?.items || []} />
@@ -645,10 +695,12 @@ function OperationCenterView({
   data,
   onFilterClick,
   openDetail,
+  onRetry,
 }: {
   data: AnyRecord;
   onFilterClick: (tab: string, filter?: string) => void;
   openDetail: (kind: DetailKind, id: string) => void;
+  onRetry?: () => void;
 }) {
   const counts = data.counts || {};
   const max = Math.max(
@@ -694,16 +746,17 @@ function OperationCenterView({
     });
   });
 
-  // 3. Open complaints
+  // 3. Open and Reviewing complaints
   (data.openComplaintItems || []).forEach((item: AnyRecord) => {
     const comp = item.complaint || item;
+    const isReviewing = comp.status === "reviewing";
     actionQueueItems.push({
       id: comp.id,
       kind: "complaint",
       title: `Şikâyet: ${getLabel(comp.reason)}`,
-      subtitle: `${item.reporter?.name || "Kullanıcı"} ➔ ${item.reportedUser?.name || "Kullanıcı"}`,
-      badge: "Müdahale Gerekli",
-      badgeColor: "badge-red",
+      subtitle: `${item.reporter?.name || "Kullanıcı"} ➔ ${item.reportedUser?.name || "Kullanıcı"} (${isReviewing ? "İnceleniyor" : "Açık"})`,
+      badge: isReviewing ? "İnceleniyor" : "Açık Şikâyet",
+      badgeColor: isReviewing ? "badge-amber" : "badge-red",
       avatarChar: "⚠️",
     });
   });
@@ -716,6 +769,8 @@ function OperationCenterView({
       {/* Prioritized Action Queue with drivers, corporate apps, and complaints */}
       <ActionQueue
         items={actionQueueItems as any}
+        queueError={data.queueError}
+        onRetry={onRetry}
         onOpenItem={(kind, id) => openDetail(kind as DetailKind, id)}
       />
 
