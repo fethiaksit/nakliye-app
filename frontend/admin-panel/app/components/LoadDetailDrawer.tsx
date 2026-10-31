@@ -11,18 +11,7 @@ interface LoadDrawerProps {
   mutate: (path: string, payload: any, success: string, refreshDetail?: any) => Promise<void>;
 }
 
-const pipelineSteps = [
-  { id: "published", label: "İlan Yayında" },
-  { id: "offers_received", label: "Teklif Alındı" },
-  { id: "payment_approval_pending", label: "Ödeme Onayı" },
-  { id: "driver_selected", label: "Şoför Seçildi" },
-  { id: "driver_en_route", label: "Şoför Yolda" },
-  { id: "at_pickup", label: "Yükleme Noktasında" },
-  { id: "picked_up", label: "Yük Alındı" },
-  { id: "delivered", label: "Teslim Edildi" },
-  { id: "completed", label: "Tamamlandı" },
-];
-
+// Next status map aligned with backend CanTransition and NextLoadStatus
 const nextLoadStatus: Record<string, string> = {
   driver_selected: "driver_en_route",
   driver_en_route: "at_pickup",
@@ -31,6 +20,32 @@ const nextLoadStatus: Record<string, string> = {
   en_route_to_delivery: "delivered",
   delivered: "completed",
 };
+
+function getPipelineSteps(isCorporateFlow: boolean) {
+  if (isCorporateFlow) {
+    return [
+      { id: "published", label: "İlan Yayında" },
+      { id: "payment_approval_pending", label: "Şoför Ödeme Onayı" },
+      { id: "driver_selected", label: "Şoför Seçildi" },
+      { id: "driver_en_route", label: "Şoför Yolda" },
+      { id: "at_pickup", label: "Yükleme Noktasında" },
+      { id: "picked_up", label: "Yük Alındı" },
+      { id: "en_route_to_delivery", label: "Teslimat Yolunda" },
+      { id: "delivered", label: "Teslim Edildi" },
+      { id: "completed", label: "Tamamlandı" },
+    ];
+  }
+  return [
+    { id: "published", label: "İlan Yayında" },
+    { id: "driver_selected", label: "Şoför Seçildi" },
+    { id: "driver_en_route", label: "Şoför Yolda" },
+    { id: "at_pickup", label: "Yükleme Noktasında" },
+    { id: "picked_up", label: "Yük Alındı" },
+    { id: "en_route_to_delivery", label: "Teslimat Yolunda" },
+    { id: "delivered", label: "Teslim Edildi" },
+    { id: "completed", label: "Tamamlandı" },
+  ];
+}
 
 function getAdminStatusOptions(load: any) {
   if (["completed", "cancelled"].includes(load.status)) return [];
@@ -53,8 +68,23 @@ export function LoadDetailDrawer({
   const [targetStatus, setTargetStatus] = useState(options[0] || "");
   const selectedStatus = options.includes(targetStatus) ? targetStatus : options[0] || "";
 
+  // Normalize legacy status if any (e.g. in_transit -> en_route_to_delivery)
+  const canonicalStatus = load.status === "in_transit"
+    ? "en_route_to_delivery"
+    : load.status === "open" || load.status === "offers_received"
+    ? "published"
+    : load.status;
+
+  const isCorporateFlow = Boolean(
+    load.corporateCompanyId ||
+    load.paymentApproval ||
+    data.customer?.accountType === "corporate" ||
+    data.customer?.role === "corporate"
+  );
+  const steps = getPipelineSteps(isCorporateFlow);
+
   // Pipeline step index
-  const currentStepIdx = pipelineSteps.findIndex(s => s.id === load.status);
+  const currentStepIdx = steps.findIndex(s => s.id === canonicalStatus);
 
   // Price calculations
   const totalAmountTl = load.agreedPriceTl || load.basePriceTl || 0;
@@ -90,11 +120,16 @@ export function LoadDetailDrawer({
 
       {/* Modern Pipeline Stepper */}
       <div style={{ marginBottom: 18 }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 6 }}>
-          Taşıma İlerleme Süreci
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase" }}>
+            Taşıma İlerleme Süreci
+          </div>
+          <span className="badge-pill badge-gray" style={{ fontSize: 11 }}>
+            {isCorporateFlow ? "🏢 Kurumsal Akış" : "👤 Bireysel Akış"}
+          </span>
         </div>
         <div className="status-pipeline">
-          {pipelineSteps.map((step, idx) => {
+          {steps.map((step, idx) => {
             const isCompleted = currentStepIdx > idx;
             const isCurrent = currentStepIdx === idx;
             return (
@@ -105,7 +140,7 @@ export function LoadDetailDrawer({
                   {isCompleted ? "✓ " : `${idx + 1}. `}
                   {step.label}
                 </div>
-                {idx < pipelineSteps.length - 1 && <span className="pipeline-arrow">›</span>}
+                {idx < steps.length - 1 && <span className="pipeline-arrow">›</span>}
               </React.Fragment>
             );
           })}

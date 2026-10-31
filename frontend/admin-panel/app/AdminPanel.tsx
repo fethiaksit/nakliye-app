@@ -186,13 +186,24 @@ export default function AdminPanel() {
           if (!result || !Array.isArray(result.items))
             throw new Error("Kurumsal müşteri listesi API yanıtı geçersiz veya boş.");
           setData(result);
+        } else if (target === "dashboard") {
+          const [res, corpRes, complaintRes] = await Promise.all([
+            request(pathForTab(target, offset)),
+            request("/corporate-accounts?status=pending").catch(() => null),
+            request("/complaints?status=open").catch(() => null),
+          ]);
+          if (generation !== loadGeneration.current) return;
+          const combinedData = {
+            ...res,
+            pendingCorporateItems: corpRes?.items || [],
+            openComplaintItems: complaintRes?.items || [],
+          };
+          setData(combinedData);
+          setDashboardStats(combinedData);
         } else {
           const res = await request(pathForTab(target, offset));
           if (generation !== loadGeneration.current) return;
           setData(res);
-          if (target === "dashboard") {
-            setDashboardStats(res);
-          }
         }
       } catch (reason) {
         if (generation === loadGeneration.current)
@@ -206,9 +217,17 @@ export default function AdminPanel() {
 
   useEffect(() => {
     if (hydrated && token && !dashboardStats) {
-      request("/dashboard")
-        .then(res => setDashboardStats(res))
-        .catch(() => {});
+      Promise.all([
+        request("/dashboard"),
+        request("/corporate-accounts?status=pending").catch(() => null),
+        request("/complaints?status=open").catch(() => null),
+      ]).then(([dash, corp, comp]) => {
+        setDashboardStats({
+          ...dash,
+          pendingCorporateItems: corp?.items || [],
+          openComplaintItems: comp?.items || [],
+        });
+      }).catch(() => {});
     }
   }, [hydrated, token, dashboardStats, request]);
 
@@ -637,15 +656,67 @@ function OperationCenterView({
     ...(data.daily || []).map((day: AnyRecord) => day.newLoads + day.newUsers + day.complaints)
   );
 
+  // Combine verificationQueue (drivers), pending corporate applications, and open complaints into a unified prioritized queue
+  const actionQueueItems: {
+    id: string;
+    kind: DetailKind;
+    title: string;
+    subtitle: string;
+    badge: string;
+    badgeColor: string;
+    avatarChar: string;
+  }[] = [];
+
+  // 1. Pending drivers
+  (data.verificationQueue || []).forEach((driver: AnyRecord) => {
+    actionQueueItems.push({
+      id: driver.id,
+      kind: "driver",
+      title: driver.name || "Şoför Başvurusu",
+      subtitle: `${driver.phone || driver.email || "İletişim yok"} · Şoför Belge Doğrulaması`,
+      badge: "Doğrulama Bekliyor",
+      badgeColor: "badge-amber",
+      avatarChar: (driver.name || "Ş")[0]?.toUpperCase() || "Ş",
+    });
+  });
+
+  // 2. Pending corporate applications
+  (data.pendingCorporateItems || []).forEach((corp: AnyRecord) => {
+    const name = corp.companyName || corp.company?.name || corp.name || "Kurumsal Firma";
+    actionQueueItems.push({
+      id: corp.id,
+      kind: "corporate-application",
+      title: name,
+      subtitle: `${corp.authorizedPerson || corp.company?.authorizedPerson || "Yetkili"} · Vergi No: ${corp.taxNumber || corp.company?.taxNumber || "—"}`,
+      badge: "Firma Onayı Bekliyor",
+      badgeColor: "badge-blue",
+      avatarChar: "🏢",
+    });
+  });
+
+  // 3. Open complaints
+  (data.openComplaintItems || []).forEach((item: AnyRecord) => {
+    const comp = item.complaint || item;
+    actionQueueItems.push({
+      id: comp.id,
+      kind: "complaint",
+      title: `Şikâyet: ${getLabel(comp.reason)}`,
+      subtitle: `${item.reporter?.name || "Kullanıcı"} ➔ ${item.reportedUser?.name || "Kullanıcı"}`,
+      badge: "Müdahale Gerekli",
+      badgeColor: "badge-red",
+      avatarChar: "⚠️",
+    });
+  });
+
   return (
     <div>
       {/* 6-Core Actionable Metric Cards */}
       <OperationMetrics counts={counts} onFilterClick={onFilterClick} />
 
-      {/* Prioritized Action Queue */}
+      {/* Prioritized Action Queue with drivers, corporate apps, and complaints */}
       <ActionQueue
-        verificationQueue={data.verificationQueue || []}
-        onOpenDriver={id => openDetail("driver", id)}
+        items={actionQueueItems as any}
+        onOpenItem={(kind, id) => openDetail(kind as DetailKind, id)}
       />
 
       {/* Activity Chart & Live Stats */}
@@ -656,7 +727,7 @@ function OperationCenterView({
               <p>SON 7 GÜN</p>
               <h2>Günlük Platform Hareketi</h2>
             </div>
-            <span className="badge-pill badge-green">Canlı İstatistik</span>
+            <span className="badge-pill badge-green">İstatistik Grafiği</span>
           </div>
           <div className="chart">
             {(data.daily || []).map((day: AnyRecord) => {

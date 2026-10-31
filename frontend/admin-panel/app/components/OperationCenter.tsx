@@ -84,35 +84,46 @@ export function OperationMetrics({ counts, onFilterClick }: OperationMetricsProp
           <span className="op-stat-title">Finansal İşlemler</span>
           <span className="op-stat-icon" style={{ background: "#f0f2f1", color: "#4b5550" }}>💳</span>
         </div>
-        <div className="op-stat-number">{counts.drivers || 0}</div>
+        <div className="op-stat-number" style={{ fontSize: 20, marginTop: 16 }}>Yönetim →</div>
         <div className="op-stat-desc">Şoför & Kurumsal cüzdan kontrolleri</div>
       </button>
 
       <button
         type="button"
-        className={`op-stat-card ${accountDeletions > 0 ? "alert-card" : ""}`}
+        className={`op-stat-card ${typeof accountDeletions === "number" && accountDeletions > 0 ? "alert-card" : ""}`}
         onClick={() => onFilterClick("account-deletions", "pending")}
       >
         <div className="op-stat-header">
           <span className="op-stat-title">Hesap Silme Talebi</span>
           <span className="op-stat-icon" style={{ background: "#fdf0ee", color: "#a42c22" }}>🗑️</span>
         </div>
-        <div className="op-stat-number">{accountDeletions}</div>
+        <div className="op-stat-number">{typeof accountDeletions === "number" ? accountDeletions : "—"}</div>
         <div className="op-stat-desc">
-          {accountDeletions > 0 ? "KVKK/GDPR incelemesi bekliyor" : "Bekleyen talep yok"}
+          {typeof accountDeletions === "number"
+            ? (accountDeletions > 0 ? "KVKK/GDPR incelemesi bekliyor" : "Bekleyen talep yok")
+            : "Talepleri incele"}
         </div>
       </button>
     </div>
   );
 }
 
-interface ActionQueueProps {
-  verificationQueue: any[];
-  onOpenDriver: (id: string) => void;
-  onOpenCorporate?: (id: string) => void;
+interface ActionQueueItem {
+  id: string;
+  kind: "driver" | "corporate-application" | "complaint" | "account-deletion";
+  title: string;
+  subtitle: string;
+  badge: string;
+  badgeColor: string;
+  avatarChar: string;
 }
 
-export function ActionQueue({ verificationQueue, onOpenDriver }: ActionQueueProps) {
+interface ActionQueueProps {
+  items: ActionQueueItem[];
+  onOpenItem: (kind: string, id: string) => void;
+}
+
+export function ActionQueue({ items, onOpenItem }: ActionQueueProps) {
   return (
     <div className="action-queue-section">
       <div className="action-queue-header">
@@ -122,41 +133,41 @@ export function ActionQueue({ verificationQueue, onOpenDriver }: ActionQueueProp
             Sistemin aksamaması için bugün onaylanması veya çözülmesi gereken kritik işlemler
           </p>
         </div>
-        <span className="badge-pill badge-green">Canlı Akış</span>
+        <span className="badge-pill badge-green">Öncelikli Kuyruk</span>
       </div>
 
-      {verificationQueue.length === 0 ? (
+      {items.length === 0 ? (
         <div style={{ padding: "32px 20px", textAlign: "center", color: "var(--muted)" }}>
           <div style={{ fontSize: 32, marginBottom: 8 }}>✅</div>
           <b>Harika! Bekleyen acil işlem bulunmuyor.</b>
           <p style={{ margin: "4px 0 0", fontSize: 13 }}>
-            Tüm şoför onayları ve sistem kuyrukları güncel durumda.
+            Tüm şoför onayları, kurumsal başvurular ve şikâyetler güncel durumda.
           </p>
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {verificationQueue.map((item: any) => (
+          {items.map(item => (
             <button
-              key={item.id}
+              key={`${item.kind}-${item.id}`}
               type="button"
               className="action-item-card"
-              onClick={() => onOpenDriver(item.id)}
+              onClick={() => onOpenItem(item.kind, item.id)}
             >
               <div className="action-item-left">
                 <div className="action-item-avatar">
-                  {(item.name || "Ş")[0]?.toUpperCase()}
+                  {item.avatarChar}
                 </div>
                 <div>
                   <div style={{ fontWeight: 600, color: "var(--ink)", fontSize: 14 }}>
-                    {item.name}
+                    {item.title}
                   </div>
                   <div style={{ fontSize: 12, color: "var(--muted)" }}>
-                    {item.phone || item.email} · Şoför Başvurusu
+                    {item.subtitle}
                   </div>
                 </div>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <span className="badge-pill badge-amber">Doğrulama Bekliyor</span>
+                <span className={`badge-pill ${item.badgeColor}`}>{item.badge}</span>
                 <span style={{ color: "var(--green)", fontWeight: 600, fontSize: 13 }}>İncele →</span>
               </div>
             </button>

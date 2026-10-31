@@ -206,10 +206,11 @@ func containsFold(value, query string) bool {
 	return strings.Contains(strings.ToLower(value), strings.ToLower(strings.TrimSpace(query)))
 }
 
-func dashboardCounts(users []models.User, loads []models.Load, complaints []models.MessageComplaint) map[string]int {
+func dashboardCounts(users []models.User, loads []models.Load, complaints []models.MessageComplaint, deletionRequests []models.AccountDeletionRequest) map[string]int {
 	counts := map[string]int{
 		"customers": 0, "drivers": 0, "verifiedDrivers": 0, "pendingDrivers": 0,
 		"activeLoads": 0, "completedJobs": 0, "cancelledJobs": 0, "openComplaints": 0,
+		"pendingAccountDeletions": 0,
 	}
 	for _, user := range users {
 		switch user.Role {
@@ -245,6 +246,11 @@ func dashboardCounts(users []models.User, loads []models.Load, complaints []mode
 	for _, complaint := range complaints {
 		if complaint.Status == models.ComplaintStatusOpen || complaint.Status == models.ComplaintStatusReviewing {
 			counts["openComplaints"]++
+		}
+	}
+	for _, req := range deletionRequests {
+		if req.Status == "pending" || req.Status == "" {
+			counts["pendingAccountDeletions"]++
 		}
 	}
 	return counts
@@ -299,7 +305,8 @@ func (a *API) adminDashboard(w http.ResponseWriter, r *http.Request) {
 		serverError(w, err)
 		return
 	}
-	counts := dashboardCounts(users, loads, complaints)
+	deletionRequests, _ := a.store.ListAccountDeletionRequests("pending")
+	counts := dashboardCounts(users, loads, complaints, deletionRequests)
 	queue := make([]map[string]any, 0)
 	for _, user := range users {
 		if user.Role == models.RoleDriver && driverVerificationStatus(user) == models.VerificationPending {

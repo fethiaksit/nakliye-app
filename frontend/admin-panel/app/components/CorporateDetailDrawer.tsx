@@ -26,6 +26,7 @@ export function CorporateDetailDrawer({
   const [activeTab, setActiveTab] = useState<CorporateTab>("company");
 
   const corporateId = data.id || data.corporateId || data.corporate_id;
+  const ownerCustomerId = data.company?.ownerCustomerId || data.ownerCustomerId || data.userId || data.user_id || corporateId;
   const companyName = data.companyName || data.company_name || data.company?.name || data.name || "—";
   const authorizedPerson = data.authorizedPerson || data.authorized_person || data.company?.authorizedPerson || data.name || "—";
   const phone = data.phone || data.company?.phone || "—";
@@ -179,7 +180,7 @@ export function CorporateDetailDrawer({
       {/* Tab: Wallet */}
       {activeTab === "wallet" && isApproved && (
         <div>
-          <WalletCustomer customerId={corporateId} request={request} />
+          <WalletCustomer customerId={ownerCustomerId} request={request} />
         </div>
       )}
 
