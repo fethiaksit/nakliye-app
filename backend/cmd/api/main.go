@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"nakliye-api/internal/config"
 	"nakliye-api/internal/httpapi"
@@ -54,7 +55,7 @@ func main() {
 	} else {
 		logger.Warn("email_config_incomplete", "provider", "resend", "configured", false)
 	}
-	if err := http.Serve(listener, httpapi.NewWithOptions(s, httpapi.Options{
+	api := httpapi.NewWithOptions(s, httpapi.Options{
 		Secret:                 cfg.JWTSecret,
 		GoogleMapsServerAPIKey: cfg.GoogleMapsServerAPIKey,
 		MapsKeyError:           cfg.MapsKeyError,
@@ -71,7 +72,11 @@ func main() {
 		Environment:            cfg.Environment,
 		AppVersion:             cfg.AppVersion,
 		MaintenanceMode:        cfg.MaintenanceMode,
-	}).Routes()); err != nil {
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	api.StartPushReceiptWorker(ctx)
+	if err := http.Serve(listener, api.Routes()); err != nil {
 		slog.Error("server_stopped", "error", err.Error())
 		os.Exit(1)
 	}

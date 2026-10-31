@@ -115,7 +115,7 @@ export default function CustomerAccountScreens({ page, onPageChange, loading, er
     setDeleteLoading(true);
     try {
       await profile.deleteAccount(payload);
-      showToast('Hesabınız başarıyla silindi ve kişisel verileriniz anonimleştirildi.', { type: 'success', title: 'Hesap Silindi' });
+      showToast('Hesabınız kapatıldı; profil iletişim bilgileri kaldırıldı.', { type: 'success', title: 'Hesap Silindi' });
       await logout();
     } catch (delError) {
       showToast(apiError(delError), { type: 'error', title: 'Hesap silinemedi' });

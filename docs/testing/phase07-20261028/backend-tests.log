@@ -1,0 +1,7 @@
+?   	nakliye-api/cmd/api	[no test files]
+?   	nakliye-api/cmd/routebackfill	[no test files]
+ok  	nakliye-api/internal/config	0.325s
+ok  	nakliye-api/internal/httpapi	10.527s
+ok  	nakliye-api/internal/models	0.822s
+ok  	nakliye-api/internal/service	1.590s
+ok  	nakliye-api/internal/store	1.152s

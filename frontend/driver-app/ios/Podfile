@@ -56,6 +56,23 @@ target 'NakliyeGoofr' do
   )
 
   post_install do |installer|
+    # NakliyeGo fmt Xcode 27 fix
+    fmt_base = File.join(installer.sandbox.root, 'fmt', 'include', 'fmt', 'base.h')
+    if File.exist?(fmt_base)
+      original = File.read(fmt_base)
+      old_line = '#elif defined(__apple_build_version__) && __apple_build_version__ < 14000029L'
+      new_line = '#elif defined(__apple_build_version__)'
+
+      if original.include?(old_line)
+        File.write(fmt_base, original.sub(old_line, new_line))
+        puts '[NakliyeGo] fmt consteval düzeltildi.'
+      elsif original.include?(new_line)
+        puts '[NakliyeGo] fmt düzeltmesi zaten mevcut.'
+      else
+        raise 'fmt base.h beklenen yapıda değil.'
+      end
+    end
+
     react_native_post_install(
       installer,
       config[:reactNativePath],
@@ -64,6 +81,12 @@ target 'NakliyeGoofr' do
     )
 
     installer.pods_project.targets.each do |target|
+      if target.name == 'ReactCodegen'
+        target.build_configurations.each do |cfg|
+          flags = cfg.build_settings['OTHER_CPLUSPLUSFLAGS'] || '$(inherited)'
+          cfg.build_settings['OTHER_CPLUSPLUSFLAGS'] = "#{flags} -include utility" unless flags.include?('-include utility')
+        end
+      end
       target.build_configurations.each do |config|
         config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.1'
       end

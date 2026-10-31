@@ -1,6 +1,7 @@
 {
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
+    "test": "node --test src/utils/*.test.cjs",
     "start": "npx --yes --package=node@20.20.2 node ./node_modules/expo/bin/cli start --dev-client",
     "start:go": "npx --yes --package=node@20.20.2 node ./node_modules/expo/bin/cli start --go",
     "start:dev-client": "npx --yes --package=node@20.20.2 node ./node_modules/expo/bin/cli start --dev-client",
@@ -33,5 +34,12 @@
   "version": "1.0.0",
   "engines": {
     "node": ">=20 <23"
+  },
+  "expo": {
+    "doctor": {
+      "appConfigFieldsNotSyncedCheck": {
+        "enabled": false
+      }
+    }
   }
 }

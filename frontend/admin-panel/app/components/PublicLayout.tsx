@@ -1,4 +1,5 @@
 import React from "react";
+import Link from "next/link";
 
 interface PublicLayoutProps {
   title: string;
@@ -12,7 +13,7 @@ export default function PublicLayout({
   title,
   subtitle,
   version = "1.0.0",
-  updatedAt = "14 Ekim 2026",
+  updatedAt = "28 Ekim 2026",
   children,
 }: PublicLayoutProps) {
   return (
@@ -20,7 +21,7 @@ export default function PublicLayout({
       {/* Top Navigation */}
       <header style={{ background: "#14261c", color: "#eff5f0", borderBottom: "1px solid #243b2e", padding: "16px clamp(14px, 4vw, 24px)" }}>
         <div style={{ maxWidth: 960, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 16 }}>
-          <a href="/" style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none", color: "#eff5f0" }}>
+          <Link href="/" style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none", color: "#eff5f0" }}>
             <span style={{ display: "grid", placeItems: "center", width: 34, height: 34, borderRadius: 10, background: "#dffa70", color: "#14261c", fontWeight: 800, fontSize: 18 }}>
               N
             </span>
@@ -28,7 +29,7 @@ export default function PublicLayout({
               <div style={{ fontWeight: 800, fontSize: 17, letterSpacing: "-0.02em" }}>NakliyeGo</div>
               <div style={{ fontSize: 10, color: "#8ea095" }}>Yasal Bilgilendirme Merkezi</div>
             </div>
-          </a>
+          </Link>
           <nav style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", fontSize: 13 }}>
             <a href="/privacy" style={{ color: "#d2ded6", textDecoration: "none", fontWeight: 500 }}>Gizlilik</a>
             <a href="/terms" style={{ color: "#d2ded6", textDecoration: "none", fontWeight: 500 }}>Kullanım Koşulları</a>
@@ -48,7 +49,7 @@ export default function PublicLayout({
                 Sürüm {version}
               </span>
               <span style={{ fontSize: 12, color: "#667069" }}>
-                Yürürlük / Son Güncelleme: {updatedAt}
+                Taslak güncelleme: {updatedAt}
               </span>
             </div>
             <h1 style={{ fontSize: "clamp(22px, 4.5vw, 28px)", fontWeight: 800, color: "#14261c", margin: "4px 0 8px", letterSpacing: "-0.03em" }}>
@@ -71,8 +72,8 @@ export default function PublicLayout({
       <footer style={{ background: "#ffffff", borderTop: "1px solid #e3e8e4", padding: "24px clamp(14px, 4vw, 24px)", marginTop: "auto", fontSize: 12, color: "#667069" }}>
         <div style={{ maxWidth: 960, margin: "0 auto", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 16 }}>
           <div>
-            <div style={{ fontWeight: 700, color: "#17221b" }}>Feti Akşit Limited Şirketi [DOĞRULAMA GEREKLİ: Resmî Ticaret Sicil Unvanı Kontrolü]</div>
-            <div>Aracı Hizmet Sağlayıcı · 6698 Sayılı KVKK Uyumlu Bilgilendirme</div>
+            <div style={{ fontWeight: 700, color: "#17221b" }}>Veri sorumlusunun resmî unvanı doğrulanmalıdır</div>
+            <div>Hukuk incelemesi bekleyen taslak bilgilendirme</div>
           </div>
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
             <a href="/privacy" style={{ color: "#246b45", textDecoration: "none" }}>Gizlilik Politikası</a>

@@ -1,0 +1,31 @@
+
+> driver-app@1.0.0 test
+> node --test src/utils/*.test.cjs
+
+✔ iOS provisional permission registers with an explicit EAS project instead of losing silent permission (154.165042ms)
+✔ missing EAS project fails before token registration (7.289417ms)
+✔ cold-start and live tap of one notification opens its target once; dismiss cannot navigate (7.924083ms)
+✔ notification handler presents foreground banner/list/sound without changing backend state (4.711667ms)
+✔ logout still unregisters the current device token (4.586792ms)
+✔ registration retries on foreground after network failure and listens for APNs token rotation (6.077917ms)
+✔ leaving a session during permission/token lookup prevents a late register (4.05325ms)
+✔ configuration uses each real EAS project and native bundle consistently (0.428667ms)
+✔ logout waits for in-flight registration before removing its token (5.976416ms)
+✔ revoking permission preserves the last token so logout can remove the binding (4.719708ms)
+✔ permission-screen refresh shares the logout barrier (4.230333ms)
+✔ development clients are built against beta rather than inheriting an unrelated EAS environment (0.278208ms)
+✔ a lost registration response still leaves a known token for logout cleanup (3.769125ms)
+✔ driver sees exact cash and credit and explicitly chooses accept/reject before starting (185.462083ms)
+✔ customer selects 60 TL with the offer and sees 4040 TL payable before requesting consent (32.548542ms)
+✔ disabled corporate wallet still sends cash-only payment for driver consent (21.409791ms)
+✔ selected driver offer routes to payment consent and hides edit/withdraw during approval (8.390584ms)
+✔ approval state is shared across aliases and stale operational status (1.815041ms)
+✔ pending payment is prominent on dashboard and its action opens consent instead of status change (18.902ms)
+ℹ tests 19
+ℹ suites 0
+ℹ pass 19
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 401.431417

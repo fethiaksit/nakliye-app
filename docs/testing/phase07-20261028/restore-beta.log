@@ -1,0 +1,43 @@
+[2026-10-28 11:28:59] [NakliyeGo Restore Test - Beta] S3 üzerindeki en güncel yedek taranıyor: s3://nakliyego-backups-292187657171/redis/beta/
+[2026-10-28 11:28:59] [NakliyeGo Restore Test - Beta] En güncel yedek tespit edildi: redis-beta-20261028_001501.rdb.tar.gz
+[2026-10-28 11:28:59] [NakliyeGo Restore Test - Beta] Yedek arşivi indiriliyor: s3://nakliyego-backups-292187657171/redis/beta/redis-beta-20261028_001501.rdb.tar.gz
+Completed 8.3 MiB/104.3 MiB (3.9 MiB/s) with 1 file(s) remainingCompleted 80.3 MiB/104.3 MiB (26.5 MiB/s) with 1 file(s) remainingCompleted 88.3 MiB/104.3 MiB (20.9 MiB/s) with 1 file(s) remainingCompleted 104.3 MiB/104.3 MiB (11.3 MiB/s) with 1 file(s) remainingdownload: s3://nakliyego-backups-292187657171/redis/beta/redis-beta-20261028_001501.rdb.tar.gz to nakliyego-backup-work/restore/beta_20261028_112859_p6uohnkq1390954/redis-beta-20261028_001501.rdb.tar.gz
+[2026-10-28 11:28:59] [NakliyeGo Restore Test - Beta] Zorunlu SHA-256 kontrol dosyası indiriliyor: s3://nakliyego-backups-292187657171/redis/beta/redis-beta-20261028_001501.rdb.tar.gz.sha256
+Completed 104 Bytes/104 Bytes (2.4 KiB/s) with 1 file(s) remainingdownload: s3://nakliyego-backups-292187657171/redis/beta/redis-beta-20261028_001501.rdb.tar.gz.sha256 to nakliyego-backup-work/restore/beta_20261028_112859_p6uohnkq1390954/redis-beta-20261028_001501.rdb.tar.gz.sha256
+[2026-10-28 11:28:59] [NakliyeGo Restore Test - Beta] SHA-256 bütünlüğü zorunlu olarak kontrol ediliyor...
+redis-beta-20261028_001501.rdb.tar.gz: OK
+[2026-10-28 11:28:59] [NakliyeGo Restore Test - Beta] ✅ SHA-256 doğrulaması BAŞARILI.
+[2026-10-28 11:28:59] [NakliyeGo Restore Test - Beta] Arşiv bütünlüğü test ediliyor ve açılıyor...
+[2026-10-28 11:28:59] [NakliyeGo Restore Test - Beta] Geri yüklenecek RDB dosyası redis-check-rdb ile inceleniyor...
+[offset 0] Checking RDB file /data/dump.rdb
+[offset 27] AUX FIELD redis-ver = '7.4.10'
+[offset 41] AUX FIELD redis-bits = '64'
+[offset 53] AUX FIELD ctime = '1793146501'
+[offset 68] AUX FIELD used-mem = '124009848'
+[offset 80] AUX FIELD aof-base = '0'
+[offset 82] Selecting DB ID 0
+[offset 110020774] Checksum OK
+[offset 110020774] \o/ RDB looks OK! \o/
+[info] 985 keys read
+[info] 52 expires
+[info] 0 already expired
+[info] 0 subexpires
+[2026-10-28 11:28:59] [NakliyeGo Restore Test - Beta] RDB dosya formatı ve veri bütünlüğü doğrulandı.
+[2026-10-28 11:28:59] [NakliyeGo Restore Test - Beta] Benzersiz izole Redis test container başlatılıyor: nakliye-restore-test-beta-20261028_112859-p6uohnkq1390954
+[2026-10-28 11:28:59] [NakliyeGo Restore Test - Beta] İzole Redis servisinin hazır olması bekleniyor...
+[2026-10-28 11:28:59] [NakliyeGo Restore Test - Beta] İzole Redis container hazır (PONG alındı).
+[2026-10-28 11:28:59] [NakliyeGo Restore Test - Beta] RDB yükleme süreci doğrulanıyor...
+[2026-10-28 11:28:59] [NakliyeGo Restore Test - Beta] Redis başlangıç günlüğünde RDB snapshot dosyasının diski okunarak belleğe başarıyla yüklendiği teyit edildi.
+[2026-10-28 11:28:59] [NakliyeGo Restore Test - Beta] ==========================================================
+[2026-10-28 11:28:59] [NakliyeGo Restore Test - Beta]    NAKLIYEGO VERİ DOĞRULAMA TEST RAPORU (Beta)       
+[2026-10-28 11:28:59] [NakliyeGo Restore Test - Beta] ==========================================================
+[2026-10-28 11:28:59] [NakliyeGo Restore Test - Beta] Toplam Belleğe Yüklenen Anahtar Sayısı (DBSIZE): 985
+[2026-10-28 11:28:59] [NakliyeGo Restore Test - Beta] Yük İlanları ('loads' zset count): 41
+[2026-10-28 11:28:59] [NakliyeGo Restore Test - Beta] Kullanıcı Kayıtları ('user:*' count): 19
+[2026-10-28 11:28:59] [NakliyeGo Restore Test - Beta] Şirket Kayıtları ('company:*' count): 10
+[2026-10-28 11:28:59] [NakliyeGo Restore Test - Beta] Teklif Kayıtları ('offers:*' count): 39
+[2026-10-28 11:28:59] [NakliyeGo Restore Test - Beta] ==========================================================
+[2026-10-28 11:28:59] [NakliyeGo Restore Test - Beta] ✅ Restore testi, RDB yükleme ve veri bütünlüğü doğrulaması BAŞARIYLA TAMAMLANDI.
+[2026-10-28 11:28:59] [NakliyeGo Restore Test - Beta] Test temizliği başlatılıyor...
+[2026-10-28 11:28:59] [NakliyeGo Restore Test - Beta] Bu test tarafından oluşturulan izole test container silindi: nakliye-restore-test-beta-20261028_112859-p6uohnkq1390954
+[2026-10-28 11:28:59] [NakliyeGo Restore Test - Beta] Geçici restore test dizini temizlendi: /home/ubuntu/nakliyego-backup-work/restore/beta_20261028_112859_p6uohnkq1390954

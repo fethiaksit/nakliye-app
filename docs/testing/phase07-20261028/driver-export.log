@@ -1,0 +1,29 @@
+env: load .env
+env: export GOOGLE_MAPS_IOS_API_KEY GOOGLE_MAPS_ANDROID_API_KEY EXPO_PUBLIC_API_URL
+Starting Metro Bundler
+Android node_modules/expo/AppEntry.js ░░░░░░░░░░░░░░░░  0.0% (0/1)
+iOS node_modules/expo/AppEntry.js ░░░░░░░░░░░░░░░░  0.0% (0/1)
+Android node_modules/expo/AppEntry.js ▓▓▓▓░░░░░░░░░░░░ 26.6% (200/388)
+iOS node_modules/expo/AppEntry.js ▓▓░░░░░░░░░░░░░░ 16.3% ( 90/223)
+Android node_modules/expo/AppEntry.js ▓▓▓▓▓▓▓▓▓▓░░░░░░ 62.6% (410/546)
+iOS node_modules/expo/AppEntry.js ▓▓▓▓░░░░░░░░░░░░ 30.5% (244/470)
+Android node_modules/expo/AppEntry.js ▓▓▓▓▓▓▓▓▓▓▓▓░░░░ 78.2% (534/604)
+iOS node_modules/expo/AppEntry.js ▓▓▓▓▓▓▓▓▓▓▓░░░░░ 73.6% (507/591)
+Android node_modules/expo/AppEntry.js ▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░ 93.6% (769/820)
+iOS node_modules/expo/AppEntry.js ▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░ 93.5% (804/832)
+Android Bundled 15833ms node_modules/expo/AppEntry.js (820 modules)
+iOS Bundled 16759ms node_modules/expo/AppEntry.js (840 modules)
+
+› Assets (1):
+node_modules/@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/Ionicons.ttf (390 kB)
+
+› android bundles (1):
+_expo/static/js/android/AppEntry-9437af7bbce42947ea9ea13f7ffb47f4.hbc (2.74 MB)
+
+› ios bundles (1):
+_expo/static/js/ios/AppEntry-394af46646ef0c468a827b66f174a82b.hbc (2.73 MB)
+
+› Files (1):
+metadata.json (374 B)
+
+Exported: /tmp/nakliye-p07-driver-export

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { KeyboardAvoidingView, Platform, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { AppState, KeyboardAvoidingView, Platform, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -15,7 +15,7 @@ import {
 } from '../shared/ui/navigation';
 import LegalModal from '../shared/ui/LegalModal';
 import { InlineNotice, ListSkeleton } from '../shared/ui/primitives';
-import { registerDevicePushToken, subscribeNotificationResponses, unregisterDevicePushToken } from '../shared/notifications';
+import { subscribeDevicePushRegistration, subscribeNotificationResponses, unregisterDevicePushToken } from '../shared/notifications';
 import { generateLoadDescription, generateLoadTitle } from '../shared/loadMetadata';
 import { apiError, auth, checkApiHealth, clearSession, conversations, corporate, loads, logApiError, maps, offers, profile, push, restoreSession, saveSession, subscribeSessionExpired, updateStoredUser } from './src/services/api';
 import { apiOrigin, healthUrl } from './src/config/api';
@@ -122,6 +122,16 @@ function CustomerApp() {
   const [pendingDraftId, setPendingDraftId] = useState(null);
   const [saving, setSaving] = useState(false);
   const publishBusy = useRef(false);
+  const [isChatActive, setIsChatActive] = useState(false);
+  const [isActiveApp, setIsActiveApp] = useState(AppState.currentState === 'active');
+  const loadsRequestId = useRef(0);
+  const loadsBusy = useRef(false);
+  const loadDetailBusy = useRef(false);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', state => setIsActiveApp(state === 'active'));
+    return () => subscription.remove();
+  }, []);
   const [myLoads, setMyLoads] = useState([]);
   const [loadsLoading, setLoadsLoading] = useState(false);
   const [loadsError, setLoadsError] = useState('');
@@ -132,7 +142,6 @@ function CustomerApp() {
   const [offersLoading, setOffersLoading] = useState(false);
   const [selectedLoadWallet, setSelectedLoadWallet] = useState(null);
   const [walletError, setWalletError] = useState('');
-  const [walletSaving, setWalletSaving] = useState(false);
   const [favoriteDriverIds, setFavoriteDriverIds] = useState(new Set());
   const [favoriteSaving, setFavoriteSaving] = useState(false);
   const [account, setAccount] = useState(null);
@@ -147,6 +156,7 @@ function CustomerApp() {
   const [notificationData, setNotificationData] = useState(null);
   const [pendingConversationId, setPendingConversationId] = useState('');
   const pushToken = useRef(null);
+  const pushRegistration = useRef(null);
 
   useEffect(() => {
     let active = true;
@@ -188,21 +198,40 @@ function CustomerApp() {
   useEffect(() => subscribeNotificationResponses(setNotificationData), []);
   useEffect(() => {
     if (!user) return undefined;
-    let active = true;
-    registerDevicePushToken(push).then(token => { if (active) pushToken.current = token; }).catch(error => logApiError('CUSTOMER PUSH REGISTER', error));
-    return () => { active = false; };
+    const stop = subscribeDevicePushRegistration(push, token => { pushToken.current = token; }, error => logApiError('CUSTOMER PUSH REGISTER', error));
+    pushRegistration.current = stop;
+    return () => { void stop(); };
   }, [user?.id]);
 
-  const fetchLoads = useCallback(async () => {
-    setLoadsLoading(true);
-    setLoadsError('');
+  const fetchLoads = useCallback(async (silent = false) => {
+    if (loadsBusy.current) return;
+    loadsBusy.current = true;
+    const reqId = ++loadsRequestId.current;
+    if (!silent) {
+      setLoadsLoading(true);
+      setLoadsError('');
+    }
     try {
       const { data } = await loads.mine({ limit: 100 });
-      setMyLoads(data.items || []);
+      if (reqId === loadsRequestId.current) {
+        const incoming = data.items || [];
+        setMyLoads(incoming);
+        setSelectedLoad(current => {
+          if (!current?.id) return current;
+          const updated = incoming.find(item => item.id === current.id);
+          return updated ? { ...current, ...updated } : current;
+        });
+        setLoadsError('');
+      }
     } catch (error) {
-      setLoadsError(apiError(error));
+      if (!silent && reqId === loadsRequestId.current) {
+        setLoadsError(apiError(error));
+      }
     } finally {
-      setLoadsLoading(false);
+      loadsBusy.current = false;
+      if (!silent && reqId === loadsRequestId.current) {
+        setLoadsLoading(false);
+      }
     }
   }, []);
   const fetchAccount = useCallback(async () => {
@@ -449,6 +478,84 @@ function CustomerApp() {
     setOffersLoading(false);
   }, [listScroll, showToast, tab, user?.accountType]);
 
+  const refreshSelectedLoadDetail = useCallback(async (silent = false) => {
+    const currentLoad = selectedLoad;
+    if (!currentLoad?.id || loadDetailBusy.current) return;
+    loadDetailBusy.current = true;
+    const requestID = ++loadDetailRequest.current;
+    if (!silent) setOffersLoading(true);
+    const shouldFetchDeliveryCode = deliveryCodeStatuses.has(currentLoad.status) && !currentLoad.deliveryVerified;
+    const corporateAccount = user?.accountType === 'corporate';
+    try {
+      const [loadResult, offerResult, codeResult, walletResult, favoriteResult] = await Promise.allSettled([
+        loads.get(currentLoad.id),
+        offers.list(currentLoad.id),
+        shouldFetchDeliveryCode ? loads.deliveryCode(currentLoad.id) : Promise.resolve(null),
+        corporateAccount ? corporate.loadWallet(currentLoad.id) : Promise.resolve(null),
+        corporateAccount && currentLoad.assignedDriverId ? corporate.favorites() : Promise.resolve(null),
+      ]);
+      if (requestID !== loadDetailRequest.current) return;
+      if (loadResult.status === 'fulfilled' && loadResult.value?.data) {
+        setSelectedLoad(current => (current?.id === currentLoad.id ? { ...current, ...loadResult.value.data } : current));
+      }
+      if (offerResult.status === 'fulfilled') {
+        setLoadOffers(offerResult.value.data || []);
+      } else if (!silent) {
+        showToast(apiError(offerResult.reason), { type: 'error', title: 'Teklifler alınamadı' });
+      }
+      if (shouldFetchDeliveryCode) {
+        setDeliveryCode(codeResult.status === 'fulfilled'
+          ? { value: String(codeResult.value.data?.deliveryCode || ''), loading: false, error: '' }
+          : { value: '', loading: false, error: apiError(codeResult.reason) });
+      }
+      setSelectedLoadWallet(walletResult.status === 'fulfilled' ? walletResult.value?.data || null : null);
+      if (corporateAccount && walletResult.status === 'rejected' && !silent) setWalletError(apiError(walletResult.reason));
+      if (favoriteResult.status === 'fulfilled' && favoriteResult.value) {
+        setFavoriteDriverIds(new Set((favoriteResult.value.data?.items || []).map(item => item.driver?.id).filter(Boolean)));
+      }
+    } finally {
+      loadDetailBusy.current = false;
+      if (!silent && requestID === loadDetailRequest.current) {
+        setOffersLoading(false);
+      }
+    }
+  }, [selectedLoad, showToast, user?.accountType]);
+
+  // 12-second background silent poll for active screen
+  useEffect(() => {
+    if (!user?.id || !isActiveApp) return undefined;
+    const interval = setInterval(() => {
+      if (tab === 'home' || tab === 'loads') {
+        if (isDetailOpen && selectedLoad?.id) {
+          void refreshSelectedLoadDetail(true);
+          void fetchLoads(true);
+        } else {
+          void fetchLoads(true);
+        }
+      }
+    }, 12000);
+    return () => clearInterval(interval);
+  }, [fetchLoads, isActiveApp, isDetailOpen, refreshSelectedLoadDetail, selectedLoad?.id, tab, user?.id]);
+
+  // Immediate refresh on foreground resume
+  const prevActiveAppRef = useRef(isActiveApp);
+  useEffect(() => {
+    const wasActive = prevActiveAppRef.current;
+    prevActiveAppRef.current = isActiveApp;
+    if (!wasActive && isActiveApp && user?.id) {
+      if (tab === 'home' || tab === 'loads') {
+        if (isDetailOpen && selectedLoad?.id) {
+          void refreshSelectedLoadDetail(true);
+          void fetchLoads(true);
+        } else {
+          void fetchLoads(true);
+        }
+      } else if (tab === 'account') {
+        void fetchAccount();
+      }
+    }
+  }, [fetchAccount, fetchLoads, isActiveApp, isDetailOpen, refreshSelectedLoadDetail, selectedLoad?.id, tab, user?.id]);
+
   const openMessageLoad = useCallback(async id => {
     try {
       const { data } = await loads.get(id);
@@ -477,7 +584,7 @@ function CustomerApp() {
   const performAcceptOffer = useCallback(async offer => {
     setConfirmationLoading(true);
     try {
-      const { data: acceptedLoad } = await offers.accept(offer.id);
+      const { data: acceptedLoad } = await offers.accept(offer.id, offer.selectedCreditCents || 0);
       posthog.capture('offer_accepted', {
         loadId: acceptedLoad?.id || offer.loadId,
         offerId: offer.id,
@@ -490,7 +597,7 @@ function CustomerApp() {
         closeLoadDetail();
       }
       await fetchLoads();
-      showToast(user?.accountType === 'corporate' ? 'Teklif kabul edildi. İsterseniz aşağıdaki Kurumsal cüzdan alanından bakiyenizi kullanabilirsiniz.' : 'Teklif kabul edildi; mesajlaşma açıldı.', { type: 'success', title: 'Şoför seçildi' });
+      showToast(acceptedLoad?.status === 'payment_approval_pending' ? 'Ödeme seçiminiz şoförün açık onayını bekliyor.' : 'Teklif kabul edildi; mesajlaşma açıldı.', { type: 'success', title: 'Şoför seçildi' });
     } catch (error) {
       showToast(apiError(error), { type: 'error', title: 'Teklif kabul edilemedi' });
     } finally {
@@ -555,7 +662,9 @@ function CustomerApp() {
   const performLogout = useCallback(async () => {
     setConfirmationLoading(true);
     try {
-      await unregisterDevicePushToken(push, pushToken.current).catch(error => logApiError('CUSTOMER PUSH UNREGISTER', error));
+      const pendingToken = await pushRegistration.current?.();
+      pushRegistration.current = null;
+      await unregisterDevicePushToken(push, pendingToken || pushToken.current).catch(error => logApiError('CUSTOMER PUSH UNREGISTER', error));
       pushToken.current = null;
       await auth.logout().catch(error => logApiError('CUSTOMER LOGOUT', error));
     } catch (error) {
@@ -581,30 +690,11 @@ function CustomerApp() {
   }, [openLoad]);
 
   const registerPushAfterPermission = useCallback(async () => {
-    const token = await registerDevicePushToken(push);
+    const token = await pushRegistration.current?.refresh();
     if (token) pushToken.current = token;
   }, []);
 
-  const applyWalletCredit = useCallback(async amountCents => {
-    if (!selectedLoad?.id || !Number.isSafeInteger(amountCents) || amountCents <= 0 || walletSaving) return;
-    if (!posthog.isFeatureEnabled('corporate_wallet_enabled', true)) {
-      showToast('Kurumsal cüzdan kullanımı geçici olarak durdurulmuştur.', { type: 'error', title: 'Özellik Devre Dışı' });
-      return;
-    }
-    const requestID = loadDetailRequest.current;
-    setWalletSaving(true);
-    try {
-      const { data } = await corporate.applyWallet(selectedLoad.id, amountCents);
-      if (requestID !== loadDetailRequest.current) return;
-      posthog.capture('wallet_credit_applied', {
-        loadId: selectedLoad.id,
-        amountTl: amountCents / 100,
-      });
-      setSelectedLoadWallet(data);
-      showToast(`${formatMoney(amountCents / 100)} kurumsal kredi uygulandı.`, { type: 'success', title: 'Cüzdan kullanıldı' });
-    } catch (error) { showToast(apiError(error), { type: 'error', title: 'Cüzdan kullanılamadı' }); }
-    finally { setWalletSaving(false); }
-  }, [selectedLoad?.id, showToast, walletSaving]);
+
 
   const toggleFavoriteDriver = useCallback(async driverId => {
     if (!driverId) return;
@@ -643,13 +733,29 @@ function CustomerApp() {
   const body = tab === 'home'
     ? <CustomerHome loads={myLoads} onShowLoads={() => setTab('loads')} onOpenLoad={openLoad} onNewLoad={startNewLoad} onItemLayout={listScroll.onItemLayout} />
     : tab === 'loads'
-      ? <CustomerLoads renderDetailInline={false} onItemLayout={listScroll.onItemLayout} loading={loadsLoading} error={loadsError} items={myLoads} selected={selectedLoad} offers={loadOffers} offersLoading={offersLoading} deliveryCode={deliveryCode.value} deliveryCodeLoading={deliveryCode.loading} deliveryCodeError={deliveryCode.error} walletInfo={selectedLoadWallet} walletError={walletError} walletLoading={offersLoading} onRetryWallet={() => openLoad(selectedLoad)} walletSaving={walletSaving} onApplyWallet={applyWalletCredit} isCorporate={isCorporate} isFavorite={favoriteDriverIds.has(selectedLoad?.assignedDriverId)} favoriteSaving={favoriteSaving} onToggleFavorite={toggleFavoriteDriver} onRepeat={repeatLoad} onOpen={openLoad} onClose={closeLoadDetail} onAccept={offer => setConfirmation({ type: 'accept', target: offer })} onCancel={load => setConfirmation({ type: 'cancel', target: load })} retry={fetchLoads} />
+      ? <CustomerLoads renderDetailInline={false} onItemLayout={listScroll.onItemLayout} loading={loadsLoading} error={loadsError} items={myLoads} selected={selectedLoad} offers={loadOffers} offersLoading={offersLoading} deliveryCode={deliveryCode.value} deliveryCodeLoading={deliveryCode.loading} deliveryCodeError={deliveryCode.error} walletInfo={selectedLoadWallet} walletError={walletError} walletLoading={offersLoading} onRetryWallet={() => openLoad(selectedLoad)} isCorporate={isCorporate} isFavorite={favoriteDriverIds.has(selectedLoad?.assignedDriverId)} favoriteSaving={favoriteSaving} onToggleFavorite={toggleFavoriteDriver} onRepeat={repeatLoad} onOpen={openLoad} onClose={closeLoadDetail} onAccept={offer => setConfirmation({ type: 'accept', target: offer })} onCancel={load => setConfirmation({ type: 'cancel', target: load })} retry={fetchLoads} />
       : tab === 'messages'
-        ? <ConversationCenter currentUser={user} api={conversations} apiError={apiError} resolveMediaUrl={resolveMediaUrl} formatMoney={formatMoney} loadStatusLabel={loadStatusLabel} onOpenLoad={openMessageLoad} initialConversationId={pendingConversationId} onInitialConversationHandled={handleInitialConversation} reverseGeocode={maps.reverse} nativeMapsConfigured={nativeGoogleMapsConfigured} nativeMapsMessage={nativeGoogleMapsMessage} bottomInset={control.bottomNavHeight + insets.bottom} />
+        ? <ConversationCenter
+            currentUser={user}
+            api={conversations}
+            apiError={apiError}
+            resolveMediaUrl={resolveMediaUrl}
+            formatMoney={formatMoney}
+            loadStatusLabel={loadStatusLabel}
+            onOpenLoad={openMessageLoad}
+            initialConversationId={pendingConversationId}
+            onInitialConversationHandled={handleInitialConversation}
+            reverseGeocode={maps.reverse}
+            nativeMapsConfigured={nativeGoogleMapsConfigured}
+            nativeMapsMessage={nativeGoogleMapsMessage}
+            onActiveChange={setIsChatActive}
+            topInset={insets.top}
+            bottomInset={isChatActive ? insets.bottom : (control.bottomNavHeight + insets.bottom)}
+          />
         : <CustomerAccountScreens page={accountPage} onPageChange={setAccountPage} loading={accountLoading} error={accountError} account={account} form={accountForm} setForm={setAccountForm} save={saveAccount} saveLoading={accountSaving} changePassword={changePassword} passwordLoading={passwordSaving} logout={() => setConfirmation({ type: 'logout' })} retry={fetchAccount} onOpenLoad={openAccountLoad} onPermissionGranted={registerPushAfterPermission} />;
 
   const refresh = tab === 'home' || tab === 'loads' ? fetchLoads : tab === 'account' && accountPage === 'home' ? fetchAccount : undefined;
-  const showBottomNav = tab !== 'account' || accountPage === 'home';
+  const showBottomNav = (tab !== 'account' || accountPage === 'home') && !(tab === 'messages' && isChatActive);
   const bottomContentPadding = (showBottomNav ? control.bottomNavHeight + insets.bottom : insets.bottom) + spacing.xl;
 
   return (
@@ -720,8 +826,6 @@ function CustomerApp() {
                   walletError={walletError}
                   walletLoading={offersLoading}
                   onRetryWallet={() => openLoad(selectedLoad)}
-                  walletSaving={walletSaving}
-                  onApplyWallet={applyWalletCredit}
                   isCorporate={isCorporate}
                   isFavorite={favoriteDriverIds.has(selectedLoad?.assignedDriverId)}
                   favoriteSaving={favoriteSaving}
@@ -770,7 +874,7 @@ function CustomerApp() {
       <ConfirmationModal
         visible={Boolean(confirmation)}
         title={confirmation?.type === 'accept' ? 'Teklifi kabul et' : confirmation?.type === 'cancel' ? 'İlanı iptal et' : 'Hesaptan çıkış'}
-        message={confirmation?.type === 'accept' ? 'Bu şoför seçilecek ve ilan diğer tekliflere kapanacak.' : confirmation?.type === 'cancel' ? 'İlan iptal edilecek. Bu işlem geri alınamaz.' : 'Hesabınızdan çıkış yapmak istediğinizden emin misiniz?'}
+        message={confirmation?.type === 'accept' ? isCorporate ? `${formatMoney((confirmation.target.selectedCreditCents || 0) / 100)} kredi kullanılacak. Şoföre ${formatMoney(confirmation.target.amountTl - (confirmation.target.selectedCreditCents || 0) / 100)} ödeyeceksiniz. Atama için şoförün ödeme onayı beklenecek.` : 'Bu şoför seçilecek ve ilan diğer tekliflere kapanacak.' : confirmation?.type === 'cancel' ? 'İlan iptal edilecek. Bu işlem geri alınamaz.' : 'Hesabınızdan çıkış yapmak istediğinizden emin misiniz?'}
         confirmLabel={confirmation?.type === 'accept' ? 'Kabul et' : confirmation?.type === 'cancel' ? 'İlanı iptal et' : 'Çıkış yap'}
         destructive={confirmation?.type !== 'accept'}
         loading={confirmationLoading}

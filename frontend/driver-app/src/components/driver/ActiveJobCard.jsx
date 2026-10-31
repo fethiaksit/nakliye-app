@@ -1,7 +1,7 @@
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { driverStatusAction } from '../../../../shared/loadStatus';
+import { driverStatusAction, requiresDriverPaymentApproval } from '../../../../shared/loadStatus';
 import Icon from '../../../../shared/ui/Icon';
 import { colors, radius, shadows, spacing, typography } from '../../../../shared/ui/theme';
 import { getShortLocation } from './DriverJobCard';
@@ -11,7 +11,8 @@ export default function ActiveJobCard({ load, onPress, onAction, actionLoading }
 
   const pickup = getShortLocation(load.pickup);
   const delivery = getShortLocation(load.delivery);
-  const action = driverStatusAction(load.status);
+  const awaitingPayment = requiresDriverPaymentApproval(load);
+  const action = awaitingPayment ? null : driverStatusAction(load.status);
   const customerName = load.customer?.name || load.customerName || `İlan #${String(load.id || '').slice(-6).toUpperCase()}`;
 
   return (
@@ -21,7 +22,7 @@ export default function ActiveJobCard({ load, onPress, onAction, actionLoading }
         <View style={styles.topRow}>
           <View style={styles.badge}>
             <View style={styles.dot} />
-            <Text style={styles.badgeText}>AKTİF TAŞIMA</Text>
+            <Text style={styles.badgeText}>{awaitingPayment ? 'ÖDEME ONAYI BEKLENİYOR' : 'AKTİF TAŞIMA'}</Text>
           </View>
           <View style={styles.customerWrap}>
             <Icon name="person-circle-outline" size={14} color="#94A3B8" />
@@ -49,13 +50,13 @@ export default function ActiveJobCard({ load, onPress, onAction, actionLoading }
       <View style={styles.actionContainer}>
         <Pressable
           accessibilityRole="button"
-          onPress={() => onAction ? onAction(load, action?.nextStatus) : onPress(load)}
+          onPress={() => action && onAction ? onAction(load, action.nextStatus) : onPress(load)}
           disabled={actionLoading}
           style={({ pressed }) => [styles.actionButton, pressed && styles.actionButtonPressed]}
         >
           <Icon name={action?.icon || 'arrow-forward-outline'} size={18} color={colors.white} />
           <Text style={styles.actionButtonText}>
-            {actionLoading ? 'İşleniyor…' : action ? action.label : 'Detayı Gör & Devam Et'}
+            {actionLoading ? 'İşleniyor…' : awaitingPayment ? 'Ödeme Şeklini İncele' : action ? action.label : 'Detayı Gör & Devam Et'}
           </Text>
         </Pressable>
       </View>

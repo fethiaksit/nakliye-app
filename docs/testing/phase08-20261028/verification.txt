@@ -1,0 +1,75 @@
+Faz 08 yerel doğrulama — 2026-10-28
+Production/beta deploy veya gerçek Redis değişikliği yapılmadı. Testler izole miniredis ve yerel derlemeler.
+
+final-go
+?   	nakliye-api/cmd/api	[no test files]
+?   	nakliye-api/cmd/routebackfill	[no test files]
+ok  	nakliye-api/internal/config	0.390s
+ok  	nakliye-api/internal/httpapi	12.019s
+ok  	nakliye-api/internal/models	0.317s
+ok  	nakliye-api/internal/service	1.120s
+ok  	nakliye-api/internal/store	1.196s
+
+customer
+✔ wallet usage preview deducts decimal-comma amounts in kuruş (0.510041ms)
+✔ wallet usage preview rejects invalid, excessive and negative amounts (0.109834ms)
+ℹ tests 74
+ℹ suites 0
+ℹ pass 74
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 970.116333
+
+driver
+✔ approval state is shared across aliases and stale operational status (3.154791ms)
+✔ pending payment is prominent on dashboard and its action opens consent instead of status change (42.1615ms)
+ℹ tests 25
+ℹ suites 0
+ℹ pass 25
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 984.189791
+
+admin
+✔ rejects a previous tab payload instead of crashing wallet accounts (4.185208ms)
+✔ server-renders the public legal routes without authentication (69.085833ms)
+ℹ tests 7
+ℹ suites 0
+ℹ pass 7
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 287.869792
+
+customer-export
+› Assets (1):
+node_modules/@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/Ionicons.ttf (390 kB)
+
+› ios bundles (1):
+_expo/static/js/ios/AppEntry-e12eb7de3f750bb1f25f6435dabb9ae1.hbc (2.8 MB)
+
+› Files (1):
+metadata.json (207 B)
+
+Exported: /tmp/nakliye-phase08-customer-export
+
+driver-export
+› Assets (1):
+node_modules/@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/Ionicons.ttf (390 kB)
+
+› ios bundles (1):
+_expo/static/js/ios/AppEntry-8d990e54dcb4c6a63e438b42c8a5d276.hbc (2.73 MB)
+
+› Files (1):
+metadata.json (207 B)
+
+Exported: /tmp/nakliye-phase08-driver-export
+
+Admin TypeScript: tsc --noEmit exit 0 (boş hata çıktısı).
+Config assertion: iki uygulamada image-picker microphonePermission=false ve Android RECORD_AUDIO blocked; iki bundle kimliği korundu.
+Gerçek iPhone/native build testi yapılmadı.

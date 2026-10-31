@@ -26,7 +26,8 @@ export default function DriverOfferCard({ item, onOpen, onWithdraw }) {
   const { offer, load } = item;
   if (!offer || !load) return null;
 
-  const status = offerStatusMeta(offer.status);
+  const awaitingPayment = load.status === 'payment_approval_pending' && load.paymentApproval?.offerId === offer.id;
+  const status = { ...offerStatusMeta(offer.status), ...(awaitingPayment ? { label: 'Ödeme onayınız bekleniyor' } : {}) };
   const pickup = getShortLocation(load.pickup);
   const delivery = getShortLocation(load.delivery);
   const timeLabel = formatListingTime(load);
@@ -78,7 +79,7 @@ export default function DriverOfferCard({ item, onOpen, onWithdraw }) {
       {/* Actions */}
       <View style={styles.actionsRow}>
         <AppButton
-          label="Detayı Gör"
+          label={awaitingPayment ? 'Ödeme Şeklini İncele' : 'Detayı Gör'}
           icon="eye-outline"
           variant="outline"
           compact
@@ -86,7 +87,7 @@ export default function DriverOfferCard({ item, onOpen, onWithdraw }) {
           onPress={() => onOpen(load, offer)}
         />
 
-        {offer.status === 'pending' ? (
+        {offer.status === 'pending' && load.status !== 'payment_approval_pending' ? (
           <>
             <AppButton
               label="Düzenle"

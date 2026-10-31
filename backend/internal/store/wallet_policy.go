@@ -157,7 +157,7 @@ func (s *RedisStore) AdjustWallet(company models.Company, entry models.WalletTra
 		return entry, err
 	}
 	wk, tk := "wallet:"+wallet.ID, "wallet-transaction:"+entry.ID
-	err = s.client.Watch(s.ctx, func(tx *redis.Tx) error {
+	err = s.watchPayment(func(tx *redis.Tx) error {
 		existing, e := tx.Get(s.ctx, tk).Bytes()
 		if e == nil {
 			var previous models.WalletTransaction

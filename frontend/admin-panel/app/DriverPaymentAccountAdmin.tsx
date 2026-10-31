@@ -35,7 +35,7 @@ export default function DriverPaymentAccountAdmin({ request }: { request: Reques
         <label><input type="checkbox" checked={account.enabled} onChange={e => setAccount({ ...account, enabled: e.target.checked })} /> Mobil uygulamada tahsilat hesabını göster</label>
         <label>Alıcı şirket unvanı<input value={account.companyName} maxLength={200} required={account.enabled} onChange={e => setAccount({ ...account, companyName: e.target.value })} /></label>
         <label>Banka adı<input value={account.bankName} maxLength={100} required={account.enabled} onChange={e => setAccount({ ...account, bankName: e.target.value })} /></label>
-        <label>Şirket IBAN'ı<input value={account.iban} maxLength={40} required={account.enabled} placeholder="TR…" autoCapitalize="characters" onChange={e => setAccount({ ...account, iban: e.target.value })} /></label>
+        <label>Şirket IBAN&apos;ı<input value={account.iban} maxLength={40} required={account.enabled} placeholder="TR…" autoCapitalize="characters" onChange={e => setAccount({ ...account, iban: e.target.value })} /></label>
         <p>Fatura, şirketin muhasebe sisteminden manuel düzenlenip şoföre iletilir. Bu ayar bakiye yüklemez; bankaya gelen ödemeyi ayrıca doğrulamalısın.</p>
         <button className="primary-button" type="submit">{busy ? "Kaydediliyor…" : "Tahsilat hesabını kaydet"}</button>
       </fieldset>

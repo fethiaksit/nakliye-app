@@ -100,7 +100,9 @@ class AdminSentry {
         },
         body: JSON.stringify(payload),
       }).catch(() => {});
-    } catch {}
+    } catch {
+      /* ignore sentry transport failure */
+    }
   }
 
   private parseStackTrace(stack: string) {

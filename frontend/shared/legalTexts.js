@@ -1,294 +1,104 @@
+// Existing acceptance version is unchanged; drafts are not a new effective agreement.
 export const CURRENT_TERMS_VERSION = '1.0.0';
-export const CURRENT_TERMS_DATE = '14 Ekim 2026';
-
+export const CURRENT_TERMS_DATE = '28 Ekim 2026';
 export const LEGAL_DOCS = {
-  terms: {
-    id: 'terms',
-    title: 'Kullanım Koşulları',
-    subtitle: 'Platform Kullanıcı Sözleşmesi',
-    version: CURRENT_TERMS_VERSION,
-    updatedAt: CURRENT_TERMS_DATE,
-    content: `NAKLİYEGO PLATFORM KULLANICI SÖZLEŞMESİ (KULLANIM KOŞULLARI)
-
-Sürüm: 1.0.0 | Yürürlük: 14 Ekim 2026
-
-1. TARAFLAR VE ARACILIK ROLÜ
-İşbu Kullanıcı Sözleşmesi, Feti Akşit Limited Şirketi [DOĞRULAMA GEREKLİ: Resmî Ticaret Sicil Unvanı Kontrolü] ("NakliyeGo") ile platform üzerinden yük taşıma talebi oluşturan (Müşteri) veya teklif sunan (Şoför) Kullanıcı arasında akdedilmiştir.
-NakliyeGo, 6563 sayılı Elektronik Ticaretin Düzenlenmesi Hakkında Kanun uyarınca "Aracı Hizmet Sağlayıcı"dır. NakliyeGo bir taşıma taahhüt firması veya fiili taşıyıcı DEĞİLDİR. Fiili taşıma hizmeti doğrudan bağımsız Şoför ile Müşteri arasında akdedilir.
-
-2. ARACILIK HİZMETİ VE SÜREÇ
-- Müşteri, yükün cinsi, tahmini ağırlığı, boyutları, kat/asansör durumu ve zamanlamasını sisteme girerek ilan oluşturur.
-- Şoförler ilanı inceleyerek teklif verir.
-- Teklifin Müşteri tarafından kabulü ile taşıma mutabakatı doğar.
-- Müşteri, yükü sağlam ve eksiksiz teslim almadan önce 6 haneli güvenlik kodunu şoförle paylaşmamalıdır. Kodun girilmesi ve teslimat kanıt fotoğrafının yüklenmesi taşımanın tam yerine getirildiğinin teyididir.
-
-3. YASAKLI MADDELER
-Platform aracılığıyla kanunen taşınması suç teşkil eden kaçak mallar, ruhsatsız silah, mühimmat, yanıcı/patlayıcı/parlayıcı maddeler, uyuşturucu ve çalıntı malların taşınması kesinlikle yasaktır. Aykırılık halinde hesap derhal kapatılır ve yetkili adli mercilere bildirilir.
-
-4. ÜCRET VE MUTABAKAT
-Platformdaki fiyat tahminleri gösterge niteliğinde olup nihai taşıma ücreti Şoförün verdiği ve Müşterinin onayladığı tutardır. Kurumsal müşteriler onaylı kurumsal cüzdan bakiyelerini kullanabilirler.
-
-5. SORUMLULUK SINIRLARI
-Taşıma fiilinden kaynaklanan kaza, eşya hasarı veya gecikmelerden doğrudan Şoför sorumludur [DOĞRULAMA GEREKLİ: Taşıma Sigortası Kapsamı]. NakliyeGo tarafların şikâyet ve hakemlik süreçlerini yönetir.
-
-6. YETKİLİ MAHKEME
-Uyuşmazlıkların çözümünde İzmir Mahkemeleri ve İcra Daireleri [DOĞRULAMA GEREKLİ: Yetkili Mahkeme] yetkilidir.`,
+  "kvkk": {
+    "id": "kvkk",
+    "title": "KVKK Aydınlatma Metni",
+    "subtitle": "Hukuk incelemesi bekleyen taslak",
+    "version": "1.0.0",
+    "updatedAt": "28 Ekim 2026",
+    "draft": true,
+    "content": "TASLAK — 28 Ekim 2026. Yayımlanmadan önce hukuk ve işletme incelemesi gereklidir. Bu metin yürürlük veya mevzuata uygunluk onayı değildir.\n\nVeri sorumlusu: [RESMÎ TİCARET SİCİLİNDEN DOĞRULANACAK UNVAN]. Adres, başvuru kanalı, MERSİS/vergi bilgileri ve yetkili temsilci resmî kayıtlardan doğrulanıp doldurulmalıdır.\n\nTOPLANAN VERİLER VE AMAÇLAR\nHesap açma ve iletişim: ad, telefon, e-posta, parola özeti, kullanıcı ve oturum kimlikleri. Nakliye organizasyonu: adres, seçilen koordinatlar, yük bilgileri, teklifler, teslimat kanıtı ve durum geçmişi. Şoför doğrulaması: araç, plaka ve yüklenen mesleki belgeler. Destek: mesaj, fotoğraf, konum paylaşımı ve şikâyetler. Kurumsal hesap: şirket, yetkili ve vergi/fatura bilgileri. Cüzdan: bakiye, rezervasyon, komisyon ve hareket kayıtları. Güvenlik: erişim kayıtları, IP ve cihaz bildirim belirteçleri.\n\nİŞLEME VE AKTARIM\nVeriler kullanıcı girdileri, izin verilen cihaz özellikleri ve hizmet işlemleri yoluyla elektronik ortamda toplanır. Sözleşmenin yürütülmesi, hukuki yükümlülük, hakların korunması ve güvenlik amaçlarının her veri kategorisi için hukuki dayanağı hukuk incelemesinde belirlenmelidir. Bu taslak bütün işlemleri açık rızaya bağlamaz.\nİşin tarafları gerekli nakliye bilgilerini; yetkili personel destek ve inceleme kayıtlarını görebilir. AWS barındırma/yedekleme, Expo ve Apple/Google bildirim hizmetleri ile yapılandırılmış e-posta/harita sağlayıcıları bakımından alıcılar, ülkeler ve yurt dışı aktarım mekanizmaları doğrulanmalıdır.\n\nHAKLAR VE BAŞVURU\nKVKK kapsamındaki bilgi alma, erişim/düzeltme, şartları varsa silme veya yok etme, aktarılanlara bildirme, otomatik analiz sonucuna itiraz ve zararın giderilmesi talepleri doğrulanacak veri sorumlusu başvuru kanalına iletilebilir. Uygulamada hesap silme, web üzerinde /account-deletion talep yolu bulunur. Aydınlatma okundu kaydı, isteğe bağlı pazarlama veya analitik rızası değildir."
   },
-
-  privacy: {
-    id: 'privacy',
-    title: 'Gizlilik Politikası',
-    subtitle: 'Kişisel Verilerin Korunması ve Gizlilik İlkeleri',
-    version: CURRENT_TERMS_VERSION,
-    updatedAt: CURRENT_TERMS_DATE,
-    content: `NAKLİYEGO GİZLİLİK POLİTİKASI (PRIVACY POLICY)
-
-Sürüm: 1.0.0 | Yürürlük: 14 Ekim 2026
-
-1. VERİ SORUMLUSU
-Feti Akşit Limited Şirketi [DOĞRULAMA GEREKLİ: Resmî Ticaret Sicil Unvanı Kontrolü]
-Vergi Dairesi / VKN: Hasan Tahsin Vergi Dairesi — 3850507457
-Adres: 6220 Sokak No: 12/A, Bornova / İzmir
-E-posta: zeytinavm@gmail.com
-
-2. TOPLANAN VERİLER
-- Kimlik ve Hesap: Ad, soyad, telefon numarası, e-posta, parola özeti (Argon2id), kurumsal hesaplar için unvan ve vergi no.
-- Şoför ve Araç: Plaka, araç türü, kasa boyutları, taşıma kapasitesi, ehliyet, SRC ve psikoteknik belgeleri.
-- Konum Bilgisi: Müşteriler için adres seçimi ön plan konumu; şoförler için yakındaki işleri listeleme (ön plan) ve aktif taşıma esnasında müşteriye canlı rota takibi (ön plan ve arka plan konumu).
-- İçerik ve Güvenlik: Kargo fotoğrafları, teslimat kodu, teslimat kanıt fotoğrafı, operasyonel mesajlar ve sistem logları.
-
-3. VERİLERİN İŞLENME AMAÇLARI
-İlan oluşturma, şoför eşleştirme, güvenli teslimat teyidi, faturalandırma ve 5651 sayılı kanun kapsamındaki yasal loglama yükümlülüklerinin yerine getirilmesi.
-
-4. ÜÇÜNCÜ TARAFLARLA PAYLAŞIM
-Verileriniz hiçbir surette satılmaz veya pazarlama amaçlı kiralanmaz. Yalnızca:
-- Eşleşen Karşı Taraf: Taşımanın ifası için ad, telefon ve taşıma adresi,
-- Google Maps Platform: Adres arama ve rota hesabı için koordinatlar,
-- Resend: Doğrulama ve şifre sıfırlama e-postaları,
-- Yasal merciler: Resmi zorunluluk halinde.
-
-5. VERİ GÜVENLİĞİ VE HESAP SİLME
-Veriler TLS şifrelemesi ve Argon2id parola özetleme ile korunur. Kullanıcılar 'Profil > Hesap İşlemleri > Hesabımı Sil' adımından diledikleri an hesaplarını silebilirler.`,
+  "privacy": {
+    "id": "privacy",
+    "title": "Gizlilik Politikası",
+    "subtitle": "Hukuk incelemesi bekleyen taslak",
+    "version": "1.0.0",
+    "updatedAt": "28 Ekim 2026",
+    "draft": true,
+    "content": "TASLAK — 28 Ekim 2026. Yayımlanmadan önce hukuk ve işletme incelemesi gereklidir. Bu metin yürürlük veya mevzuata uygunluk onayı değildir.\n\nVeri sorumlusu: [RESMÎ TİCARET SİCİLİNDEN DOĞRULANACAK UNVAN]. Adres, başvuru kanalı, MERSİS/vergi bilgileri ve yetkili temsilci resmî kayıtlardan doğrulanıp doldurulmalıdır.\n\nHizmet hesap, iletişim, adres/konum, şoför araç ve belge, mesaj, nakliye ve cüzdan verilerini işler. Kullanıcı kimlikleri ve bildirim tokenları kişisel veri niteliğinde değerlendirilmeli; takma adlandırma anonimleştirme sayılmamalıdır.\n\nKonum, kamera ve fotoğraf erişimleri ilgili özelliği kullandığınızda istenir. Konum izni olmadan adres elle girilebilir. Mevcut kodda sürekli arka plan konum takibi yoktur. Bildirim izni hesap içindeki bildirim ayarlarından istenir. Bildirim onayı, kurumsal ödeme planının şoför tarafından kabul edilmesi yerine geçmez.\n\nİsteğe bağlı pazarlama seçimi ayrıdır. Ayrı bir analitik tercihi bulunmadığından mobil analitik aktarımı kapalı tutulur; pazarlama izni analitik izni sayılmaz. Harita/rota istekleri, e-posta ve push sağlayıcıları için gerçek dağıtım yapılandırması ayrıca incelenmelidir.\n\nHesap kapatıldığında profil adı/iletişim bilgileri değiştirilir, giriş ve bildirim bağlantıları iptal edilir. Nakliye, mesaj, şikâyet, şirket, cüzdan ve onaylı belge kayıtlarının tamamı otomatik silinmez. Ayrıntı ve inceleme gereksinimleri hesap silme metnindedir. Yedeklerin erişimi, yaşam döngüsü ve işlemci sözleşmeleri yayımdan önce doğrulanmalıdır."
   },
-
-  kvkk: {
-    id: 'kvkk',
-    title: 'KVKK Aydınlatma Metni',
-    subtitle: '6698 Sayılı Kanun Madde 10 Bilgilendirmesi',
-    version: CURRENT_TERMS_VERSION,
-    updatedAt: CURRENT_TERMS_DATE,
-    content: `6698 SAYILI KVKK KAPSAMINDA AYDINLATMA METNİ
-
-Sürüm: 1.0.0 | Yürürlük: 14 Ekim 2026
-
-1. VERİ SORUMLUSUNUN KİMLİĞİ
-Feti Akşit Limited Şirketi [DOĞRULAMA GEREKLİ: Resmî Ticaret Sicil Unvanı Kontrolü]
-Vergi Dairesi / VKN: Hasan Tahsin Vergi Dairesi — 3850507457
-Tebligat Adresi: 6220 Sokak No: 12/A, Bornova / İzmir
-E-posta: zeytinavm@gmail.com | KEP: [DOĞRULAMA GEREKLİ: KEP Adresi]
-
-2. HUKUKİ SEBEPLER (KVKK m. 5 ve 6)
-- Sözleşmenin Kurulması ve İfası (m. 5/2-c): İlan eşleme, taşıma icrası, mesajlaşma, 6 haneli teslimat kodu doğrulaması.
-- Hukuki Yükümlülük (m. 5/2-ç): 5651 sayılı Kanun logları, TTK ve VUK uyarınca muhasebe kayıtları.
-- Meşru Menfaat (m. 5/2-f): Dolandırıcılık engelleme, sistem güvenliği, anonim hata izleme.
-- Açık Rıza (m. 5/1): İsteğe bağlı ticari ileti ve pazarlama onayları.
-
-3. İLGİLİ KİŞİNİN HAKLARI (KVKK m. 11)
-Veri sahipleri; verilerinin işlenip işlenmediğini öğrenme, yanlış verileri düzelttirme, silinmesini talep etme ve kanuna aykırı işleme sebebiyle zararın giderilmesini isteme haklarına sahiptir.
-Başvurularınızı sistemde kayıtlı e-postanızdan zeytinavm@gmail.com adresine gönderebilirsiniz. Talepleriniz en geç 30 gün içinde sonuçlandırılır.`,
+  "terms": {
+    "id": "terms",
+    "title": "Kullanım Koşulları",
+    "subtitle": "Hukuk incelemesi bekleyen taslak",
+    "version": "1.0.0",
+    "updatedAt": "28 Ekim 2026",
+    "draft": true,
+    "content": "TASLAK — 28 Ekim 2026. Yayımlanmadan önce hukuk ve işletme incelemesi gereklidir. Bu metin yürürlük veya mevzuata uygunluk onayı değildir.\n\nVeri sorumlusu: [RESMÎ TİCARET SİCİLİNDEN DOĞRULANACAK UNVAN]. Adres, başvuru kanalı, MERSİS/vergi bilgileri ve yetkili temsilci resmî kayıtlardan doğrulanıp doldurulmalıdır.\n\nNakliyeGo, müşteri talepleri, şoför teklifleri, iletişim ve nakliye takibi sağlar. Tarafların ticari/hukuki sıfatları, hizmet sorumluluğu, sigorta, ücret, vergi, iptal ve uyuşmazlık hükümleri işletme ve hukuk incelemesiyle kesinleştirilmelidir. Bu taslak sorumlulukları tek tarafa yüklemez veya mahkeme belirlemez.\n\nKurumsal müşteri teklif seçip nihai ödeme dağılımını gönderir. Kredi sıfır olsa da şoförün ödeme planını ayrıca kabul etmesi gerekir. Teklif vermek sonradan belirlenen kredi dağılımına rıza değildir. Kabul öncesi işe başlanamaz; tutar değişirse yeniden onay gerekir. Ret halinde kredi rezervasyonu serbest bırakılır. Kabul edilen kredi yalnız tamamlanan teslimatta şoför cüzdanına bir kez aktarılır; standart komisyon ayrı işlemdir.\n\nKullanıcı doğru ve güncel bilgi sağlamalı, yetkili olmadığı veri/belgeyi yüklememeli ve hukuka aykırı yük taşımamalıdır. Teslimat kanıtları ve doğrulama kodu yalnız gerçek teslimat sırasında kullanılmalıdır. Şikâyet ve hesap kapatma yolları uygulamada bulunur. Hesap kapatma mevcut parasal hak ve yükümlülükleri ortadan kaldırmaz."
   },
-
-  consent: {
-    id: 'consent',
-    title: 'Açık Rıza Metinleri',
-    subtitle: 'Ticari İletişim ve İsteğe Bağlı Veri İşleme Onayları',
-    version: CURRENT_TERMS_VERSION,
-    updatedAt: CURRENT_TERMS_DATE,
-    content: `NAKLİYEGO AÇIK RIZA BEYANLARI
-
-Sürüm: 1.0.0 | Yürürlük: 14 Ekim 2026
-
-ÖNEMLİ İLKE:
-Aydınlatma yükümlülüğü tek taraflı bilgilendirme olup onay gerektirmez. Aşağıdaki açık rıza beyanları tamamen İSTEĞE BAĞLIDIR ve varsayılan olarak İŞARETLENMEMİŞTİR. Onay vermemeniz temel nakliye aracılık hizmetini kullanmanızı engellemez.
-
-1. TİCARİ ELEKTRONİK İLETİ VE PAZARLAMA RIZASI
-NakliyeGo tarafından sunulan özel indirimler, avantajlı nakliye fırsatları ve kampanyalar hakkında SMS, e-posta, telefon ve anlık mobil bildirim kanalları üzerinden ticari elektronik ileti gönderilmesine ve iletişim verilerimin pazarlama amacıyla işlenmesine onay veriyorum.
-(Bu izni dilediğiniz zaman uygulama içi Bildirim Ayarları alanından ücretsiz olarak geri alabilirsiniz.)
-
-2. ŞOFÖRLER İÇİN BOŞ DÖNÜŞ VE İŞ ÖNERİSİ KONUM RIZASI
-Üzerimde aktif bir taşıma görevi bulunmadığı zamanlarda da, boş kilometre yapmamı önlemek amacıyla bulunduğum bölgedeki yeni nakliye ilanlarının bana anlık olarak önerilmesi için konum verilerimin işlenmesine onay veriyorum.
-(Aktif bir yük taşırken konum takibi sözleşme ifası gereğidir; bu rıza yalnızca boşta olunan zamanları kapsar.)`,
+  "deletion": {
+    "id": "deletion",
+    "title": "Hesap ve Veri Silme Bilgilendirmesi",
+    "subtitle": "Hukuk incelemesi bekleyen taslak",
+    "version": "1.0.0",
+    "updatedAt": "28 Ekim 2026",
+    "draft": true,
+    "content": "TASLAK — 28 Ekim 2026. Yayımlanmadan önce hukuk ve işletme incelemesi gereklidir. Bu metin yürürlük veya mevzuata uygunluk onayı değildir.\n\nVeri sorumlusu: [RESMÎ TİCARET SİCİLİNDEN DOĞRULANACAK UNVAN]. Adres, başvuru kanalı, MERSİS/vergi bilgileri ve yetkili temsilci resmî kayıtlardan doğrulanıp doldurulmalıdır.\n\nMüşteri ve şoför uygulamalarında Hesap > Hesabımı Sil yolunu açın; mevcut parolanızı girin ve kapatmayı onaylayın. Uygulamaya erişemiyorsanız herkese açık /account-deletion formuna kayıtlı e-posta veya telefonunuzu yazın. Gerekçe isteğe bağlıdır; kimlik belgesi veya hassas veri yazmayın. Web talebi doğrudan hesap silmez; destek kayıtlı iletişim kanalından kimlik doğrular.\n\nKapanmamış nakliye, ödeme onayı veya teslim edilmiş fakat tamamlanmamış iş varsa önce iş tamamlanmalı/iptal edilmelidir. Şoför açık ilandaki bekleyen teklifini önce geri çekmelidir. Profil adı/telefon/e-posta değiştirilir, parola kaldırılır, oturum ve push bağlantıları iptal edilir. Araçlar devre dışı bırakılır, araç fotoğrafları ve doğrulanmamış belge dosyaları kaldırılır. Onaylı mesleki belgeler mevcut davranış gereği inceleme için korunur.\n\nNakliye geçmişi, mesajlar, şikâyetler, şirket kayıtları, cüzdan bakiyesi/hareketleri ve hesap silme başvuru kaydı topluca silinmez. Bunlar geri bağlanabilir; tam ve geri döndürülemez anonimleştirme iddiası yoktur. Bakiye, komisyon rezervasyonu veya açık şikâyet varsa kapatma öncesi destek mutabakatı gerekir. Otomatik iade/ödeme yapılmaz; finansal kayıtlar korunur. Açık şikâyetlerde hangi kayıtların gerekli olduğu ayrıca değerlendirilir.\n\nHer kategori için saklama gerekçesi, süre, sorumlu, erişim ve imha prosedürü hukuk incelemesiyle kesinleştirilecektir. Otomatik süreli imha veya yedeklerden anında silme mevcut kodda yoktur. Gerekli olmayan kalan verilerin silinmesi/ayrıştırılması ve yedek restorasyonunda silme taleplerinin yeniden uygulanması yayım öncesi tamamlanmalıdır."
   },
-
-  location: {
-    id: 'location',
-    title: 'Konum Verisi Aydınlatması',
-    subtitle: 'Ön Plan ve Arka Plan Konum İzin Bilgilendirmesi',
-    version: CURRENT_TERMS_VERSION,
-    updatedAt: CURRENT_TERMS_DATE,
-    content: `NAKLİYEGO KONUM VERİSİ İŞLEME VE İZİN AYDINLATMASI
-
-Sürüm: 1.0.0 | Yürürlük: 14 Ekim 2026
-
-1. MÜŞTERİ UYGULAMASI KONUM KULLANIMI
-- Ön Plan Konumu: Yükleme ve boşaltma adreslerinin harita üzerinde hızlı seçilmesi ve Google Maps rota mesafe hesabı için kullanılır.
-- Arka Plan Takibi: Müşteri uygulamasında kesinlikle arka plan konumu ALINMAZ ve İŞLENMEZ.
-
-2. ŞOFÖR UYGULAMASI KONUM KULLANIMI
-- Yakındaki İlanlar (Ön Plan): Şoförün mevcut konumuna yakın yükleri listeleyerek yakıt tasarrufu sağlamak için kullanılır.
-- Canlı Sefer Takibi (Ön Plan & Arka Plan): Şoför teklifi kabul edilen bir yükü teslim almaya veya teslimata götürürken, uygulama simge durumuna küçültülse dahi müşteriye tahmini varış süresi (ETA) ve yük güvenliği takibi sunabilmek için arka plan konumu kullanılır.
-
-3. KESİN GÜVENLİK SINIRI
-- Şoförün üzerinde aktif ve devam eden bir taşıma yoksa arka plan konumu ASLA İŞLENMEZ.
-- Teslimat kodu girilip taşıma tamamlandığı anda canlı konum paylaşımı derhal DURDURULUR.
-- Konum izinleri cihaz ayarlarından (iOS/Android) dilediğiniz zaman değiştirilebilir.`,
+  "consent": {
+    "id": "consent",
+    "title": "İsteğe Bağlı Açık Rıza",
+    "subtitle": "Hukuk incelemesi bekleyen taslak",
+    "version": "1.0.0",
+    "updatedAt": "28 Ekim 2026",
+    "draft": true,
+    "content": "TASLAK — 28 Ekim 2026. Yayımlanmadan önce hukuk ve işletme incelemesi gereklidir. Bu metin yürürlük veya mevzuata uygunluk onayı değildir.\n\nVeri sorumlusu: [RESMÎ TİCARET SİCİLİNDEN DOĞRULANACAK UNVAN]. Adres, başvuru kanalı, MERSİS/vergi bilgileri ve yetkili temsilci resmî kayıtlardan doğrulanıp doldurulmalıdır.\n\nKVKK aydınlatmasının okunması ile açık rıza farklı işlemlerdir. Hizmet için gerekli veri işleme, ilgili hukuki dayanağı belirlenmeden genel bir rıza kutusuyla meşrulaştırılamaz.\n\nPazarlama tercihi isteğe bağlı ve başlangıçta kapalıdır; kayıtta ayrı seçilir ve hesap ayarlarından geri alınabilir. Hizmet bu seçime bağlanmaz. Ticari ileti gönderiminde kanal, kapsam, İYS ve ispat yükümlülükleri doğrulanmalıdır.\n\nAnalitik aktarımı için ayrı tercih arayüzü henüz yoktur; bu nedenle mobil PostHog aktarımı kapalı tutulur. Konum/fotoğraf/bildirim işletim sistemi izinleri, pazarlama veya yurt dışı aktarım için genel açık rıza değildir. Özel nitelikli veri içerebilen şoför belgelerinin gerekliliği, hukuki dayanağı ve erişimi ayrıca incelenmelidir."
   },
-
-  deletion: {
-    id: 'deletion',
-    title: 'Hesap ve Veri Silme Politikası',
-    subtitle: 'Hesap Kapatma ve Veri İmha Prosedürü',
-    version: CURRENT_TERMS_VERSION,
-    updatedAt: CURRENT_TERMS_DATE,
-    content: `NAKLİYEGO HESAP VE KİŞİSEL VERİ SİLME POLİTİKASI
-
-Sürüm: 1.0.0 | Yürürlük: 14 Ekim 2026
-
-1. HESAP SİLME YÖNTEMLERİ
-- Mobil Uygulama: 'Profil > Hesap İşlemleri > Hesabımı Sil' adımı ile şifrenizi doğrulayarak hemen silebilirsiniz.
-- Web Portalı (Google Play Uyumu): https://nakliyego.com/account-deletion adresinden dışarıdan silme talebi iletebilirsiniz.
-
-2. SİLME ÖNCESİ GEREKLİLİKLER
-- Aktif ve devam eden nakliye görevi bulunan kullanıcılar, taşıma tamamlanmadan veya iptal edilmeden hesap silemez.
-- Açık bakiye uyuşmazlığı veya devam eden şikâyet incelemesi varsa neticelendirilmesi gerekir.
-
-3. SİLME VE ANONİMLEŞTİRME SÜRECİ
-- Hesap silindiğinde tüm oturum tokenları ve bildirim anahtarları derhal iptal edilir.
-- Kullanıcı adı, telefonu ve e-postası geri döndürülemez biçimde 'Silinmiş Kullanıcı' olarak anonimleştirilir.
-- Yasal Saklama: TTK ve VUK gereği fatura/muhasebe kayıtları 10 yıl, 5651 logları 2 yıl boyunca yetkisiz erişime kapalı arşivde saklanır ve süre bitiminde imha edilir.`,
+  "location": {
+    "id": "location",
+    "title": "Konum Bilgilendirmesi",
+    "subtitle": "Hukuk incelemesi bekleyen taslak",
+    "version": "1.0.0",
+    "updatedAt": "28 Ekim 2026",
+    "draft": true,
+    "content": "TASLAK — 28 Ekim 2026. Yayımlanmadan önce hukuk ve işletme incelemesi gereklidir. Bu metin yürürlük veya mevzuata uygunluk onayı değildir.\n\nVeri sorumlusu: [RESMÎ TİCARET SİCİLİNDEN DOĞRULANACAK UNVAN]. Adres, başvuru kanalı, MERSİS/vergi bilgileri ve yetkili temsilci resmî kayıtlardan doğrulanıp doldurulmalıdır.\n\nKonum yalnız adres seçme veya konuşmada konum paylaşma eylemi sırasında talep edilir. Kullanıcı koordinatları nakliye adresi veya mesajın parçası olabilir. Elle adres girişi alternatifidir. Kamera/fotoğraf yalnız belge, yük, mesaj veya teslimat görseli ekleme sırasında istenir. Mevcut kod sürekli arka plan takibi yapmaz. İzinler cihaz ayarlarından geri alınabilir; önceden gönderilmiş içerik ayrıca silme incelemesine tabidir."
   },
-
-  driverTerms: {
-    id: 'driverTerms',
-    title: 'Şoför Hizmet Koşulları',
-    subtitle: 'Bağımsız Taşıyıcı Kullanım Standartları',
-    version: CURRENT_TERMS_VERSION,
-    updatedAt: CURRENT_TERMS_DATE,
-    content: `NAKLİYEGO TAŞIYICI (ŞOFÖR) HİZMET KOŞULLARI
-
-Sürüm: 1.0.0 | Yürürlük: 14 Ekim 2026
-
-1. BAĞIMSIZ STATÜ
-Şoför, NakliyeGo'nun personeli veya acentesi değil; kendi nam ve hesabına faaliyet gösteren bağımsız bir nakliyecidir. NakliyeGo yalnızca aracı teknoloji platformudur.
-
-2. GEREKLİ YASAL BELGELER
-Şoför platformda iş yapabilmek için:
-- Geçerli Sürücü Belgesi (Ehliyet),
-- Mesleki Yeterlilik Belgesi (SRC 3 / SRC 4),
-- Psikoteknik Raporu,
-- K1 veya K2 Taşıma Yetki Belgesi,
-- Zorunlu Trafik Sigortasını eksiksiz sağlamakla yükümlüdür.
-
-3. TEKLİF VE GÜVENLİ TESLİMAT KURALI
-- Kabul edilen teklif bağlayıcıdır. Keyfi iptaller hesap dondurma sebebidir.
-- Taşıma tamamlandığında alıcıdan 6 haneli Güvenlik Teslimat Kodu alınarak sisteme girilmeli ve net bir Teslimat Kanıt Fotoğrafı yüklenmelidir.
-
-4. KOMİSYON VE VERGİ
-NakliyeGo her tamamlanan işten belirlenen oranda platform hizmet bedeli tahakkuk ettirir. Şoför kendi vergi ve fatura yükümlülüklerinden bizzat sorumludur.`,
+  "retention": {
+    "id": "retention",
+    "title": "Veri Saklama ve İmha",
+    "subtitle": "Hukuk incelemesi bekleyen taslak",
+    "version": "1.0.0",
+    "updatedAt": "28 Ekim 2026",
+    "draft": true,
+    "content": "TASLAK — 28 Ekim 2026. Yayımlanmadan önce hukuk ve işletme incelemesi gereklidir. Bu metin yürürlük veya mevzuata uygunluk onayı değildir.\n\nVeri sorumlusu: [RESMÎ TİCARET SİCİLİNDEN DOĞRULANACAK UNVAN]. Adres, başvuru kanalı, MERSİS/vergi bilgileri ve yetkili temsilci resmî kayıtlardan doğrulanıp doldurulmalıdır.\n\nBu metin uygulanmış otomatik imha sistemi olduğunu iddia etmez. Hesap kapatma operasyonel erişimi sonlandırır; finansal, nakliye, mesaj, şikâyet ve onaylı belge kayıtları ayrıca değerlendirilir.\n\nHukuk incelemesi her veri kategorisinde amaç/dayanak, başlangıç olayı, süre, uyuşmazlık nedeniyle saklama, erişim yetkisi ve silme/anonimleştirme yöntemini belgelemelidir. Bu inceleme yapılmadan 2/3/10 yıl gibi süreler kodlanmaz. Psikoteknik/adli sicil gibi hassas içeriklerin gerekliliği öncelikle sorgulanmalıdır. Yedek ve log yaşam döngüsü ile restorasyon sonrası silme kayıtlarının uygulanması ayrıca doğrulanmalıdır."
   },
-
-  customerTerms: {
-    id: 'customerTerms',
-    title: 'Müşteri Hizmet Koşulları',
-    subtitle: 'Nakliye Talep ve Taşıma Standartları',
-    version: CURRENT_TERMS_VERSION,
-    updatedAt: CURRENT_TERMS_DATE,
-    content: `NAKLİYEGO MÜŞTERİ NAKLİYE HİZMET KOŞULLARI
-
-Sürüm: 1.0.0 | Yürürlük: 14 Ekim 2026
-
-1. İLAN VE DOĞRU BEYAN
-Müşteri eşyaların ağırlığı, ölçüleri, kırılganlık durumu, kat numarası ve asansör durumunu eksiksiz belirtmelidir. Eksik beyan sebebiyle oluşacak ilave iş gücü ve intikal maliyetleri müşteriye aittir.
-
-2. AMBALAJ VE PAKETLEME
-Eşyaların karayolu nakliyesine uygun koruyucu ambalajla paketlenmesi müşterinin sorumluluğundadır.
-
-3. 6 HANELİ GÜVENLİK KODU KURALI
-Müşteri, yük sağlam ve hasarsız teslim edilmeden önce güvenlik kodunu şoföre kesinlikle vermemelidir. Kodun verilmesi ve sisteme girilmesi eşyanın eksiksiz ve sağlam teslim alındığının yasal ibra beyanıdır.
-
-4. KURUMSAL CÜZDAN
-Kurumsal müşteriler onaylı bakiyelerini kullanarak faturalı nakliye hizmeti alabilirler.`,
+  "driverTerms": {
+    "id": "driverTerms",
+    "title": "Şoför Hizmet Koşulları",
+    "subtitle": "Hukuk incelemesi bekleyen taslak",
+    "version": "1.0.0",
+    "updatedAt": "28 Ekim 2026",
+    "draft": true,
+    "content": "TASLAK — 28 Ekim 2026. Yayımlanmadan önce hukuk ve işletme incelemesi gereklidir. Bu metin yürürlük veya mevzuata uygunluk onayı değildir.\n\nVeri sorumlusu: [RESMÎ TİCARET SİCİLİNDEN DOĞRULANACAK UNVAN]. Adres, başvuru kanalı, MERSİS/vergi bilgileri ve yetkili temsilci resmî kayıtlardan doğrulanıp doldurulmalıdır.\n\nAraç ve gerekli belgeler yalnız hizmet yeterliliği için istenir; hangi belgelerin zorunlu olduğu hukuk/işletme incelemesi bekler. Fazladan kimlik, sağlık veya adli sicil belgesi yüklemeyin.\n\nKurumsal işte toplam teklif, müşteriden alınacak nakit ve tamamlanma sonrası cüzdana aktarılacak kredi ayrı gösterilir. Şoför kabul veya ret verir. Teklif verme ödeme planı onayı değildir. Bildirim almak kabul anlamına gelmez; backend durumu belirleyicidir. Komisyon kredi aktarımından ayrıdır. Hesap kapatmada cüzdan ve nakliye kayıtları kontrolsüz silinmez."
   },
-
-  dispute: {
-    id: 'dispute',
-    title: 'İptal ve Uyuşmazlık Prosedürü',
-    subtitle: 'Şikâyet Yönetimi ve Hakemlik Esasları',
-    version: CURRENT_TERMS_VERSION,
-    updatedAt: CURRENT_TERMS_DATE,
-    content: `NAKLİYEGO İPTAL, ŞİKÂYET VE UYUŞMAZLIK PROSEDÜRÜ
-
-Sürüm: 1.0.0 | Yürürlük: 14 Ekim 2026
-
-1. İPTAL KURALLARI
-- Teklif kabulü öncesi ilan iptali ücretsizdir.
-- Şoför adrese intikal ettikten sonra müşterinin keyfi iptalinde şoförün asgari yol masrafı tazmin edilir.
-- Şoförün haksız iptalinde ceza puanı ve hesap askıya alma uygulanır.
-
-2. ŞİKÂYET KATEGORİLERİ
-Uygulamada 'Profil > Destek > Şikâyet ve Öneri' menüsünden:
-- Ödeme anlaşmazlığı,
-- Hasar ve zayiat,
-- Gelmeme (no-show),
-- Yanlış yük beyanı,
-- Güvenlik ve ahlaka aykırı davranış başlıklarında destek talebi açılabilir.
-
-3. TÜKETİCİ HAKLARI
-Uyuşmazlıklarda Tüketici Hakem Heyetleri ve Tüketici Mahkemelerine başvuru hakkı saklıdır.`,
+  "customerTerms": {
+    "id": "customerTerms",
+    "title": "Müşteri Hizmet Koşulları",
+    "subtitle": "Hukuk incelemesi bekleyen taslak",
+    "version": "1.0.0",
+    "updatedAt": "28 Ekim 2026",
+    "draft": true,
+    "content": "TASLAK — 28 Ekim 2026. Yayımlanmadan önce hukuk ve işletme incelemesi gereklidir. Bu metin yürürlük veya mevzuata uygunluk onayı değildir.\n\nVeri sorumlusu: [RESMÎ TİCARET SİCİLİNDEN DOĞRULANACAK UNVAN]. Adres, başvuru kanalı, MERSİS/vergi bilgileri ve yetkili temsilci resmî kayıtlardan doğrulanıp doldurulmalıdır.\n\nTalepte yalnız gerekli yük, adres, iletişim ve erişim bilgilerini paylaşın. Üçüncü kişilerin gereksiz kimlik veya hassas verilerini eklemeyin.\n\nKurumsal ödeme planı şoförün ayrıca onayına tabidir; onay beklerken iş başlayamaz. Ret halinde rezervasyon çözülür ve yeniden teklif seçilebilir. Bireysel akış değişmez. Fiyat, iptal, sigorta, fatura ve tüketici haklarına ilişkin bağlayıcı hükümler hukuk incelemesinde kesinleştirilmelidir."
   },
-
-  retention: {
-    id: 'retention',
-    title: 'Veri Saklama ve İmha Politikası',
-    subtitle: 'Saklama Süreleri ve Periyodik İmha Tablosu',
-    version: CURRENT_TERMS_VERSION,
-    updatedAt: CURRENT_TERMS_DATE,
-    content: `NAKLİYEGO KİŞİSEL VERİ SAKLAMA VE İMHA POLİTİKASI
-
-Sürüm: 1.0.0 | Yürürlük: 14 Ekim 2026
-
-1. SAKLAMA SÜRELERİ
-- Üyelik ve Kimlik Kayıtları: Hesap aktifliği + 10 yıl (TTK zamanaşımı)
-- Fatura ve Mali Hareketler: 10 yıl (VUK m. 253, TTK m. 82)
-- Taşıma ve Teslimat Kodları: 3 yıl (Karayolu Taşıma Kanunu ve zamanaşımı)
-- Konum Kayıtları: Sefer tamamlandıktan sonra 3 yıl
-- Sistem ve Erişim Logları: 2 yıl (5651 sayılı Kanun)
-- Destek ve Şikâyet Kayıtları: 3 yıl
-
-2. İMHA YÖNTEMLERİ
-Süresi dolan veriler 6 ayda bir yapılan periyodik imha süreçlerinde güvenli silme, manyetik/kriptografik yok etme veya geri döndürülemez anonimleştirme yöntemleriyle imha edilir.`,
+  "dispute": {
+    "id": "dispute",
+    "title": "İptal ve Uyuşmazlık",
+    "subtitle": "Hukuk incelemesi bekleyen taslak",
+    "version": "1.0.0",
+    "updatedAt": "28 Ekim 2026",
+    "draft": true,
+    "content": "TASLAK — 28 Ekim 2026. Yayımlanmadan önce hukuk ve işletme incelemesi gereklidir. Bu metin yürürlük veya mevzuata uygunluk onayı değildir.\n\nVeri sorumlusu: [RESMÎ TİCARET SİCİLİNDEN DOĞRULANACAK UNVAN]. Adres, başvuru kanalı, MERSİS/vergi bilgileri ve yetkili temsilci resmî kayıtlardan doğrulanıp doldurulmalıdır.\n\nŞikâyeti uygulamadaki destek/şikâyet kanalıyla iletin; yalnız ilgili iş ve gerekli kanıtları paylaşın. Açık şikâyetin hesap silmeye ve delil saklamaya etkisi yetkili destek ve hukuk incelemesiyle değerlendirilir. Hesap kapatma parasal hakları veya şikâyeti kendiliğinden sona erdirmez. Kesin çözüm süresi, yetkili mahkeme veya otomatik tazminat taahhüdü bu taslakta verilmez."
   },
-
-  cookies: {
-    id: 'cookies',
-    title: 'Çerez ve Analitik Politikası',
-    subtitle: 'Çerezler, Sentry ve PostHog Kullanım İlkeleri',
-    version: CURRENT_TERMS_VERSION,
-    updatedAt: CURRENT_TERMS_DATE,
-    content: `NAKLİYEGO ÇEREZ VE ANALİTİK POLİTİKASI
-
-Sürüm: 1.0.0 | Yürürlük: 14 Ekim 2026
-
-1. KULLANILAN ÇEREZLER
-Platformlarımızda yalnızca Zorunlu ve Güvenlik Çerezleri kullanılır. Reklam ve profil çıkarma çerezleri KULLANILMAZ.
-- Oturum ve Yetkilendirme: Giriş durumunu koruyan güvenli anahtarlar (Keychain / Keystore).
-- CSRF ve İstek Güvenliği Çerezleri.
-
-2. TEKNİK İZLEME VE GİZLİLİK
-- Sentry (Hata İzleme): Parola, token, telefon, e-posta ve açık adresler kod seviyesindeki PII filtresiyle temizlenir; yalnızca teknik hata yığını izlenir.
-- PostHog (Ürün Analitiği): Yalnızca sözde-anonim kullanım metrikleri toplanır; kimlik bilgileri kesinlikle aktarılmaz.
-
-3. TERCİH YÖNETİMİ
-Web tarayıcınızdan veya cihazınızın uygulama ayarlarından izinleri yönetebilirsiniz.`,
-  },
+  "cookies": {
+    "id": "cookies",
+    "title": "Çerez ve Analitik Bilgilendirmesi",
+    "subtitle": "Hukuk incelemesi bekleyen taslak",
+    "version": "1.0.0",
+    "updatedAt": "28 Ekim 2026",
+    "draft": true,
+    "content": "TASLAK — 28 Ekim 2026. Yayımlanmadan önce hukuk ve işletme incelemesi gereklidir. Bu metin yürürlük veya mevzuata uygunluk onayı değildir.\n\nVeri sorumlusu: [RESMÎ TİCARET SİCİLİNDEN DOĞRULANACAK UNVAN]. Adres, başvuru kanalı, MERSİS/vergi bilgileri ve yetkili temsilci resmî kayıtlardan doğrulanıp doldurulmalıdır.\n\nMobil uygulamalar oturum bilgilerini mevcut cihaz depolama mekanizmasıyla tutar; web yönetimi yönetici oturumunu saklar. Çıkışta oturum/push bağlantıları kaldırılır. Güvenlik belirteçleri reklam amacıyla kullanılmamalıdır.\n\nAyrı analitik rızası henüz alınmadığı için mobil analitik aktarımı kapalıdır. Pazarlama tercihi analitik tercihi yerine geçmez. Üçüncü taraf harita, e-posta ve bildirim hizmetleri için alıcı/ülke ve aktarım incelemesi gereklidir. Web üzerindeki gerçek çerez/depolama envanteri yayım ortamında ayrıca doğrulanmalıdır."
+  }
 };

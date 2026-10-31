@@ -1,0 +1,197 @@
+{
+  "run": "beta-consent-20261027-135713",
+  "base": "https://beta-api-18-157-76-136.sslip.io",
+  "steps": [
+    {
+      "method": "POST",
+      "path": "/api/auth/register",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/register",
+      "status": 200
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/admin/corporate-applications/5a3b02a3-6605-413b-9c49-ef842744ad88",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/corporate-wallets/5a3b02a3-6605-413b-9c49-ef842744ad88/adjustments",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/drivers/90caf874-cb13-4ebb-8c95-5429216a3c31/wallet/topups",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/corporate/wallet",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/loads",
+      "status": 201
+    },
+    {
+      "method": "POST",
+      "path": "/api/loads/48330d45-8fb9-4bab-ad45-5b06e860558b/publish",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/loads/48330d45-8fb9-4bab-ad45-5b06e860558b/offers",
+      "status": 201
+    },
+    {
+      "method": "POST",
+      "path": "/api/offers/c0b0e29b-ca8a-4cf8-a1dd-c3f7266642c3/accept",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/corporate/wallet",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/loads/48330d45-8fb9-4bab-ad45-5b06e860558b",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/loads/48330d45-8fb9-4bab-ad45-5b06e860558b",
+      "status": 200
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/loads/48330d45-8fb9-4bab-ad45-5b06e860558b/status",
+      "status": 403
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/listings/48330d45-8fb9-4bab-ad45-5b06e860558b/status",
+      "status": 403
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/admin/loads/48330d45-8fb9-4bab-ad45-5b06e860558b/status",
+      "status": 409
+    },
+    {
+      "method": "POST",
+      "path": "/api/loads/48330d45-8fb9-4bab-ad45-5b06e860558b/payment-approval",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/corporate/wallet",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/loads/48330d45-8fb9-4bab-ad45-5b06e860558b/payment-approval",
+      "status": 409
+    },
+    {
+      "method": "GET",
+      "path": "/api/corporate/wallet",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/offers/c0b0e29b-ca8a-4cf8-a1dd-c3f7266642c3/accept",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/loads/48330d45-8fb9-4bab-ad45-5b06e860558b/payment-approval",
+      "status": 409
+    },
+    {
+      "method": "POST",
+      "path": "/api/loads/48330d45-8fb9-4bab-ad45-5b06e860558b/payment-approval",
+      "status": 200
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/loads/48330d45-8fb9-4bab-ad45-5b06e860558b/status",
+      "status": 200
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/loads/48330d45-8fb9-4bab-ad45-5b06e860558b/status",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/corporate/wallet",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/loads",
+      "status": 201
+    },
+    {
+      "method": "POST",
+      "path": "/api/loads/f87483d6-9d1f-4cef-a06b-5aa45b3df489/publish",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/loads/f87483d6-9d1f-4cef-a06b-5aa45b3df489/offers",
+      "status": 201
+    },
+    {
+      "method": "POST",
+      "path": "/api/offers/7505da5a-2c95-402c-bf3f-1a7fc3f16137/accept",
+      "status": 200
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/loads/f87483d6-9d1f-4cef-a06b-5aa45b3df489/status",
+      "status": 403
+    },
+    {
+      "method": "POST",
+      "path": "/api/loads/f87483d6-9d1f-4cef-a06b-5aa45b3df489/payment-approval",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/corporate/wallet",
+      "status": 200
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/loads/f87483d6-9d1f-4cef-a06b-5aa45b3df489/status",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/corporate-wallets/5a3b02a3-6605-413b-9c49-ef842744ad88/adjustments",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/corporate/wallet",
+      "status": 200
+    }
+  ],
+  "loads": [
+    "48330d45-8fb9-4bab-ad45-5b06e860558b",
+    "f87483d6-9d1f-4cef-a06b-5aa45b3df489"
+  ],
+  "customerId": "5a3b02a3-6605-413b-9c49-ef842744ad88",
+  "driverId": "90caf874-cb13-4ebb-8c95-5429216a3c31",
+  "passed": true,
+  "testLoadsFinalStatus": "cancelled",
+  "amountCents": 410000,
+  "creditCents": 50000,
+  "cashCents": 360000
+}

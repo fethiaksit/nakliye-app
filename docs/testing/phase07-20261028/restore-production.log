@@ -1,0 +1,43 @@
+[2026-10-28 11:24:39] [NakliyeGo Restore Test - Production] S3 üzerindeki en güncel yedek taranıyor: s3://nakliyego-backups-292187657171/redis/production/
+[2026-10-28 11:24:39] [NakliyeGo Restore Test - Production] En güncel yedek tespit edildi: redis-prod-20261028_000001.rdb.tar.gz
+[2026-10-28 11:24:39] [NakliyeGo Restore Test - Production] Yedek arşivi indiriliyor: s3://nakliyego-backups-292187657171/redis/production/redis-prod-20261028_000001.rdb.tar.gz
+Completed 16.8 MiB/16.8 MiB (90.5 MiB/s) with 1 file(s) remainingdownload: s3://nakliyego-backups-292187657171/redis/production/redis-prod-20261028_000001.rdb.tar.gz to nakliyego-backup-work/restore/prod_20261028_112439_xs52852b1387258/redis-prod-20261028_000001.rdb.tar.gz
+[2026-10-28 11:24:39] [NakliyeGo Restore Test - Production] Zorunlu SHA-256 kontrol dosyası indiriliyor: s3://nakliyego-backups-292187657171/redis/production/redis-prod-20261028_000001.rdb.tar.gz.sha256
+Completed 104 Bytes/104 Bytes (2.3 KiB/s) with 1 file(s) remainingdownload: s3://nakliyego-backups-292187657171/redis/production/redis-prod-20261028_000001.rdb.tar.gz.sha256 to nakliyego-backup-work/restore/prod_20261028_112439_xs52852b1387258/redis-prod-20261028_000001.rdb.tar.gz.sha256
+[2026-10-28 11:24:39] [NakliyeGo Restore Test - Production] SHA-256 bütünlüğü zorunlu olarak kontrol ediliyor...
+redis-prod-20261028_000001.rdb.tar.gz: OK
+[2026-10-28 11:24:39] [NakliyeGo Restore Test - Production] ✅ SHA-256 doğrulaması BAŞARILI.
+[2026-10-28 11:24:39] [NakliyeGo Restore Test - Production] Arşiv bütünlüğü test ediliyor ve açılıyor...
+[2026-10-28 11:24:39] [NakliyeGo Restore Test - Production] Geri yüklenecek RDB dosyası redis-check-rdb ile inceleniyor...
+[offset 0] Checking RDB file /data/dump.rdb
+[offset 27] AUX FIELD redis-ver = '7.4.10'
+[offset 41] AUX FIELD redis-bits = '64'
+[offset 53] AUX FIELD ctime = '1793145603'
+[offset 68] AUX FIELD used-mem = '21656000'
+[offset 80] AUX FIELD aof-base = '0'
+[offset 82] Selecting DB ID 0
+[offset 17669301] Checksum OK
+[offset 17669301] \o/ RDB looks OK! \o/
+[info] 96 keys read
+[info] 3 expires
+[info] 0 already expired
+[info] 0 subexpires
+[2026-10-28 11:24:39] [NakliyeGo Restore Test - Production] RDB dosya formatı ve veri bütünlüğü doğrulandı.
+[2026-10-28 11:24:39] [NakliyeGo Restore Test - Production] Benzersiz izole Redis test container başlatılıyor: nakliye-restore-test-prod-20261028_112439-xs52852b1387258
+[2026-10-28 11:24:39] [NakliyeGo Restore Test - Production] İzole Redis servisinin hazır olması bekleniyor...
+[2026-10-28 11:24:39] [NakliyeGo Restore Test - Production] İzole Redis container hazır (PONG alındı).
+[2026-10-28 11:24:39] [NakliyeGo Restore Test - Production] RDB yükleme süreci doğrulanıyor...
+[2026-10-28 11:24:39] [NakliyeGo Restore Test - Production] Redis başlangıç günlüğünde RDB snapshot dosyasının diski okunarak belleğe başarıyla yüklendiği teyit edildi.
+[2026-10-28 11:24:39] [NakliyeGo Restore Test - Production] ==========================================================
+[2026-10-28 11:24:39] [NakliyeGo Restore Test - Production]    NAKLIYEGO VERİ DOĞRULAMA TEST RAPORU (Production)       
+[2026-10-28 11:24:39] [NakliyeGo Restore Test - Production] ==========================================================
+[2026-10-28 11:24:39] [NakliyeGo Restore Test - Production] Toplam Belleğe Yüklenen Anahtar Sayısı (DBSIZE): 96
+[2026-10-28 11:24:39] [NakliyeGo Restore Test - Production] Yük İlanları ('loads' zset count): 5
+[2026-10-28 11:24:39] [NakliyeGo Restore Test - Production] Kullanıcı Kayıtları ('user:*' count): 8
+[2026-10-28 11:24:39] [NakliyeGo Restore Test - Production] Şirket Kayıtları ('company:*' count): 8
+[2026-10-28 11:24:39] [NakliyeGo Restore Test - Production] Teklif Kayıtları ('offers:*' count): 2
+[2026-10-28 11:24:39] [NakliyeGo Restore Test - Production] ==========================================================
+[2026-10-28 11:24:39] [NakliyeGo Restore Test - Production] ✅ Restore testi, RDB yükleme ve veri bütünlüğü doğrulaması BAŞARIYLA TAMAMLANDI.
+[2026-10-28 11:24:39] [NakliyeGo Restore Test - Production] Test temizliği başlatılıyor...
+[2026-10-28 11:24:39] [NakliyeGo Restore Test - Production] Bu test tarafından oluşturulan izole test container silindi: nakliye-restore-test-prod-20261028_112439-xs52852b1387258
+[2026-10-28 11:24:39] [NakliyeGo Restore Test - Production] Geçici restore test dizini temizlendi: /home/ubuntu/nakliyego-backup-work/restore/prod_20261028_112439_xs52852b1387258

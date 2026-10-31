@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -130,17 +131,20 @@ func (s *RedisStore) SaveLoad(load models.Load) error {
 	if err != nil {
 		return err
 	}
-	pipe := s.client.TxPipeline()
-	pipe.Set(s.ctx, "load:"+load.ID, b, 0)
-	pipe.ZAdd(s.ctx, "loads", redis.Z{Score: float64(load.CreatedAt.Unix()), Member: load.ID})
-	if load.CustomerID != "" {
-		pipe.ZAdd(s.ctx, "loads:customer:"+load.CustomerID, redis.Z{Score: float64(load.CreatedAt.Unix()), Member: load.ID})
-	}
-	if load.AssignedDriver != "" {
-		pipe.ZAdd(s.ctx, "loads:driver:"+load.AssignedDriver, redis.Z{Score: float64(load.CreatedAt.Unix()), Member: load.ID})
-	}
-	_, err = pipe.Exec(s.ctx)
-	return err
+	return s.watchPayment(func(tx *redis.Tx) error {
+		_, err := tx.TxPipelined(s.ctx, func(pipe redis.Pipeliner) error {
+			pipe.Set(s.ctx, "load:"+load.ID, b, 0)
+			pipe.ZAdd(s.ctx, "loads", redis.Z{Score: float64(load.CreatedAt.Unix()), Member: load.ID})
+			if load.CustomerID != "" {
+				pipe.ZAdd(s.ctx, "loads:customer:"+load.CustomerID, redis.Z{Score: float64(load.CreatedAt.Unix()), Member: load.ID})
+			}
+			if load.AssignedDriver != "" {
+				pipe.ZAdd(s.ctx, "loads:driver:"+load.AssignedDriver, redis.Z{Score: float64(load.CreatedAt.Unix()), Member: load.ID})
+			}
+			return nil
+		})
+		return err
+	}, "load:"+load.ID, "user:"+load.CustomerID, "user:"+load.AssignedDriver)
 }
 func (s *RedisStore) GetLoad(id string) (models.Load, error) {
 	var l models.Load
@@ -180,7 +184,7 @@ func (s *RedisStore) ListLoads(customerID, driverID string, filter LoadFilter, o
 		if customerID != "" && l.CustomerID != customerID {
 			continue
 		}
-		if driverID != "" && l.AssignedDriver != driverID {
+		if driverID != "" && l.AssignedDriver != driverID && !(l.PaymentApproval != nil && l.PaymentApproval.DriverID == driverID && l.PaymentApproval.Status == "pending") {
 			continue
 		}
 		if !matchesLoadFilter(l, filter) {
@@ -213,7 +217,7 @@ func (s *RedisStore) ListDriverLoads(driverID string, filter LoadFilter, offset,
 			continue
 		}
 		offerable := load.Status == models.LoadStatusPublished
-		if !offerable && load.AssignedDriver != driverID {
+		if !offerable && load.AssignedDriver != driverID && !(load.PaymentApproval != nil && load.PaymentApproval.DriverID == driverID && load.PaymentApproval.Status == "pending") {
 			continue
 		}
 		if !matchesLoadFilter(load, filter) {
@@ -277,6 +281,11 @@ func matchesLoadFilter(load models.Load, filter LoadFilter) bool {
 	return strings.Contains(strings.ToLower(searchable), query)
 }
 func (s *RedisStore) SaveUser(u models.User) error {
+	if previous, err := s.GetUser(u.ID); err == nil {
+		return s.UpdateUser(previous, u)
+	} else if !errors.Is(err, redis.Nil) {
+		return err
+	}
 	b, err := json.Marshal(u)
 	if err != nil {
 		return err
@@ -320,18 +329,35 @@ func (s *RedisStore) UpdateUser(previous, updated models.User) error {
 	if err != nil {
 		return err
 	}
-	pipe := s.client.TxPipeline()
-	pipe.Set(s.ctx, "user:"+updated.ID, b, 0)
-	if previous.Email != updated.Email {
-		pipe.Del(s.ctx, "user-email:"+strings.ToLower(previous.Email))
-	}
-	if previous.Phone != updated.Phone {
-		pipe.Del(s.ctx, "user-phone:"+previous.Phone)
-	}
-	pipe.Set(s.ctx, "user-email:"+strings.ToLower(updated.Email), updated.ID, 0)
-	pipe.Set(s.ctx, "user-phone:"+updated.Phone, updated.ID, 0)
-	_, err = pipe.Exec(s.ctx)
-	return err
+	return s.watchPush(func(tx *redis.Tx) error {
+		raw, err := tx.Get(s.ctx, "user:"+updated.ID).Bytes()
+		if err != nil {
+			return err
+		}
+		var stored models.User
+		if err = json.Unmarshal(raw, &stored); err != nil {
+			return err
+		}
+		if !reflect.DeepEqual(stored, previous) {
+			return ErrAccountUnavailable
+		}
+		if (stored.AccountStatus == models.AccountStatusDeleting || stored.AccountStatus == models.AccountStatusDeleted || stored.DeletedAt != nil) && updated.AccountStatus != models.AccountStatusDeleted {
+			return ErrAccountUnavailable
+		}
+		_, err = tx.TxPipelined(s.ctx, func(pipe redis.Pipeliner) error {
+			pipe.Set(s.ctx, "user:"+updated.ID, b, 0)
+			if previous.Email != updated.Email {
+				pipe.Del(s.ctx, "user-email:"+strings.ToLower(previous.Email))
+			}
+			if previous.Phone != updated.Phone {
+				pipe.Del(s.ctx, "user-phone:"+previous.Phone)
+			}
+			pipe.Set(s.ctx, "user-email:"+strings.ToLower(updated.Email), updated.ID, 0)
+			pipe.Set(s.ctx, "user-phone:"+updated.Phone, updated.ID, 0)
+			return nil
+		})
+		return err
+	}, "user:"+updated.ID)
 }
 func (s *RedisStore) GetUserByPhone(phone string) (models.User, error) {
 	id, err := s.client.Get(s.ctx, "user-phone:"+phone).Result()
@@ -356,12 +382,15 @@ func (s *RedisStore) GetUserByEmail(email string) (models.User, error) {
 	return s.GetUser(id)
 }
 func (s *RedisStore) SaveRefresh(token, userID string, ttl time.Duration) error {
-	pipe := s.client.TxPipeline()
-	pipe.Set(s.ctx, "refresh:"+token, userID, ttl)
-	pipe.SAdd(s.ctx, "user-refresh:"+userID, token)
-	pipe.Expire(s.ctx, "user-refresh:"+userID, ttl)
-	_, err := pipe.Exec(s.ctx)
-	return err
+	return s.watchPayment(func(tx *redis.Tx) error {
+		_, err := tx.TxPipelined(s.ctx, func(pipe redis.Pipeliner) error {
+			pipe.Set(s.ctx, "refresh:"+token, userID, ttl)
+			pipe.SAdd(s.ctx, "user-refresh:"+userID, token)
+			pipe.Expire(s.ctx, "user-refresh:"+userID, ttl)
+			return nil
+		})
+		return err
+	}, "user:"+userID)
 }
 func (s *RedisStore) ConsumeRefresh(token string) (string, error) {
 	id, err := s.client.GetDel(s.ctx, "refresh:"+token).Result()
@@ -370,18 +399,47 @@ func (s *RedisStore) ConsumeRefresh(token string) (string, error) {
 	}
 	return id, err
 }
+
+// Offer writes share the load watch with credit selection and assignment.
 func (s *RedisStore) SaveOffer(o models.Offer) error {
 	b, err := json.Marshal(o)
 	if err != nil {
 		return err
 	}
-	pipe := s.client.TxPipeline()
-	pipe.Set(s.ctx, "offer:"+o.ID, b, 0)
-	pipe.SAdd(s.ctx, "offers:load:"+o.LoadID, o.ID)
-	pipe.SAdd(s.ctx, "offers:driver:"+o.DriverID, o.ID)
-	_, err = pipe.Exec(s.ctx)
-	return err
+	return s.watchPayment(func(tx *redis.Tx) error {
+		body, e := tx.Get(s.ctx, "load:"+o.LoadID).Bytes()
+		if e != nil {
+			return e
+		}
+		var load models.Load
+		if e = json.Unmarshal(body, &load); e != nil {
+			return e
+		}
+		if models.CanonicalLoadStatus(load.Status) != models.LoadStatusPublished || load.DeletedAt != nil {
+			return ErrLoadStatusConflict
+		}
+		old, e := tx.Get(s.ctx, "offer:"+o.ID).Bytes()
+		if e == nil {
+			var stored models.Offer
+			if e = json.Unmarshal(old, &stored); e != nil {
+				return e
+			}
+			if stored.Status != "pending" || stored.DriverID != o.DriverID || stored.LoadID != o.LoadID {
+				return ErrLoadStatusConflict
+			}
+		} else if !errors.Is(e, redis.Nil) {
+			return e
+		}
+		_, e = tx.TxPipelined(s.ctx, func(p redis.Pipeliner) error {
+			p.Set(s.ctx, "offer:"+o.ID, b, 0)
+			p.SAdd(s.ctx, "offers:load:"+o.LoadID, o.ID)
+			p.SAdd(s.ctx, "offers:driver:"+o.DriverID, o.ID)
+			return nil
+		})
+		return e
+	}, "load:"+o.LoadID, "offer:"+o.ID, "user:"+o.DriverID)
 }
+
 func (s *RedisStore) GetOffer(id string) (models.Offer, error) {
 	var o models.Offer
 	b, err := s.client.Get(s.ctx, "offer:"+id).Bytes()
@@ -468,12 +526,12 @@ func (s *RedisStore) AcceptOffer(load models.Load, accepted models.Offer, allOff
 		return err
 	}
 	deliveryKey := "load-delivery-verification:" + load.ID
-	watchKeys := []string{"load:" + load.ID, "load-status-event:" + event.ID, deliveryKey}
+	watchKeys := []string{"load:" + load.ID, "load-status-event:" + event.ID, deliveryKey, "load-wallet:" + load.ID}
 	watchKeys = append(watchKeys, driverWatchKeys(load)...)
 	for _, offer := range allOffers {
 		watchKeys = append(watchKeys, "offer:"+offer.ID)
 	}
-	err = s.client.Watch(s.ctx, func(tx *redis.Tx) error {
+	err = s.watchPayment(func(tx *redis.Tx) error {
 		storedLoadBytes, getErr := tx.Get(s.ctx, "load:"+load.ID).Bytes()
 		if getErr != nil {
 			return getErr
@@ -506,6 +564,32 @@ func (s *RedisStore) AcceptOffer(load models.Load, accepted models.Offer, allOff
 			return ErrLoadStatusConflict
 		}
 
+		corporate, err := tx.Exists(s.ctx, "company:user:"+storedLoad.CustomerID).Result()
+		if err != nil {
+			return err
+		}
+		if corporate > 0 && (storedLoad.PaymentApproval == nil || storedLoad.PaymentApproval.Status != "pending") {
+			return ErrInvalidLoadStatusTransition
+		}
+		if storedLoad.PaymentApproval != nil && storedLoad.PaymentApproval.Status == "pending" {
+			old, approval := storedLoad.PaymentApproval, load.PaymentApproval
+			if approval == nil || approval.ID != old.ID || approval.Status != "approved" || approval.DecidedAt == nil || approval.DecidedBy != old.DriverID || event.ChangedByUserID != old.DriverID || !samePaymentTerms(old, approval) || old.OfferID != accepted.ID {
+				return ErrLoadStatusConflict
+			}
+			var allocation models.LoadWalletAllocation
+			body, e := tx.Get(s.ctx, "load-wallet:"+load.ID).Bytes()
+			if e != nil {
+				return e
+			}
+			if e = json.Unmarshal(body, &allocation); e != nil {
+				return e
+			}
+			if allocation.UsedCents != old.CreditCents || allocation.OriginalAmountCents != old.AmountCents || allocation.UsageReversalTransactionID != "" {
+				return ErrLoadStatusConflict
+			}
+		} else if load.PaymentApproval != nil && load.PaymentApproval.Status == "approved" {
+			return ErrLoadStatusConflict
+		}
 		driverMutation, commissionErr := s.prepareDriverCommission(tx, load, "RESERVE", event.ChangedByUserID, event.ChangedAt)
 		if commissionErr != nil {
 			return commissionErr
@@ -534,6 +618,9 @@ func (s *RedisStore) AcceptOffer(load models.Load, accepted models.Offer, allOff
 
 		_, txErr := tx.TxPipelined(s.ctx, func(pipe redis.Pipeliner) error {
 			s.writeDriverCommission(pipe, driverMutation)
+			if load.PaymentApproval != nil {
+				pipe.Set(s.ctx, "payment-approval:"+load.PaymentApproval.ID, mustJSON(load.PaymentApproval), 0)
+			}
 			pipe.Set(s.ctx, "load:"+load.ID, loadBytes, 0)
 			pipe.Set(s.ctx, deliveryKey, deliveryBytes, 0)
 			// A load can have only one assigned driver. Persisting the
@@ -554,8 +641,15 @@ func (s *RedisStore) AcceptOffer(load models.Load, accepted models.Offer, allOff
 	return err
 }
 func (s *RedisStore) SavePhoto(id string, data []byte, contentType, ownerID, loadID string) error {
-	return s.client.HSet(s.ctx, "photo:"+id, "data", data, "contentType", contentType, "ownerID", ownerID, "loadID", loadID).Err()
+	return s.watchPayment(func(tx *redis.Tx) error {
+		_, err := tx.TxPipelined(s.ctx, func(p redis.Pipeliner) error {
+			p.HSet(s.ctx, "photo:"+id, "data", data, "contentType", contentType, "ownerID", ownerID, "loadID", loadID)
+			return nil
+		})
+		return err
+	}, "user:"+ownerID)
 }
+
 func (s *RedisStore) GetPhoto(id string) ([]byte, string, string, string, error) {
 	values, err := s.client.HMGet(s.ctx, "photo:"+id, "data", "contentType", "ownerID", "loadID").Result()
 	if err != nil {
@@ -589,7 +683,13 @@ func (s *RedisStore) GetConversation(id string) (models.Conversation, error) {
 }
 
 func (s *RedisStore) ClaimMessageAttachment(photoID, userID, conversationID string) error {
-	return s.client.Set(s.ctx, "message-attachment:"+photoID, userID+":"+conversationID, 0).Err()
+	return s.watchPayment(func(tx *redis.Tx) error {
+		_, err := tx.TxPipelined(s.ctx, func(p redis.Pipeliner) error {
+			p.Set(s.ctx, "message-attachment:"+photoID, userID+":"+conversationID, 0)
+			return nil
+		})
+		return err
+	}, "user:"+userID)
 }
 
 func (s *RedisStore) MessageAttachmentClaim(photoID string) (string, error) {
@@ -620,21 +720,31 @@ func (s *RedisStore) CreateMessage(m models.Message) (models.Message, bool, erro
 	listKey := "messages:" + m.LoadID
 	indexKey := "message-index:" + m.ID
 	if m.ClientMessageID == "" {
-		pipe := s.client.TxPipeline()
-		pipe.Set(s.ctx, indexKey, m.LoadID, 0)
-		pipe.RPush(s.ctx, listKey, b)
-		_, err = pipe.Exec(s.ctx)
+		err = s.watchPayment(func(tx *redis.Tx) error {
+			_, e := tx.TxPipelined(s.ctx, func(p redis.Pipeliner) error {
+				p.Set(s.ctx, indexKey, m.LoadID, 0)
+				p.RPush(s.ctx, listKey, b)
+				return nil
+			})
+			return e
+		}, "user:"+m.SenderID)
 		return m, false, err
 	}
+
 	idempotencyKey := "message-client:" + m.LoadID + ":" + m.SenderID + ":" + m.ClientMessageID
 	script := redis.NewScript(`
+local rawUser = redis.call('GET', KEYS[4])
+if rawUser then
+ local user = cjson.decode(rawUser)
+ if user.accountStatus == 'deleting' or user.accountStatus == 'deleted' or (user.deletedAt and user.deletedAt ~= cjson.null) then return redis.error_reply('account unavailable') end
+end
 local existing = redis.call('GET', KEYS[1])
 if existing then return {0, existing} end
 redis.call('SET', KEYS[1], ARGV[1])
 redis.call('SET', KEYS[2], ARGV[2])
 redis.call('RPUSH', KEYS[3], ARGV[3])
 return {1, ARGV[1]}`)
-	result, err := script.Run(s.ctx, s.client, []string{idempotencyKey, indexKey, listKey}, m.ID, m.LoadID, b).Result()
+	result, err := script.Run(s.ctx, s.client, []string{idempotencyKey, indexKey, listKey, "user:" + m.SenderID}, m.ID, m.LoadID, b).Result()
 	if err != nil {
 		return models.Message{}, false, err
 	}
@@ -888,15 +998,16 @@ func (s *RedisStore) TouchUserLastSeen(id string, now time.Time) error {
 	if err != nil {
 		return err
 	}
+	if user.DeletedAt != nil || user.AccountStatus == models.AccountStatusDeleting || user.AccountStatus == models.AccountStatusDeleted {
+		return ErrAccountUnavailable
+	}
+
 	if !user.LastSeenAt.IsZero() && now.Sub(user.LastSeenAt) < time.Minute {
 		return nil
 	}
+	previous := user
 	user.LastSeenAt = now
-	b, err := json.Marshal(user)
-	if err != nil {
-		return err
-	}
-	return s.client.Set(s.ctx, "user:"+id, b, 0).Err()
+	return s.UpdateUser(previous, user)
 }
 
 func (s *RedisStore) RecordDomainEvent(eventType, aggregateID string, payload any) error {
@@ -914,11 +1025,17 @@ func (s *RedisStore) SaveVehicle(v models.Vehicle) error {
 	if err != nil {
 		return err
 	}
-	pipe := s.client.TxPipeline()
-	pipe.Set(s.ctx, "vehicle:"+v.ID, b, 0)
-	pipe.SAdd(s.ctx, "vehicles:driver:"+v.DriverID, v.ID)
-	_, err = pipe.Exec(s.ctx)
-	return err
+	return s.watchPush(func(tx *redis.Tx) error {
+		if err := s.guardCleanup(tx, v.DriverID, !v.IsActive && v.PhotoURL == "" && strings.HasPrefix(v.LicensePlate, "SİLİNDİ-")); err != nil {
+			return err
+		}
+		_, err := tx.TxPipelined(s.ctx, func(pipe redis.Pipeliner) error {
+			pipe.Set(s.ctx, "vehicle:"+v.ID, b, 0)
+			pipe.SAdd(s.ctx, "vehicles:driver:"+v.DriverID, v.ID)
+			return nil
+		})
+		return err
+	}, "user:"+v.DriverID)
 }
 
 func (s *RedisStore) GetVehicle(id string) (models.Vehicle, error) {
@@ -959,41 +1076,45 @@ func (s *RedisStore) GetActiveVehicle(driverID string) (models.Vehicle, error) {
 }
 
 func (s *RedisStore) DeleteVehicle(driverID, id string) error {
-	pipe := s.client.TxPipeline()
-	pipe.Del(s.ctx, "vehicle:"+id)
-	pipe.SRem(s.ctx, "vehicles:driver:"+driverID, id)
-	_, err := pipe.Exec(s.ctx)
-	return err
+	return s.watchPayment(func(tx *redis.Tx) error {
+		pipe := tx.TxPipeline()
+		pipe.Del(s.ctx, "vehicle:"+id)
+		pipe.SRem(s.ctx, "vehicles:driver:"+driverID, id)
+		_, err := pipe.Exec(s.ctx)
+		return err
+	}, "user:"+driverID)
 }
 
 func (s *RedisStore) SetActiveVehicle(driverID, vehicleID string) error {
-	vehicles, err := s.ListVehicles(driverID)
-	if err != nil {
-		return err
-	}
-	found := false
-	pipe := s.client.TxPipeline()
-	for _, v := range vehicles {
-		if v.ID == vehicleID {
-			if !v.IsActive {
-				v.IsActive = true
+	return s.watchPayment(func(tx *redis.Tx) error {
+		vehicles, err := s.ListVehicles(driverID)
+		if err != nil {
+			return err
+		}
+		found := false
+		pipe := tx.TxPipeline()
+		for _, v := range vehicles {
+			if v.ID == vehicleID {
+				if !v.IsActive {
+					v.IsActive = true
+					v.UpdatedAt = time.Now().UTC()
+					b, _ := json.Marshal(v)
+					pipe.Set(s.ctx, "vehicle:"+v.ID, b, 0)
+					found = true
+				}
+			} else if v.IsActive {
+				v.IsActive = false
 				v.UpdatedAt = time.Now().UTC()
 				b, _ := json.Marshal(v)
 				pipe.Set(s.ctx, "vehicle:"+v.ID, b, 0)
-				found = true
 			}
-		} else if v.IsActive {
-			v.IsActive = false
-			v.UpdatedAt = time.Now().UTC()
-			b, _ := json.Marshal(v)
-			pipe.Set(s.ctx, "vehicle:"+v.ID, b, 0)
 		}
-	}
-	if !found {
-		return redis.Nil
-	}
-	_, err = pipe.Exec(s.ctx)
-	return err
+		if !found {
+			return redis.Nil
+		}
+		_, err = pipe.Exec(s.ctx)
+		return err
+	}, "user:"+driverID)
 }
 
 // AllowRateLimit performs an atomic sliding fixed-window rate check in Redis.
@@ -1156,4 +1277,3 @@ func (s *RedisStore) SaveIdempotencyResponse(key string, rec IdempotencyResponse
 	}
 	return s.client.Set(s.ctx, "idempotency:"+key, b, ttl).Err()
 }
-

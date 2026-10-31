@@ -63,7 +63,7 @@ func (s *RedisStore) TopupDriverWallet(id string, amount int64, reference, actor
 	hash := sha256.Sum256([]byte(id + "\x00" + reference))
 	entryID := "topup:" + hex.EncodeToString(hash[:])
 	entryKey := "driver-wallet-transaction:" + entryID
-	err := s.client.Watch(s.ctx, func(tx *redis.Tx) error {
+	err := s.watchPayment(func(tx *redis.Tx) error {
 		old, e := tx.Get(s.ctx, entryKey).Bytes()
 		if e == nil {
 			var entry models.DriverWalletTransaction

@@ -24,6 +24,8 @@ var nextLoadStatus = map[string]string{
 // actor, timestamp, or intermediate events can be inferred from old records.
 func CanonicalLoadStatus(status string) string {
 	switch status {
+	case "driver_payment_approval_pending":
+		return LoadStatusPaymentApprovalPending
 	case LoadStatusOpenLegacy, LoadStatusOffersReceived:
 		return LoadStatusPublished
 	case LoadStatusInTransit:
@@ -35,7 +37,7 @@ func CanonicalLoadStatus(status string) string {
 
 func ValidCanonicalLoadStatus(status string) bool {
 	switch status {
-	case LoadStatusDraft, LoadStatusPublished, LoadStatusDriverSelected,
+	case LoadStatusDraft, LoadStatusPublished, LoadStatusPaymentApprovalPending, LoadStatusDriverSelected,
 		LoadStatusDriverEnRoute, LoadStatusAtPickup, LoadStatusPickedUp,
 		LoadStatusEnRouteToDelivery, LoadStatusDelivered, LoadStatusCompleted,
 		LoadStatusCancelled:
@@ -67,6 +69,12 @@ func CanTransition(from, to string) bool {
 	}
 	if to == LoadStatusCancelled {
 		return true
+	}
+	if from == LoadStatusPublished && to == LoadStatusPaymentApprovalPending {
+		return true
+	}
+	if from == LoadStatusPaymentApprovalPending {
+		return to == LoadStatusPublished || to == LoadStatusDriverSelected
 	}
 	next, ok := nextLoadStatus[from]
 	return ok && next == to

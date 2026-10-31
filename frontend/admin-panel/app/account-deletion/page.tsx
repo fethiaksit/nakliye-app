@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import PublicLayout from "../components/PublicLayout";
+import { LEGAL_DOCS } from "../../../shared/legalTexts.js";
 
 export default function AccountDeletionPage() {
   const [email, setEmail] = useState("");
@@ -25,8 +26,8 @@ export default function AccountDeletionPage() {
     setResult(null);
 
     try {
-      const rawApiUrl = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_ADMIN_API_URL || "http://localhost:8080";
-      const apiOrigin = rawApiUrl.replace(/\/api\/admin\/?$/, "").replace(/\/$/, "");
+      const rawApiUrl = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_ADMIN_API_URL || "";
+      const apiOrigin = rawApiUrl.replace(/\/$/, "").replace(/\/api(?:\/admin)?$/, "");
       const res = await fetch(`${apiOrigin}/api/account-deletion-requests`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -61,23 +62,9 @@ export default function AccountDeletionPage() {
       title="Hesap ve Kişisel Veri Silme Talebi"
       subtitle="Google Play ve App Store gereksinimleri uyarınca hesap kapatma ve kişisel verilerin silinmesi prosedürü."
       version="1.0.0"
-      updatedAt="14 Ekim 2026"
+      updatedAt="28 Ekim 2026"
     >
-      <section style={{ marginBottom: 28 }}>
-        <h2 style={{ fontSize: 19, fontWeight: 700, color: "#14261c", borderBottom: "1px solid #edf2ee", paddingBottom: 6 }}>
-          1. Mobil Uygulama Üzerinden Doğrudan Silme (Önerilen)
-        </h2>
-        <p>
-          Hesabınızı ve kişisel verilerinizi anında silmek için NakliyeGo Müşteri veya Şoför uygulamanızda:
-        </p>
-        <div style={{ background: "#f0f6f2", padding: "14px 18px", borderRadius: 10, border: "1px solid #d2e4d8", margin: "12px 0", fontWeight: 600 }}>
-          Profil &gt; Hesap İşlemleri &gt; Hesabımı Sil
-        </div>
-        <p style={{ fontSize: 13.5, color: "#55645c" }}>
-          Mevcut hesap şifrenizi doğruladıktan sonra, devam eden aktif bir nakliyeniz bulunmuyorsa hesabınız hemen kapatılır ve kişisel verileriniz anonimleştirilir.
-        </p>
-      </section>
-
+      <p style={{ whiteSpace: "pre-wrap" }}>{LEGAL_DOCS.deletion.content}</p>
       <section style={{ marginBottom: 28 }}>
         <h2 style={{ fontSize: 19, fontWeight: 700, color: "#14261c", borderBottom: "1px solid #edf2ee", paddingBottom: 6 }}>
           2. Web Üzerinden Hesap Silme Talep Formu
@@ -103,11 +90,12 @@ export default function AccountDeletionPage() {
 
         <form onSubmit={handleSubmit} style={{ display: "grid", gap: 16, maxWidth: 540, width: "100%", background: "#fbfcfb", padding: "clamp(16px, 4vw, 24px)", borderRadius: 12, border: "1px solid #e5ebe7", boxSizing: "border-box" }}>
           <div>
-            <label style={{ display: "block", fontSize: 13, fontWeight: 700, marginBottom: 5 }}>
+            <label htmlFor="email-input" style={{ display: "block", fontSize: 13, fontWeight: 700, marginBottom: 5 }}>
               Kayıtlı E-posta Adresi
             </label>
             <input
-              type="email"
+              id="email-input"
+              type="email" maxLength={254}
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="ornek@nakliyego.com"
@@ -116,11 +104,12 @@ export default function AccountDeletionPage() {
           </div>
 
           <div>
-            <label style={{ display: "block", fontSize: 13, fontWeight: 700, marginBottom: 5 }}>
+            <label htmlFor="phone-input" style={{ display: "block", fontSize: 13, fontWeight: 700, marginBottom: 5 }}>
               Kayıtlı Cep Telefonu Numarası
             </label>
             <input
-              type="tel"
+              id="phone-input"
+              type="tel" maxLength={32}
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
               placeholder="+90 5xx xxx xx xx"
@@ -129,11 +118,12 @@ export default function AccountDeletionPage() {
           </div>
 
           <div>
-            <label style={{ display: "block", fontSize: 13, fontWeight: 700, marginBottom: 5 }}>
+            <label htmlFor="reason-input" style={{ display: "block", fontSize: 13, fontWeight: 700, marginBottom: 5 }}>
               Silme Gerekçesi (İsteğe bağlı)
             </label>
             <textarea
-              rows={3}
+              id="reason-input"
+              rows={3} maxLength={1000}
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               placeholder="Hesabınızı silme nedeninizi belirtebilirsiniz..."
@@ -149,7 +139,7 @@ export default function AccountDeletionPage() {
               style={{ marginTop: 3, width: "auto", cursor: "pointer", flexShrink: 0 }}
             />
             <span>
-              Hesabımın silinmesi halinde tüm aktif oturumlarımın sonlandırılacağını, geri döndürülemez biçimde anonimleştirileceğimi ve yasal saklama yükümlülüğü haricindeki verilerimin silineceğini anladım ve kabul ediyorum.
+              Hesap kapatma talebini ben gönderiyorum. Kimlik doğrulaması yapılacağını ve yukarıda açıklanan kayıtların inceleme için korunabileceğini anladım.
             </span>
           </label>
 
@@ -175,16 +165,6 @@ export default function AccountDeletionPage() {
         </form>
       </section>
 
-      <section style={{ marginBottom: 28 }}>
-        <h2 style={{ fontSize: 19, fontWeight: 700, color: "#14261c", borderBottom: "1px solid #edf2ee", paddingBottom: 6 }}>
-          3. Silme Sonrası Veri Durumu ve Yasal İstisnalar
-        </h2>
-        <ul style={{ paddingLeft: 20 }}>
-          <li><strong>Profil ve Kimlik Bilgileri:</strong> Ad, soyad, açık telefon ve e-posta kayıtları sistemden silinir / maskelenir ("Silinmiş Kullanıcı").</li>
-          <li><strong>Oturumlar ve Bildirimler:</strong> Tüm aktif oturumlar ve push tokenlar derhal geçersiz kılınır.</li>
-          <li><strong>Yasal Saklama:</strong> 5651 sayılı kanun kapsamındaki erişim logları (2 yıl), 213 sayılı VUK ve 6102 sayılı TTK kapsamındaki mali fatura/işlem kayıtları (10 yıl) boyunca izole arşivde tutulur ve süresi sonunda imha edilir.</li>
-        </ul>
-      </section>
     </PublicLayout>
   );
 }

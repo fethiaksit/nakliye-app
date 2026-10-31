@@ -1,0 +1,11 @@
+{
+  "summary": {
+    "keys_before": 793,
+    "keys_after": 793,
+    "missing_persistent": 0,
+    "changed_existing": 0,
+    "redis_and_production_containers_unchanged": true
+  },
+  "missing": [],
+  "changed": []
+}

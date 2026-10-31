@@ -108,9 +108,8 @@ type WalletTransaction struct {
 	CreatedAt           time.Time  `json:"createdAt"`
 }
 
-// LoadWalletAllocation is deliberately not embedded in Load. Driver-facing
-// load responses therefore keep the agreed driver price unchanged and do not
-// disclose the customer's incentive balance or usage.
+// LoadWalletAllocation stays separate from Load. Drivers receive only the
+// agreed payment snapshot, never the customer wallet balance or reward ledger.
 type LoadWalletAllocation struct {
 	LoadID                     string    `json:"loadId"`
 	CompanyID                  string    `json:"companyId"`
@@ -152,3 +151,23 @@ func TLToCents(value float64) (int64, bool) {
 	}
 	return n.Int64(), true
 }
+
+// PaymentApproval is an immutable financial snapshot for one selection attempt.
+// Only the decision metadata and settlement marker change after selection.
+type PaymentApproval struct {
+	ID                        string     `json:"id"`
+	LoadID                    string     `json:"loadId"`
+	OfferID                   string     `json:"offerId"`
+	DriverID                  string     `json:"driverId"`
+	AmountCents               int64      `json:"amountCents"`
+	CreditCents               int64      `json:"creditCents"`
+	CustomerPayableCents      int64      `json:"customerPayableCents"`
+	Status                    string     `json:"status"`
+	RequestedAt               time.Time  `json:"requestedAt"`
+	DecidedAt                 *time.Time `json:"decidedAt,omitempty"`
+	DecidedBy                 string     `json:"decidedBy,omitempty"`
+	CompensationTransactionID string     `json:"compensationTransactionId,omitempty"`
+}
+
+const LoadStatusPaymentApprovalPending = "payment_approval_pending"
+const DriverTransactionCorporateCreditCompensation = "CORPORATE_CREDIT_COMPENSATION"

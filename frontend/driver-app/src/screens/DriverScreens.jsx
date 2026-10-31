@@ -1,7 +1,8 @@
+import { formatWalletCents } from '../../../shared/walletMoney.mjs';
 import React, { useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { isOfferableLoadStatus } from '../../../shared/loadStatus';
+import { isOfferableLoadStatus, requiresDriverPaymentApproval } from '../../../shared/loadStatus';
 import Icon from '../../../shared/ui/Icon';
 import { AppButton, ListSkeleton, ScreenState, SectionCard } from '../../../shared/ui/primitives';
 import { colors, radius, shadows, spacing, typography } from '../../../shared/ui/theme';
@@ -40,12 +41,15 @@ export function DriverJobDetail({
   onSaveOffer,
   onStatus,
   onCompleteDelivery,
+  onPaymentApproval,
+  paymentSaving,
   user,
   backLabel = 'İşlere dön',
 }) {
   if (!selected) return null;
 
-  const statusAction = driverStatusAction(selected.status);
+  const awaitingPayment = requiresDriverPaymentApproval(selected);
+  const statusAction = awaitingPayment ? null : driverStatusAction(selected.status);
   const isAssigned = selected.assignedDriverId === user?.id || (statusAction && selected.status !== 'published');
 
   return (
@@ -62,8 +66,20 @@ export function DriverJobDetail({
 
       <DriverJobSummary load={selected} />
 
+      {selected.paymentApproval && selected.paymentApproval.driverId === user?.id ? (
+        <SectionCard title="KURUMSAL NAKLİYE — ÖDEME ONAYI" icon="wallet-outline">
+          <Text>Anlaşılan nakliye bedeli: {formatWalletCents(selected.paymentApproval.amountCents)}</Text>
+          <Text>Müşteriden teslimatta alacağınız: {formatWalletCents(selected.paymentApproval.customerPayableCents)}</Text>
+          <Text>NakliyeGo cüzdanınıza yüklenecek: +{formatWalletCents(selected.paymentApproval.creditCents)}</Text>
+          <Text>Toplam taşıma karşılığı: {formatWalletCents(selected.paymentApproval.amountCents)}</Text>
+          <Text>Müşteri kurumsal cüzdanından {formatWalletCents(selected.paymentApproval.creditCents)} indirim kullanmaktadır. Bu tutar teslimat başarıyla tamamlandığında NakliyeGo cüzdanınıza kredi olarak aktarılacaktır. Cüzdan kredisi nakit ödeme değildir; mevcut kurallar kapsamında sonraki hizmet komisyonlarında kullanılabilir. Bu ödeme şeklini kabul ediyor musunuz?</Text>
+          {awaitingPayment && selected.paymentApproval.status === 'pending' ? <>
+            <AppButton label="Ödeme Şeklini Onayla ve İşi Al" accessibilityLabel="Ödeme Şeklini Onayla" disabled={paymentSaving} loading={paymentSaving} onPress={() => onPaymentApproval(selected, true)} />
+            <AppButton label="Reddet" variant="ghost" disabled={paymentSaving} onPress={() => onPaymentApproval(selected, false)} />
+          </> : <Text>{selected.status === 'cancelled' ? 'Nakliye iptal edildi; cüzdanınıza kredi yüklenmedi.' : selected.paymentApproval.compensationTransactionId ? 'Kurumsal kredi karşılığı cüzdanınıza aktarıldı.' : selected.paymentApproval.status === 'approved' ? 'Ödeme şeklini onayladınız.' : 'Ödeme şeklini reddettiniz.'}</Text>}
+        </SectionCard>
+      ) : null}
       <DriverRouteSection load={selected} />
-
       <DriverLoadDetails load={selected} />
 
       {/* Operation Action or Offer Form */}
@@ -128,6 +144,9 @@ export function DriverJobs(props) {
 
   // Find any active job assigned to this driver
   const activeJob = useMemo(() => {
+    const awaitingConsent = load => requiresDriverPaymentApproval(load) && load.paymentApproval?.driverId === user?.id;
+    const pendingPayment = jobs.find(awaitingConsent) || myOffers.map(item => item.load).find(load => load && awaitingConsent(load));
+    if (pendingPayment) return pendingPayment;
     const activeStatuses = ['driver_selected', 'driver_en_route', 'at_pickup', 'picked_up', 'en_route_to_delivery', 'delivered'];
     const inJobs = jobs.find(j => activeStatuses.includes(j.status) && (j.assignedDriverId === user?.id || !j.assignedDriverId));
     if (inJobs) return inJobs;

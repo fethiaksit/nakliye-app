@@ -3,7 +3,7 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { parseWalletUnits, formatWalletCents } from "../../shared/walletMoney.mjs";
 
 type Request = (path: string, init?: RequestInit) => Promise<any>;
-const labels: Record<string, string> = { TOPUP: "Bakiye yükleme", RESERVE: "Bloke", RELEASE: "Bloke iadesi", COMMISSION: "Hizmet bedeli" };
+const labels: Record<string, string> = { CORPORATE_CREDIT_COMPENSATION: "Müşterinin kullandığı kurumsal kredi karşılığı", TOPUP: "Bakiye yükleme", RESERVE: "Bloke", RELEASE: "Bloke iadesi", COMMISSION: "Hizmet bedeli" };
 export default function DriverWalletAdmin({ driverId, request }: { driverId: string; request: Request }) {
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState("");

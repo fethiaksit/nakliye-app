@@ -1,0 +1,82 @@
+Faz 08 kapanış — 28 Ekim 2026
+Yalnız izole fixture verileri ve geçici yerel Redis Unix socket kullanıldı. Production/beta deploy yapılmadı.
+
+Backend son kaynak
+?   	nakliye-api/cmd/api	[no test files]
+?   	nakliye-api/cmd/routebackfill	[no test files]
+ok  	nakliye-api/internal/config	0.295s
+ok  	nakliye-api/internal/httpapi	14.046s
+ok  	nakliye-api/internal/models	1.287s
+ok  	nakliye-api/internal/service	0.909s
+ok  	nakliye-api/internal/store	1.377s
+
+Store concurrency -race
+ok  	nakliye-api/internal/store	1.740s
+
+Gerçek izole Redis -race (50 yarış)
+=== RUN   TestAccountDeletionRealRedis
+=== RUN   TestAccountDeletionRealRedis/load
+=== RUN   TestAccountDeletionRealRedis/offer
+=== RUN   TestAccountDeletionRealRedis/topup
+=== RUN   TestAccountDeletionRealRedis/wallet
+=== RUN   TestAccountDeletionRealRedis/complaint
+--- PASS: TestAccountDeletionRealRedis (0.29s)
+    --- PASS: TestAccountDeletionRealRedis/load (0.05s)
+    --- PASS: TestAccountDeletionRealRedis/offer (0.06s)
+    --- PASS: TestAccountDeletionRealRedis/topup (0.06s)
+    --- PASS: TestAccountDeletionRealRedis/wallet (0.06s)
+    --- PASS: TestAccountDeletionRealRedis/complaint (0.06s)
+PASS
+ok  	nakliye-api/internal/store	1.675s
+
+Müşteri
+✔ repeat respects original auto-selection instead of locking the previously calculated class (0.092875ms)
+✔ repeat preserves optional reported weight but asks server to infer missing weight again (2.402458ms)
+✔ wallet input accepts decimal commas without rounding extra digits or unsafe amounts (1.077542ms)
+✔ wallet amounts retain kuruş on screen (18.468333ms)
+✔ wallet usage preview deducts decimal-comma amounts in kuruş (0.841417ms)
+✔ wallet usage preview rejects invalid, excessive and negative amounts (0.107042ms)
+ℹ tests 74
+ℹ suites 0
+ℹ pass 74
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1216.451875
+
+Şoför
+✔ driver sees exact cash and credit and explicitly chooses accept/reject before starting (496.4255ms)
+✔ customer selects 60 TL with the offer and sees 4040 TL payable before requesting consent (103.633208ms)
+✔ disabled corporate wallet still sends cash-only payment for driver consent (52.767375ms)
+✔ selected driver offer routes to payment consent and hides edit/withdraw during approval (27.209959ms)
+✔ approval state is shared across aliases and stale operational status (10.843208ms)
+✔ pending payment is prominent on dashboard and its action opens consent instead of status change (60.638458ms)
+ℹ tests 25
+ℹ suites 0
+ℹ pass 25
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1202.885875
+
+Admin build/test
+✔ keeps admin auth and API configuration separate (0.889ms)
+✔ includes corporate accounts management with filters and review workflow (0.309666ms)
+✔ renders exact driver balances and disables pagination at the boundaries (83.560167ms)
+✔ renders an empty wallet filter without inventing accounts (5.153125ms)
+✔ rejects a previous tab payload instead of crashing wallet accounts (5.319375ms)
+✔ server-renders the public legal routes without authentication (70.305291ms)
+ℹ tests 7
+ℹ suites 0
+ℹ pass 7
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 309.186875
+
+Admin tsc --noEmit: exit 0; hata çıktısı yok.
+İlk başarısız regresyonlar: eski profil/last-seen hesabı canlandırma, geç gelen load/refresh/push/photo yazımı ve silinmiş JWT ile saklanan fotoğraf okuma. Düzeltme sonrası son testler geçti.
+Kod incelemesi: son incelemede ek P0 bulunmadı. Hukuki onay, retention sınıflandırması, canlı public URL ve fiziksel cihaz tamamlandı sayılmadı.

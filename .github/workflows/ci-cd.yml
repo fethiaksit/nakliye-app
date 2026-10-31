@@ -44,9 +44,39 @@ jobs:
       - name: Run all backend tests (including security & regression suite)
         run: go test -v -race ./...
 
+  mobile-test:
+    name: Mobile checks (${{ matrix.app }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [customer-app, driver-app]
+    defaults:
+      run:
+        working-directory: frontend/${{ matrix.app }}
+    env:
+      CI: '1'
+      EXPO_NO_TELEMETRY: '1'
+      EXPO_PUBLIC_API_URL: https://beta-api-18-157-76-136.sslip.io/api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.20.2'
+          cache: npm
+          cache-dependency-path: frontend/${{ matrix.app }}/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - name: Check tracked native identifiers and APNs configuration
+        run: node ../../scripts/testing/check-native-config.cjs .
+      - name: Expo Doctor
+        run: npx --yes expo-doctor@1.20.4
+      - name: Export iOS and Android JavaScript
+        run: npx expo export --platform ios --platform android --max-workers 2 --output-dir /tmp/nakliyego-export-${{ matrix.app }}
+
   docker-build:
     name: Build & Verify Docker Images
-    needs: backend-test
+    needs: [backend-test, mobile-test]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -131,10 +161,14 @@ jobs:
           bash -n scripts/backup/redis-backup.sh
           bash -n scripts/backup/redis-restore-test.sh
           bash -n scripts/deploy/rollback.sh
+          bash -n scripts/backup/backup-alert.sh
+          bash -n scripts/ops/health-check.sh
+          python3 -m unittest discover -s scripts/deploy/tests -v
+          python3 -m unittest discover -s scripts/ops/tests -v
 
   production-deploy:
     name: Controlled Production Deploy (Manual Approval Required)
-    needs: [backend-test, docker-build]
+    needs: [backend-test, mobile-test, docker-build]
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_target == 'production'
     runs-on: ubuntu-latest
     environment:

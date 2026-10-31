@@ -49,7 +49,11 @@ func acceptOfferAmount(t *testing.T, handler http.Handler, customer, driver test
 	if accepted.Code != http.StatusOK {
 		t.Fatalf("accept status=%d body=%s", accepted.Code, accepted.Body.String())
 	}
-	return decodeResponse[models.Load](t, accepted)
+	selected := decodeResponse[models.Load](t, accepted)
+	if selected.PaymentApproval != nil && selected.PaymentApproval.Status == "pending" {
+		return approveCreditForTest(t, handler, customer, driver, selected)
+	}
+	return selected
 }
 
 func corporateAcceptedLoad(t *testing.T, handler http.Handler, customer, driver testSession, title string, amountTL float64) models.Load {
@@ -178,20 +182,20 @@ func TestPhaseNineteenWalletUsageAndCancellationReversal(t *testing.T) {
 	if balance := getWallet(t, handler, corporate.AccessToken).Wallet.BalanceCents; balance != 150_000 {
 		t.Fatalf("seed reward balance=%d", balance)
 	}
-	load := corporateAcceptedLoad(t, handler, corporate, driver, "Sekiz bin liralık taşıma", 8_000)
-	negative := requestJSON(t, handler, http.MethodPost, "/api/corporate/loads/"+load.ID+"/wallet", corporate.AccessToken, map[string]int64{"amountCents": -1})
+	load := corporateOfferedLoad(t, handler, corporate, driver, "Sekiz bin liralık taşıma", 8_000)
+	negative := requestJSON(t, handler, http.MethodPost, "/api/offers/"+pendingOfferID(t, handler, corporate, load)+"/accept", corporate.AccessToken, map[string]int64{"amountCents": -1})
 	if negative.Code != http.StatusBadRequest {
 		t.Fatalf("negative usage status=%d body=%s", negative.Code, negative.Body.String())
 	}
-	overBalance := requestJSON(t, handler, http.MethodPost, "/api/corporate/loads/"+load.ID+"/wallet", corporate.AccessToken, map[string]int64{"amountCents": 150_001})
+	overBalance := requestJSON(t, handler, http.MethodPost, "/api/offers/"+pendingOfferID(t, handler, corporate, load)+"/accept", corporate.AccessToken, map[string]int64{"amountCents": 150_001})
 	if overBalance.Code != http.StatusBadRequest {
 		t.Fatalf("over-balance usage status=%d body=%s", overBalance.Code, overBalance.Body.String())
 	}
-	usage := requestJSON(t, handler, http.MethodPost, "/api/corporate/loads/"+load.ID+"/wallet", corporate.AccessToken, map[string]int64{"amountCents": 150_000})
-	if usage.Code != http.StatusCreated || !strings.Contains(usage.Body.String(), `"customerPayableCents":650000`) {
+	usage := requestJSON(t, handler, http.MethodPost, "/api/offers/"+pendingOfferID(t, handler, corporate, load)+"/accept", corporate.AccessToken, map[string]int64{"amountCents": 150_000})
+	if usage.Code != http.StatusOK || !strings.Contains(usage.Body.String(), `"customerPayableCents":650000`) {
 		t.Fatalf("usage status=%d body=%s", usage.Code, usage.Body.String())
 	}
-	duplicate := requestJSON(t, handler, http.MethodPost, "/api/corporate/loads/"+load.ID+"/wallet", corporate.AccessToken, map[string]int64{"amountCents": 1})
+	duplicate := requestJSON(t, handler, http.MethodPost, "/api/offers/"+pendingOfferID(t, handler, corporate, load)+"/accept", corporate.AccessToken, map[string]int64{"amountCents": 1})
 	if duplicate.Code != http.StatusConflict {
 		t.Fatalf("duplicate usage status=%d body=%s", duplicate.Code, duplicate.Body.String())
 	}
@@ -223,12 +227,12 @@ func TestPhaseNineteenRewardUsesNetAmount(t *testing.T) {
 	driver := registerTestUser(t, handler, "corporate_net_driver", models.RoleDriver)
 
 	completeCorporateLoad(t, handler, corporate, driver, corporateAcceptedLoad(t, handler, corporate, driver, "Yirmi bin liralık taşıma", 20_000))
-	load := corporateAcceptedLoad(t, handler, corporate, driver, "Net ödül taşıması", 10_000)
-	usage := requestJSON(t, handler, http.MethodPost, "/api/corporate/loads/"+load.ID+"/wallet", corporate.AccessToken, map[string]int64{"amountCents": 200_000})
-	if usage.Code != http.StatusCreated {
+	load := corporateOfferedLoad(t, handler, corporate, driver, "Net ödül taşıması", 10_000)
+	usage := requestJSON(t, handler, http.MethodPost, "/api/offers/"+pendingOfferID(t, handler, corporate, load)+"/accept", corporate.AccessToken, map[string]int64{"amountCents": 200_000})
+	if usage.Code != http.StatusOK {
 		t.Fatalf("net usage status=%d body=%s", usage.Code, usage.Body.String())
 	}
-	completeCorporateLoad(t, handler, corporate, driver, load)
+	completeCorporateLoad(t, handler, corporate, driver, approveCreditForTest(t, handler, corporate, driver, load))
 	wallet := getWallet(t, handler, corporate.AccessToken)
 	if wallet.Wallet.BalanceCents != 80_000 {
 		t.Fatalf("net reward balance=%d transactions=%#v", wallet.Wallet.BalanceCents, wallet.Transactions)
@@ -245,13 +249,13 @@ func TestPhaseNineteenConcurrentWalletSpendCannotGoNegative(t *testing.T) {
 	corporate := registerCorporateTestUser(t, handler, "corporate_race")
 	driver := registerTestUser(t, handler, "corporate_race_driver", models.RoleDriver)
 	completeCorporateLoad(t, handler, corporate, driver, corporateAcceptedLoad(t, handler, corporate, driver, "Bakiye oluşturan taşıma", 10_000))
-	first := corporateAcceptedLoad(t, handler, corporate, driver, "Eşzamanlı taşıma 1", 5_000)
-	second := corporateAcceptedLoad(t, handler, corporate, driver, "Eşzamanlı taşıma 2", 5_000)
+	first := corporateOfferedLoad(t, handler, corporate, driver, "Eşzamanlı taşıma 1", 5_000)
+	second := corporateOfferedLoad(t, handler, corporate, driver, "Eşzamanlı taşıma 2", 5_000)
 
 	statuses := make(chan int, 2)
-	for _, loadID := range []string{first.ID, second.ID} {
+	for _, loadID := range []string{pendingOfferID(t, handler, corporate, first), pendingOfferID(t, handler, corporate, second)} {
 		go func(id string) {
-			request := httptest.NewRequest(http.MethodPost, "/api/corporate/loads/"+id+"/wallet", strings.NewReader(`{"amountCents":100000}`))
+			request := httptest.NewRequest(http.MethodPost, "/api/offers/"+id+"/accept", strings.NewReader(`{"amountCents":100000}`))
 			request.Header.Set("Content-Type", "application/json")
 			request.Header.Set("Authorization", "Bearer "+corporate.AccessToken)
 			response := httptest.NewRecorder()
@@ -263,7 +267,7 @@ func TestPhaseNineteenConcurrentWalletSpendCannotGoNegative(t *testing.T) {
 	for range 2 {
 		counts[<-statuses]++
 	}
-	if counts[http.StatusCreated] != 1 || counts[http.StatusBadRequest]+counts[http.StatusConflict] != 1 {
+	if counts[http.StatusOK] != 1 || counts[http.StatusBadRequest]+counts[http.StatusConflict] != 1 {
 		t.Fatalf("concurrent wallet statuses=%#v", counts)
 	}
 	wallet := getWallet(t, handler, corporate.AccessToken)
