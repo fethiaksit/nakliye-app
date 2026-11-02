@@ -1,6 +1,6 @@
 import { apiOrigin } from '../config/api';
 
-export { driverStatusAction, loadStatusLabel } from '../../../shared/loadStatus';
+export { driverStatusAction, loadStatusLabel, requiresDriverPaymentApproval } from '../../../shared/loadStatus';
 
 export function toFiniteNumber(value, fallback = 0) {
   if (typeof value === 'number') return Number.isFinite(value) ? value : fallback;
