@@ -124,6 +124,14 @@ test('approval state is shared across aliases and stale operational status', () 
   assert.equal(status.requiresDriverPaymentApproval({ status: 'driver_selected', paymentApproval: { status: 'pending' } }), true);
   assert.equal(status.requiresDriverPaymentApproval({ status: 'driver_selected' }), false);
   assert.equal(status.requiresDriverPaymentApproval({ status: 'completed', paymentApproval: { status: 'pending' } }), false);
+
+  const presentation = moduleFromFile(path.join(root, 'driver-app/src/utils/presentation.js'), name => {
+    if (name.endsWith('/loadStatus')) return status;
+    return {};
+  });
+  assert.equal(typeof presentation.requiresDriverPaymentApproval, 'function');
+  assert.equal(presentation.requiresDriverPaymentApproval({ status: 'payment_approval_pending' }), true);
+  assert.equal(presentation.requiresDriverPaymentApproval({ status: 'completed' }), false);
 });
 
 test('pending payment is prominent on dashboard and its action opens consent instead of status change', () => {
